@@ -1,0 +1,179 @@
+"""Resource, folder, version, permission and sharing schemas (spec §10–§11)."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Annotated
+
+from pydantic import Field, model_validator
+
+from backend.schemas.base import APIModel, RequestModel
+from backend.utils.enums import ResourcePermissionLevel, ResourceScopeType, ResourceType
+
+
+# =============================================================================
+# FOLDERS
+# =============================================================================
+
+
+class FolderSummary(APIModel):
+    public_id: uuid.UUID
+    name: str
+    created_at: datetime
+
+
+class FolderResponse(FolderSummary):
+    parent_id: uuid.UUID | None = None
+    course_id: uuid.UUID | None = None
+    course_title: str | None = None
+    batch_id: uuid.UUID | None = None
+    batch_code: str | None = None
+    created_by_username: str | None = None
+    child_folder_count: int = 0
+    resource_count: int = 0
+    path: list[str] = Field(
+        default_factory=list,
+        description="Folder names from the root down to and including this one.",
+    )
+
+
+class FolderCreateRequest(RequestModel):
+    name: Annotated[str, Field(min_length=1, max_length=255)]
+    parent_id: uuid.UUID | None = Field(
+        default=None, description="Omit to create a folder at the root of its course/batch."
+    )
+    course_id: uuid.UUID | None = None
+    batch_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _anchored(self):  # type: ignore[no-untyped-def]
+        """A root folder must say where it belongs; a child inherits it.
+
+        Without this a root folder could exist attached to nothing, visible
+        to nobody but an unrestricted admin -- the same trap the exam anchor
+        constraint exists to prevent.
+        """
+        if self.parent_id is None and self.course_id is None and self.batch_id is None:
+            raise ValueError(
+                "a root folder must specify course_id, batch_id, or both"
+            )
+        return self
+
+
+class FolderUpdateRequest(RequestModel):
+    """Renaming and moving are the same operation on a tree node."""
+
+    name: Annotated[str | None, Field(min_length=1, max_length=255)] = None
+    parent_id: uuid.UUID | None = Field(
+        default=None, description="New parent. Send explicitly as null to move to the root."
+    )
+
+
+# =============================================================================
+# RESOURCES
+# =============================================================================
+
+
+class ResourceVersionResponse(APIModel):
+    version_number: int
+    mime_type: str | None = None
+    size: int | None = None
+    change_note: str | None = None
+    created_at: datetime
+    uploaded_by_username: str | None = None
+
+
+class ResourceSummary(APIModel):
+    public_id: uuid.UUID
+    name: str | None = None
+    resource_type: ResourceType
+    mime_type: str | None = None
+    size: int | None = None
+    created_at: datetime
+
+
+class ResourceResponse(ResourceSummary):
+    folder_id: uuid.UUID | None = None
+    folder_name: str | None = None
+    course_id: uuid.UUID | None = None
+    course_title: str | None = None
+    batch_id: uuid.UUID | None = None
+    uploaded_by_username: str | None = None
+    updated_at: datetime | None = None
+    is_deleted: bool = False
+    deleted_at: datetime | None = None
+    current_version: int = 0
+    versions: list[ResourceVersionResponse] = Field(default_factory=list)
+    has_share_link: bool = Field(
+        default=False, description="True when a public share token has been issued."
+    )
+    # The stored key is deliberately never exposed -- it is an internal
+    # storage path, and publishing it invites callers to construct their own
+    # URLs against the bucket instead of going through the permission check.
+
+
+class ResourceUpdateRequest(RequestModel):
+    """Metadata only. Replacing the *file* is a new version upload."""
+
+    name: Annotated[str | None, Field(min_length=1, max_length=255)] = None
+    resource_type: ResourceType | None = None
+    folder_id: uuid.UUID | None = None
+
+
+class ResourceCopyRequest(RequestModel):
+    target_folder_id: uuid.UUID | None = None
+    name: Annotated[str | None, Field(min_length=1, max_length=255)] = None
+
+
+# =============================================================================
+# PERMISSIONS (spec §11's Course -> Batch -> Session -> Individual cascade)
+# =============================================================================
+
+
+class ResourcePermissionResponse(APIModel):
+    id: int
+    scope_type: ResourceScopeType
+    scope_id: int
+    scope_label: str | None = Field(
+        default=None, description="Human-readable name of the course/batch/session/user."
+    )
+    level: ResourcePermissionLevel
+    resource_id: uuid.UUID | None = None
+    folder_id: uuid.UUID | None = None
+    granted_by_username: str | None = None
+    created_at: datetime
+
+
+class GrantPermissionRequest(RequestModel):
+    scope_type: ResourceScopeType
+    scope_public_id: uuid.UUID = Field(
+        description="public_id of the course, batch, session or user this grant applies to."
+    )
+    level: ResourcePermissionLevel
+
+
+# =============================================================================
+# SHARING
+# =============================================================================
+
+
+class SharedResourceResponse(APIModel):
+    resource_id: uuid.UUID
+    resource_name: str | None = None
+    shared_with_username: str | None = None
+    shared_by_username: str | None = None
+    created_at: datetime
+
+
+class ShareResourceRequest(RequestModel):
+    user_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=200, description="Users to share this resource with."
+    )
+
+
+class ShareLinkResponse(APIModel):
+    share_token: str | None = None
+    url_path: str | None = Field(
+        default=None, description="Relative path a recipient can open without signing in."
+    )

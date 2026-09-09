@@ -1,0 +1,40 @@
+[project]
+name = "lms-new"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    # Required by FastAPI to parse multipart bodies -- without it the document
+    # upload route raises at request time, not import time, so its absence is
+    # invisible until someone actually uploads a file.
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "email-validator>=2.2",
+    "sqlalchemy[asyncio]>=2.0.36",
+    # Every connection URL in core/config.py is built as `postgresql+psycopg`
+    # (psycopg 3), used both synchronously by Alembic (create_engine) and
+    # asynchronously by the app (create_async_engine) -- one driver serves
+    # both, which is why the async app engine doesn't need asyncpg at all.
+    # `asyncpg` was declared here but never actually referenced by any
+    # connection URL in the codebase; without psycopg installed, neither
+    # Alembic nor the running app can open a database connection at all.
+    "psycopg[binary]>=3.2",
+    "alembic>=1.14",
+    "redis>=5.2",
+    "argon2-cffi>=23.1",
+    "pyjwt[crypto]>=2.9",
+    "pyotp>=2.9",
+    "httpx>=0.27",
+    "python-dotenv>=1.2.2",
+    "python-slugify>=8.0.4",
+]
+
+[project.optional-dependencies]
+# Only needed when STORAGE_MODE=r2. Kept out of the default install so a
+# deployment on local storage doesn't carry the AWS SDK it never calls;
+# `backend/storage/r2.py` imports it lazily and names this extra if missing.
+r2 = ["boto3>=1.35"]

@@ -1,0 +1,82 @@
+"use client";
+
+import type { ComponentProps, ReactNode } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { cn } from "@/lib/utils";
+
+export const DropdownMenu = Menu.Root;
+export const DropdownMenuTrigger = Menu.Trigger;
+export const DropdownMenuGroup = Menu.Group;
+
+export function DropdownMenuContent({
+  className,
+  align = "end",
+  sideOffset = 6,
+  children,
+  ...props
+}: ComponentProps<typeof Menu.Popup> & {
+  align?: "start" | "center" | "end";
+  sideOffset?: number;
+}): ReactNode {
+  return (
+    <Menu.Portal>
+      <Menu.Positioner align={align} sideOffset={sideOffset} className="z-50 outline-none">
+        <Menu.Popup
+          className={cn(
+            "min-w-44 origin-(--transform-origin) rounded-lg border border-border bg-surface p-1 shadow-lg",
+            "data-[open]:animate-[lms-fade-in_120ms_ease-out] data-[closed]:animate-[lms-fade-out_100ms_ease-in]",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+        </Menu.Popup>
+      </Menu.Positioner>
+    </Menu.Portal>
+  );
+}
+
+/**
+ * **This is Base UI, not Radix: the handler is `onClick`, and there is no
+ * `onSelect` prop.**
+ *
+ * The trap is that `onSelect` *is* a real DOM handler on a `<div>` (the text
+ * selection event), so `MenuItemProps` -- which extends the div's props --
+ * accepts it, TypeScript stays silent, and the function is spread onto the
+ * element and never called. The menu item is then simply inert, and nothing
+ * anywhere reports a problem.
+ */
+export function DropdownMenuItem({
+  className,
+  destructive = false,
+  ...props
+}: ComponentProps<typeof Menu.Item> & { destructive?: boolean }): ReactNode {
+  return (
+    <Menu.Item
+      className={cn(
+        "flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none",
+        "data-[highlighted]:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "[&_svg]:size-4 [&_svg]:shrink-0",
+        destructive && "text-danger data-[highlighted]:bg-danger/10",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function DropdownMenuLabel({
+  className,
+  ...props
+}: ComponentProps<typeof Menu.GroupLabel>): ReactNode {
+  return (
+    <Menu.GroupLabel
+      className={cn("px-2.5 py-1.5 text-xs font-semibold text-muted-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+export function DropdownMenuSeparator({ className }: { className?: string }): ReactNode {
+  return <Menu.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} />;
+}

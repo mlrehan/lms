@@ -1,0 +1,34 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+coverage.xml
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# Local object storage (STORAGE_MODE=local) -- uploaded course materials and
+# submissions, never committed. Switching to Cloudflare R2 (STORAGE_MODE=r2)
+# moves these bytes into the bucket instead.
+var/

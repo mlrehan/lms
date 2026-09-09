@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/*
+ * next-themes writes `class="dark"` on <html>, so the dark variant keys off
+ * an ancestor class rather than the media query. Both are defined: the class
+ * is what a deliberate choice sets, and `defaultTheme="system"` resolves to
+ * the class too, so there is exactly one mechanism at runtime.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-ring: var(--ring);
+  --radius-card: 0.75rem;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.21 0.02 260);
+  --surface: oklch(1 0 0);
+  --surface-muted: oklch(0.972 0.004 255);
+  --border: oklch(0.915 0.006 255);
+  --border-strong: oklch(0.85 0.01 255);
+  --muted: oklch(0.955 0.005 255);
+  --muted-foreground: oklch(0.52 0.018 258);
+  --primary: oklch(0.52 0.17 262);
+  --primary-foreground: oklch(0.99 0.002 250);
+  --accent: oklch(0.955 0.02 262);
+  --accent-foreground: oklch(0.34 0.11 262);
+  --danger: oklch(0.58 0.21 25);
+  --danger-foreground: oklch(0.99 0.005 25);
+  --warning: oklch(0.72 0.16 72);
+  --warning-foreground: oklch(0.26 0.06 72);
+  --success: oklch(0.6 0.13 155);
+  --success-foreground: oklch(0.99 0.01 155);
+  --info: oklch(0.62 0.12 235);
+  --info-foreground: oklch(0.99 0.005 235);
+  --ring: oklch(0.62 0.15 262);
+  color-scheme: light;
+}
+
+.dark {
+  --background: oklch(0.185 0.012 262);
+  --foreground: oklch(0.95 0.005 250);
+  --surface: oklch(0.225 0.014 262);
+  --surface-muted: oklch(0.255 0.015 262);
+  --border: oklch(0.31 0.016 262);
+  --border-strong: oklch(0.39 0.02 262);
+  --muted: oklch(0.27 0.015 262);
+  --muted-foreground: oklch(0.7 0.017 258);
+  --primary: oklch(0.68 0.15 262);
+  --primary-foreground: oklch(0.16 0.02 262);
+  --accent: oklch(0.31 0.045 262);
+  --accent-foreground: oklch(0.88 0.05 262);
+  --danger: oklch(0.65 0.19 25);
+  --danger-foreground: oklch(0.15 0.03 25);
+  --warning: oklch(0.78 0.14 72);
+  --warning-foreground: oklch(0.2 0.05 72);
+  --success: oklch(0.7 0.13 155);
+  --success-foreground: oklch(0.16 0.03 155);
+  --info: oklch(0.7 0.11 235);
+  --info-foreground: oklch(0.16 0.02 235);
+  --ring: oklch(0.65 0.14 262);
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /*
+   * A visible focus ring is not decoration: keyboard operation of an admin
+   * console is how a screen reader user, and anyone without a mouse, works.
+   */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 25%, transparent);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+/*
+ * Base UI positions popovers with a CSS-variable-driven transform origin and
+ * exposes open/close state through data attributes. These keyframes are
+ * referenced by the popup primitives.
+ */
+@keyframes lms-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes lms-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
