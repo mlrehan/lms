@@ -61,6 +61,20 @@ class EntityKind:
     label: Any | None = None
 
     @property
+    def pk(self) -> Any:
+        """The model's own primary-key column.
+
+        Read from the mapper rather than assumed to be `id`. Most models in
+        this schema do use `id`, but `Enrollments` is keyed by
+        `enrollment_id`, and hard-coding `.id` made *every* audit page that
+        happened to include an enrollment row fail with an `AttributeError`
+        -- a 500 whose trigger was which rows the page landed on, so it
+        looked intermittent.
+        """
+        columns = list(self.model.__table__.primary_key.columns)
+        return getattr(self.model, columns[0].name)
+
+    @property
     def addressable(self) -> bool:
         """Whether a caller can name a row of this type by public id.
 
@@ -237,15 +251,15 @@ class AuditRepository(BaseRepository[AuditLog]):
             # The four shapes are spelled out rather than assembled, so the
             # selected columns and the unpacking below cannot drift apart.
             if kind.addressable and kind.label is not None:
-                stmt = select(kind.model.id, kind.model.public_id, kind.label)
+                stmt = select(kind.pk, kind.model.public_id, kind.label)
             elif kind.addressable:
-                stmt = select(kind.model.id, kind.model.public_id)
+                stmt = select(kind.pk, kind.model.public_id)
             elif kind.label is not None:
-                stmt = select(kind.model.id, kind.label)
+                stmt = select(kind.pk, kind.label)
             else:
-                stmt = select(kind.model.id)
+                stmt = select(kind.pk)
 
-            stmt = stmt.where(kind.model.id.in_(ids))
+            stmt = stmt.where(kind.pk.in_(ids))
             for row in (await self.session.execute(stmt)).all():
                 row_id = int(row[0])
                 if kind.addressable and kind.label is not None:
@@ -265,7 +279,7 @@ class AuditRepository(BaseRepository[AuditLog]):
         kind = ENTITY_KINDS.get(entity_type)
         if kind is None or not kind.addressable:
             return None
-        stmt = select(kind.model.id).where(kind.model.public_id == public_id)
+        stmt = select(kind.pk).where(kind.model.public_id == public_id)
         row = (await self.session.execute(stmt)).scalar_one_or_none()
         return int(row) if row is not None else None
 
@@ -275,3 +289,32 @@ def _as_label(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text[:200] or None
+
+
+def _check_registry() -> None:
+    """Refuse to start on a registry entry that cannot be queried.
+
+    Every shape in `resolve_entities` selects `kind.pk`, so a registered
+    model needs exactly one primary-key column. This ran as an
+    `AttributeError` at *read* time before -- `Enrollments` is keyed by
+    `enrollment_id`, not `id`, so any audit page that happened to include an
+    enrollment row returned a 500 while neighbouring pages were fine. A
+    failure whose trigger is which rows a query lands on is the worst kind to
+    diagnose, so the check happens once, at import, where it names the entry.
+    """
+    for entity_type, kind in ENTITY_KINDS.items():
+        columns = list(kind.model.__table__.primary_key.columns)
+        if len(columns) != 1:
+            raise RuntimeError(
+                f"Audit entity {entity_type!r} ({kind.model.__name__}) has a "
+                f"{len(columns)}-column primary key; resolve_entities can only "
+                "address a single-column one."
+            )
+        if not hasattr(kind.model, columns[0].name):
+            raise RuntimeError(
+                f"Audit entity {entity_type!r} ({kind.model.__name__}) has no "
+                f"mapped attribute for its primary key column {columns[0].name!r}."
+            )
+
+
+_check_registry()

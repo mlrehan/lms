@@ -65,7 +65,7 @@ function CreateRoleDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           title="Create a role"
           description="A new role starts with no permissions. Grant them on the role's own card once it exists, so nobody is handed authority by a typo in a create form."
         />
-        <form onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
+        <form method="post" onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
           {banner ? (
             <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
               {banner}

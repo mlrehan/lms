@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bell,
+  Check,
   Clock,
   LogOut,
   Mail,
@@ -12,9 +13,10 @@ import {
   Monitor,
   Moon,
   Sun,
+  SunMoon,
   User as UserIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { api } from "@/lib/api/client";
 import type { UnreadCountResponse } from "@/lib/api/types";
 import { useSession, useSignOut } from "@/lib/auth/session";
@@ -57,31 +59,41 @@ function useUnread(path: string, enabled: boolean): number {
 
 function ThemeMenu(): ReactNode {
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+
+  /*
+   * The trigger shows a fixed icon rather than the current theme's.
+   *
+   * Mirroring the theme here would mean rendering an icon the server cannot
+   * know, which needs a mounted flag, which means setting state from an
+   * effect and a second render on every page load. The active choice is
+   * marked inside the menu instead, where it is more useful anyway.
+   */
+  const options = [
+    { value: "light", label: "Light", icon: Sun },
+    { value: "dark", label: "Dark", icon: Moon },
+    { value: "system", label: "Match system", icon: Monitor },
+  ] as const;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
           <Button variant="ghost" size="icon" aria-label="Appearance">
-            {/* Before mount the resolved theme is unknown; rendering either
-                icon then produces a hydration mismatch. */}
-            {!mounted ? <Monitor /> : theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />}
+            <SunMoon />
           </Button>
         }
       />
       <DropdownMenuContent>
         <DropdownMenuLabel>Appearance</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => setTheme("light")}>
-          <Sun /> Light
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("dark")}>
-          <Moon /> Dark
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("system")}>
-          <Monitor /> Match system
-        </DropdownMenuItem>
+        {options.map((option) => {
+          const Icon = option.icon;
+          return (
+            <DropdownMenuItem key={option.value} onClick={() => setTheme(option.value)}>
+              <Icon /> {option.label}
+              {theme === option.value ? <Check className="ml-auto" /> : null}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

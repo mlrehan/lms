@@ -120,7 +120,6 @@ def render_object(schema: dict, depth: int) -> str:
 
 
 out: list[str] = [
-    "/* eslint-disable */",
     "/**",
     " * GENERATED from the LMS backend's OpenAPI document -- do not edit by hand.",
     " *",

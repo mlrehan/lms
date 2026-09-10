@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Eye } from "lucide-react";
 import { toast } from "sonner";
-import { api, downloadFile, segment, type QueryParams } from "@/lib/api/client";
+import { api, downloadFile, type QueryParams } from "@/lib/api/client";
 import type { AuditCatalogResponse, AuditLogResponse, PageAuditLogResponse } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";

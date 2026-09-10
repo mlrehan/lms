@@ -20,6 +20,8 @@ import { apiBaseUrl } from "@/lib/env";
 import { ACCESS_COOKIE, REFRESH_COOKIE, clearSessionCookies, writeSessionCookies } from "@/lib/server/session";
 import {
   NULL_BODY_STATUSES,
+  UpstreamTimeout,
+  fetchUpstream,
   forwardableRequestHeaders,
   forwardableResponseHeaders,
   refreshTokens,
@@ -53,7 +55,7 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
   const send = async (token: string | undefined): Promise<Response> => {
     const headers = forwardableRequestHeaders(request.headers);
     if (token) headers.set("authorization", `Bearer ${token}`);
-    return fetch(target, {
+    return fetchUpstream(target, {
       method,
       headers,
       body: body && body.byteLength > 0 ? body : undefined,
@@ -62,7 +64,14 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
     });
   };
 
-  let upstream = await send(accessToken);
+  let upstream: Response;
+  try {
+    upstream = await send(accessToken);
+  } catch (error) {
+    // An unreachable or unresponsive API is reported as a gateway failure,
+    // not left to hang. The console's error state knows what to do with it.
+    return gatewayError(error);
+  }
   let rotated: Awaited<ReturnType<typeof refreshTokens>> = null;
 
   const mayRefresh = !NEVER_REFRESH.some((p) => suffix === p || suffix.startsWith(`${p}/`));
@@ -73,7 +82,11 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
     await upstream.body?.cancel();
     rotated = await refreshTokens(refreshToken);
     if (rotated) {
-      upstream = await send(rotated.access_token);
+      try {
+        upstream = await send(rotated.access_token);
+      } catch (error) {
+        return gatewayError(error);
+      }
     }
   }
 
@@ -94,6 +107,19 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
   }
 
   return response;
+}
+
+function gatewayError(error: unknown): NextResponse {
+  const timedOut = error instanceof UpstreamTimeout;
+  return NextResponse.json(
+    {
+      code: timedOut ? "UPSTREAM_TIMEOUT" : "UPSTREAM_UNAVAILABLE",
+      message: timedOut
+        ? "The server did not respond in time. It may be under load; try again."
+        : "The server could not be reached.",
+    },
+    { status: timedOut ? 504 : 502 },
+  );
 }
 
 type Context = { params: Promise<{ path: string[] }> };

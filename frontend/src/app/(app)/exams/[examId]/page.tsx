@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Save, Trash2 } from "lucide-react";
@@ -28,7 +28,7 @@ import {
   TabsTab,
 } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Field, FormActions, Input } from "@/components/ui/form";
+import { FormActions, Input } from "@/components/ui/form";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -68,14 +68,17 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
     enabled: Boolean(exam.batch_id),
   });
 
+  const resultItems = results.data?.items;
+  const rosterItems = roster.data?.items;
+
   const initial = useMemo<MarkRow[]>(() => {
     const byStudent = new Map<string, ExamResultResponse>();
-    for (const result of results.data?.items ?? []) byStudent.set(result.student_id, result);
+    for (const result of resultItems ?? []) byStudent.set(result.student_id, result);
 
     const rows: MarkRow[] = [];
     const seen = new Set<string>();
 
-    for (const enrollment of roster.data?.items ?? []) {
+    for (const enrollment of rosterItems ?? []) {
       const existing = byStudent.get(enrollment.student_id);
       seen.add(enrollment.student_id);
       rows.push({
@@ -86,7 +89,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
         remarks: existing?.remarks ?? "",
       });
     }
-    for (const result of results.data?.items ?? []) {
+    for (const result of resultItems ?? []) {
       if (seen.has(result.student_id)) continue;
       rows.push({
         studentId: result.student_id,
@@ -97,10 +100,16 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
       });
     }
     return rows;
-  }, [results.data, roster.data]);
+  }, [resultItems, rosterItems]);
 
   const [rows, setRows] = useState<MarkRow[] | null>(null);
-  useEffect(() => setRows(null), [initial]);
+  // Adjust during render rather than in an effect; see the register on the
+  // session screen for why.
+  const [seed, setSeed] = useState(initial);
+  if (seed !== initial) {
+    setSeed(initial);
+    setRows(null);
+  }
   const current = rows ?? initial;
 
   const record = useApiMutation<ExamResultResponse[], MarkRow[]>({

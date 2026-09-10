@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -183,7 +183,7 @@ function ProfileTab({ user, canEdit }: { user: UserResponse; canEdit: boolean })
   const isPublic = watch("is_public");
 
   return (
-    <form onSubmit={handleSubmit((values) => save.mutate(values))} noValidate className="space-y-5">
+    <form method="post" onSubmit={handleSubmit((values) => save.mutate(values))} noValidate className="space-y-5">
       <Card>
         <CardHeader title="Identity" />
         <CardBody className="space-y-4">
@@ -375,9 +375,18 @@ function ProfileTab({ user, canEdit }: { user: UserResponse; canEdit: boolean })
 function RolesTab({ user }: { user: UserResponse }) {
   const { permissions } = useSession();
   const canEdit = permissions.has("user.update");
-  const [selected, setSelected] = useState<string[]>(user.roles ?? []);
+  const held = user.roles ?? [];
+  const [selected, setSelected] = useState<string[]>(held);
 
-  useEffect(() => setSelected(user.roles ?? []), [user.roles]);
+  // Re-seed when the saved roles change underneath the checkboxes. Adjusting
+  // during render rather than in an effect avoids rendering the stale set
+  // once first, which on this screen would briefly show the old answer to
+  // "what can this person do".
+  const [seed, setSeed] = useState(user.roles);
+  if (seed !== user.roles) {
+    setSeed(user.roles);
+    setSelected(held);
+  }
 
   const { data: roles } = useQuery({
     queryKey: ["roles"],

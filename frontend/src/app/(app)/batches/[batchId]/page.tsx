@@ -44,12 +44,7 @@ import { UserPicker } from "@/components/domain/user-picker";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
-import {
-  formatCalendarDate,
-  formatDateTime,
-  fromLocalInputValue,
-  toLocalInputValue,
-} from "@/lib/format/datetime";
+import { formatCalendarDate, formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
 /* -------------------------------------------------------------------------- */
@@ -167,7 +162,7 @@ function OverviewTab({ batch, canEdit }: { batch: BatchResponse; canEdit: boolea
   const isActive = watch("is_active");
 
   return (
-    <form onSubmit={handleSubmit((values) => save.mutate(values))} className="space-y-4" noValidate>
+    <form method="post" onSubmit={handleSubmit((values) => save.mutate(values))} className="space-y-4" noValidate>
       <StatGrid>
         <Stat label="Enrolled" value={batch.enrolled_count} />
         <Stat
@@ -464,7 +459,7 @@ function SessionsTab({ batch }: { batch: BatchResponse }) {
             title="Schedule a session"
             description={`Times are entered in ${timeZone} and stored in UTC.`}
           />
-          <form onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
+          <form method="post" onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
             {banner ? (
               <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {banner}

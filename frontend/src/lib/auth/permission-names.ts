@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * GENERATED from `backend/core/permissions.py` -- do not edit by hand.
  *

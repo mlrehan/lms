@@ -32,9 +32,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     }
   }, [isSignedOut, pathname, router]);
 
-  useEffect(() => {
-    setNavOpen(false);
-  }, [pathname]);
+  // There is deliberately no effect closing the drawer on navigation: every
+  // link inside it calls `onNavigate`, which closes it directly. An effect
+  // here would set state during render for the same result.
 
   if (isLoading || isSignedOut) {
     return (

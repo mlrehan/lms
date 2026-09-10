@@ -57,13 +57,32 @@ function clientIp(request: NextRequest): string | null {
   return null;
 }
 
-async function fetchJson(url: string, timeoutMs = 3000): Promise<unknown | null> {
+/**
+ * A descriptive User-Agent, which is not optional here.
+ *
+ * `ipapi.co` answers **429 RateLimited** to requests carrying Node's default
+ * user agent (or none at all) and 200 to the same request with a real one.
+ * Without this the lookup failed silently on every call: the route returned
+ * the IP it had found and null for everything else, which looks exactly like
+ * "this IP has no known location".
+ */
+const USER_AGENT = "LMS-Console/1.0 (+timezone-discovery)";
+
+async function fetchJson(url: string, timeoutMs = 4000): Promise<unknown | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { "user-agent": USER_AGENT, accept: "application/json" },
+    });
     if (!response.ok) return null;
-    return await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
+    // ipapi also reports refusal *inside* a 200 body, so the status alone is
+    // not enough to decide the lookup worked.
+    if (body && typeof body === "object" && body.error === true) return null;
+    return body;
   } catch {
     return null;
   } finally {
@@ -71,11 +90,15 @@ async function fetchJson(url: string, timeoutMs = 3000): Promise<unknown | null>
   }
 }
 
-async function fetchText(url: string, timeoutMs = 3000): Promise<string | null> {
+async function fetchText(url: string, timeoutMs = 4000): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    const response = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { "user-agent": USER_AGENT },
+    });
     if (!response.ok) return null;
     return (await response.text()).trim();
   } catch {

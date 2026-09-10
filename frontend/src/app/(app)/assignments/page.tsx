@@ -115,7 +115,7 @@ function CreateAssignmentDialog({
           title="New assignment"
           description={`The due date is entered in ${timeZone} and stored in UTC.`}
         />
-        <form onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
+        <form method="post" onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
           {banner ? (
             <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
               {banner}

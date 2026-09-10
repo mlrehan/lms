@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Globe } from "lucide-react";
 import { api } from "@/lib/api/client";
@@ -13,6 +13,7 @@ import { InlineSpinner } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { usePreferences, useDisplayTimeZone } from "@/lib/preferences";
 import { browserTimeZone, describeTimeZone, formatDateTime } from "@/lib/format/datetime";
+import { useNow } from "@/lib/format/use-now";
 
 interface LocaleHint {
   ip: string | null;
@@ -58,30 +59,32 @@ export function TimeZoneMenu(): ReactNode {
     retry: false,
   });
 
-  const [now, setNow] = useState<Date | null>(null);
-  useEffect(() => {
-    // Rendered only after mount: a clock in server-rendered HTML is wrong by
-    // the time it reaches the browser and causes a hydration mismatch.
-    setNow(new Date());
-    const timer = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  // A clock in server-rendered HTML is wrong by the time it reaches the
+  // browser, so this is null until hydration.
+  const now = useNow();
+
+  // Read out of the query results before the memo: depending on
+  // `hint?.timezone` makes the React Compiler infer the whole `hint` object
+  // as the dependency, which it then refuses to memoize around.
+  const zoneCodes = zones;
+  const accountTimeZone = user?.timezone ?? null;
+  const suggestedTimeZone = hint?.timezone ?? null;
 
   const options = useMemo(() => {
     const names = new Set<string>();
-    for (const zone of zones ?? []) if (zone.code) names.add(zone.code);
+    for (const zone of zoneCodes ?? []) if (zone.code) names.add(zone.code);
     // The browser's own zone is always offered, even when the institution's
     // table does not list it -- otherwise the most accurate answer available
     // is the one option the person cannot pick.
     names.add(browserTimeZone());
-    if (user?.timezone) names.add(user.timezone);
-    if (hint?.timezone) names.add(hint.timezone);
+    if (accountTimeZone) names.add(accountTimeZone);
+    if (suggestedTimeZone) names.add(suggestedTimeZone);
     const term = filter.trim().toLowerCase();
     return [...names]
       .filter((name) => !term || name.toLowerCase().includes(term))
       .sort()
       .slice(0, 400);
-  }, [zones, filter, user?.timezone, hint?.timezone]);
+  }, [zoneCodes, filter, accountTimeZone, suggestedTimeZone]);
 
   return (
     <>
@@ -110,8 +113,8 @@ export function TimeZoneMenu(): ReactNode {
                 ) : (
                   <Badge tone="neutral">From this browser</Badge>
                 )}
-                {hint?.timezone && hint.timezone !== active ? (
-                  <Badge tone="warning">Your network suggests {hint.timezone}</Badge>
+                {suggestedTimeZone && suggestedTimeZone !== active ? (
+                  <Badge tone="warning">Your network suggests {suggestedTimeZone}</Badge>
                 ) : null}
               </div>
             </div>

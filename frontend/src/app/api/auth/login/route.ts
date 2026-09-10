@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiBaseUrl } from "@/lib/env";
 import { writeSessionCookies } from "@/lib/server/session";
+import { UpstreamTimeout, fetchUpstream } from "@/lib/server/upstream";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +25,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const upstream = await fetch(`${apiBaseUrl()}/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetchUpstream(`${apiBaseUrl()}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+  } catch (error) {
+    const timedOut = error instanceof UpstreamTimeout;
+    return NextResponse.json(
+      {
+        code: timedOut ? "UPSTREAM_TIMEOUT" : "UPSTREAM_UNAVAILABLE",
+        message: timedOut
+          ? "The sign-in service did not respond in time. Please try again."
+          : "The sign-in service could not be reached.",
+      },
+      { status: timedOut ? 504 : 502 },
+    );
+  }
 
   const text = await upstream.text();
   if (!upstream.ok) {

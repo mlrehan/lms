@@ -1604,6 +1604,160 @@ code worked fine under the test client, which does honour it. Run with
    `session.expire(course, ["tutors"])` before the re-read. Re-querying alone
    is not a refresh.
 
+## The console (frontend)
+
+`frontend/` holds the **LMS Console**: Next.js 16 (App Router) + TypeScript
+(strict) + Tailwind v4 + Base UI + TanStack Query + react-hook-form/zod +
+Recharts + Vitest. 43 routes covering every domain the API serves — users,
+roles, permissions, organizations, guardians, courses, batches, timetable,
+enrollments, attendance, assignments, quizzes, examinations, grade book,
+transcripts, resources, announcements, discussions, messages, notifications,
+academic setup, settings, integrations, reports, audit, security and ops.
+
+Setup, architecture and the checks: [frontend/README.md](frontend/README.md).
+**Where the last session stopped, what is left running on the machine, and the
+four outstanding items:
+[frontend/docs/SESSION-STATE.md](frontend/docs/SESSION-STATE.md) — read that
+first when resuming.**
+What the console deliberately does **not** offer, and why:
+[frontend/docs/BACKEND-GAPS.md](frontend/docs/BACKEND-GAPS.md).
+
+**`frontend/` was empty before this pass.** The brief said not to introduce a
+framework if the project already had an appropriate one; it had none, so the
+stack is a decision made here rather than one inherited, and is recorded as
+such.
+
+### Two rules the rest follows from
+
+1. **The browser never holds a token.** Both tokens live in `httpOnly`
+   cookies; every call goes through the same-origin BFF proxy at
+   `/api/backend/[...path]`, which attaches the bearer server-side. Verified
+   live: `document.cookie` is empty and both storages hold nothing. There are
+   deliberately no `NEXT_PUBLIC_*` variables — the browser is never told where
+   the API is.
+2. **The backend is the authorization layer.** `can("user.create")` decides
+   what to *show*. Proven live: signed in as a Tutor, the sidebar renders 20
+   of 32 screens, `/audit` refuses by name, and calling `audit-logs`, `roles`,
+   `settings` and `security/summary` straight through the proxy returns
+   **403** from the API while `courses` returns 200.
+
+Nothing branches on a role name. Permissions come from `GET /auth/me`, which
+returns the caller's effective set after role resolution.
+
+### Generated, not transcribed
+
+| File | Source | Regenerate |
+|---|---|---|
+| `src/lib/api/types.ts` | the API's own OpenAPI document (251 schemas) | `python frontend/scripts/generate_api_types.py` |
+| `src/lib/auth/permission-names.ts` | `backend/core/permissions.py` (97 permissions) | `python frontend/scripts/generate_permissions.py` |
+| `src/test/role-grants.ts` | the same, role grants — **test fixture only** | as above |
+
+Hand-writing 251 response shapes is how a frontend ends up describing an API
+that no longer exists. The permission union is the same idea one level up:
+`can("user.creat")` is a compile error rather than a control that silently
+never appears for anybody. `role-grants.ts` sits under `src/test/` and not
+`src/lib/` on purpose — a role-to-permission map beside the permission helpers
+is an invitation to branch on a role name.
+
+### Five defects found by driving it, not by reading it
+
+Every one was invisible to a green suite and to `curl`.
+
+1. **The sign-in form put the password in the URL.** A click landing during a
+   slow dev rebuild — before hydration — produced
+   `GET /login?identifier=superadmin&password=...`, and from there browser
+   history, the access log and the next request's `Referer`. The trigger was
+   timing; the defect was that a form with no `method` defaults to GET, so any
+   submit escaping React serialises its fields. Every form in the console now
+   declares `method="post"`, and `src/app/forms.test.ts` fails if one does not.
+2. **Sign-out revoked nothing.** `POST /auth/logout` needs a bearer token *and*
+   the raw refresh token; the route sent only the body, got a 401, and cleared
+   the cookies anyway. Cookies gone, console back at sign-in, session still
+   live in `tokens` until natural expiry — indistinguishable from success.
+   Found by checking the table, not the browser. It was visible at all because
+   the route reports `revoked` honestly rather than always claiming `ok`. Now:
+   token created 17:51:54 then **revoked at 17:51:56**, and `?scope=all`
+   revokes every session.
+3. **The proxy had no upstream timeout.** With the API stopped mid-request the
+   console sat on "Loading your account" for **118 seconds** with no error,
+   because nothing ever rejected. Bounded now by *time-to-first-byte* rather
+   than total duration, so a large CSV export still streams for as long as it
+   needs; a stalled API answers 504 and the error state takes over.
+4. **`GET /audit-logs` returned a 500 depending on which rows the page hit.**
+   `resolve_entities` selected `kind.model.id`, but `Enrollments` is keyed by
+   `enrollment_id`. Any audit page containing an enrollment row crashed while
+   its neighbours were fine. The primary key is now read from the mapper, and
+   `_check_registry()` runs at import so a future model with a differently
+   named key fails at startup naming the entry, instead of intermittently at
+   read time. One of 29 registered types was affected.
+5. **The spec section 53 IP lookup silently returned nothing.** `ipapi.co`
+   answers **429 RateLimited** to Node's default user agent and 200 to a real
+   one, so the route reported the IP it found and null for everything else —
+   which reads as "this address has no known location". With a descriptive
+   User-Agent it resolves `103.170.173.46` to `Asia/Dhaka, BD, bn-BD`, and the
+   response says whether the address was the client's or the server's egress.
+
+### Testing
+
+`npm test` — 71 tests over the pieces where being wrong is silent: the
+permission set, the route-to-permission map, the redirect allowlist, query
+building, date/time conversion, proxy header stripping, refresh
+serialisation, the upstream timeout, the sign-out contract, and the **RBAC
+navigation matrix** driven from the backend's real grants.
+
+`python frontend/scripts/mutation_test.py` breaks each guard in turn and
+expects the test written for it to go red. A negative assertion is worth
+nothing until a mutation proves it can fail -- and on the first full sweep one
+of the fourteen survived: the repo-wide check that every form declares
+`method="post"` searched for that text as a *substring*, and the explanatory
+comment inside the sign-in form tag contains it, so deleting the real
+attribute left the check green. The test now strips comments and matches the
+attribute as an attribute. **The sweep caught a test that could not fail on
+the same day it was written.**
+
+**Writing the RBAC matrix from the specification's prose produced four
+failures, and the implementation was right in all four.** An Administrator
+holds `setting.read` and `permission.read` (they may look, not change); a
+Student holds `enrollment.read` (their own); Tutors and Guardians both hold
+`user.read` (to look up the people they are responsible for). Read access and
+write access are separate grants and the sidebar gates on read. The test now
+says so rather than asserting what the prose implied.
+
+### Timezones (spec section 53)
+
+The database stores UTC and the API returns UTC; the console only decides how
+an instant is *shown*. Precedence: an explicit choice in this browser, then
+the account's `timezone`, then the browser's own. `GET /api/locale` implements
+the `icanhazip` to `ipapi.co` chain and is deliberately **last** and lazy: it
+tells two third parties an IP address, and behind a proxy that address is the
+server's — which the response states.
+
+Two conversions carry the weight. Instants with no offset are marked UTC
+before parsing; read as local time the whole display is wrong by the viewer's
+offset, which looks like a data problem. And `datetime-local` values are
+anchored at the *candidate instant*, not at "now", so 09:00 in Europe/London
+is 09:00 in both January and June. Verified live: the same stored sessions
+render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
+
+### Environment notes
+
+- `next dev` needs `frontend/.env.local` with `LMS_API_URL`; there is no
+  fallback, and the error names the variable.
+- **ESLint 10 cannot load `next/core-web-vitals`** — the bundled
+  `eslint-plugin-react` calls `context.getFilename()`, removed in ESLint 10,
+  and crashes on the first file. `eslint.config.mjs` assembles the TypeScript,
+  React Hooks and Next core-web-vitals rules directly instead. Nothing is
+  suppressed; what is lost is `eslint-plugin-jsx-a11y`, which cannot be
+  imported on its own because it is nested inside `eslint-config-next`. Stated
+  in the config rather than left as a silent gap.
+- Vitest's default `forks` pool times out spawning workers on this host; the
+  config uses `threads`, caps concurrency at 2 and raises the per-test timeout
+  to 30s. With seven files in flight the CPU contention alone pushed component
+  renders past the default 5s, which looks exactly like a slow component and
+  is not one.
+- **Do not run the test suite beside `next dev` and the API**: they compete
+  for the same cores and vitest starts failing to spawn workers at all.
+
 ## Known gaps — flagged, not forgotten, not yet addressed
 
 - **Messaging and academic administration are unbuilt** (spec §16, §23) —
@@ -1694,4 +1848,23 @@ uv sync                                     # installs psycopg, drops the unused
 .venv\Scripts\python.exe -m backend.main    # NOT `uvicorn ...` -- see the event-loop note above
 # then: curl http://localhost:8000/readyz
 #       http://localhost:8000/docs for the interactive API browser
+```
+
+The console, in a second terminal (it needs the API already running):
+
+```bash
+cd D:\LAIT\LMS_NEW\frontend
+npm install
+# frontend/.env.local must contain: LMS_API_URL=http://127.0.0.1:8000/api/v1
+npm run dev                                 # http://localhost:3000
+npm run typecheck && npm run lint && npm test && npm run build
+python scripts/mutation_test.py             # breaks each guard, expects red
+```
+
+Regenerate the derived frontend files after any backend schema or permission
+change -- they are read from the running application, not maintained by hand:
+
+```bash
+.venv\Scripts\python.exe frontend\scripts\generate_api_types.py
+.venv\Scripts\python.exe frontend\scripts\generate_permissions.py
 ```

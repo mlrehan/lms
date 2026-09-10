@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardCheck, ExternalLink, Save, Trash2 } from "lucide-react";
@@ -69,10 +69,13 @@ function Register({ session }: { session: SessionSessionResponse }) {
 
   const [rows, setRows] = useState<RegisterRow[] | null>(null);
 
+  const rosterItems = roster.data?.items;
+  const markItems = existing.data?.items;
+
   const initial = useMemo<RegisterRow[]>(() => {
     const marks = new Map<string, AttendanceResponse>();
-    for (const record of existing.data?.items ?? []) marks.set(record.student_id, record);
-    return (roster.data?.items ?? []).map((enrollment) => {
+    for (const record of markItems ?? []) marks.set(record.student_id, record);
+    return (rosterItems ?? []).map((enrollment) => {
       const mark = marks.get(enrollment.student_id);
       return {
         studentId: enrollment.student_id,
@@ -84,9 +87,19 @@ function Register({ session }: { session: SessionSessionResponse }) {
         remarks: mark?.remarks ?? "",
       };
     });
-  }, [roster.data, existing.data]);
+  }, [rosterItems, markItems]);
 
-  useEffect(() => setRows(null), [initial]);
+  /*
+   * Discard local edits when the roster or the saved marks change underneath
+   * them. Adjusting state *during render* is the mechanism React documents
+   * for this; doing it in an effect renders the stale rows once first, and
+   * the second render is visible as a flicker on a long register.
+   */
+  const [seed, setSeed] = useState(initial);
+  if (seed !== initial) {
+    setSeed(initial);
+    setRows(null);
+  }
 
   const current = rows ?? initial;
 

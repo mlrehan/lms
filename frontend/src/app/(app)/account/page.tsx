@@ -69,6 +69,7 @@ function ChangePassword() {
       />
       <CardBody>
         <form
+          method="post"
           className="max-w-md space-y-4"
           onSubmit={handleSubmit((values) => change.mutate(values))}
           noValidate

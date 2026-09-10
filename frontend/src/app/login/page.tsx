@@ -10,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/primitives";
+import { safeRedirect } from "@/lib/redirect";
 
 const schema = z.object({
   identifier: z.string().trim().min(1, "Enter your username or email address."),
@@ -18,20 +19,6 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
-
-/**
- * Only paths inside this console are accepted as a post-sign-in destination.
- *
- * `?next=` is attacker-controllable: a link that signs someone in and then
- * bounces them to another site is a working phishing step, and one that
- * bounces to `javascript:` is worse. A value must start with a single `/`
- * and not `//` (which a browser reads as a protocol-relative *absolute* URL).
- */
-function safeRedirect(value: string | null): string {
-  if (!value) return "/";
-  if (!value.startsWith("/") || value.startsWith("//")) return "/";
-  return value;
-}
 
 function LoginForm() {
   const router = useRouter();
@@ -81,7 +68,26 @@ function LoginForm() {
   const remember = watch("remember_me");
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4" noValidate>
+    <form
+      onSubmit={onSubmit}
+      /*
+       * `method="post"` matters even though React handles the submit.
+       *
+       * A form with no method defaults to GET, and a submit that escapes
+       * React -- a click landing before hydration, JavaScript failing to load
+       * -- then serialises every field into the query string. That was
+       * observed here during a slow dev rebuild: the password went into the
+       * URL, and from there into browser history, the server's access log and
+       * the `Referer` of the next request.
+       *
+       * With POST and no `action`, the same escaped submit posts to this page
+       * and fails visibly instead of leaking a credential silently. The
+       * credential never reaches a URL either way.
+       */
+      method="post"
+      className="space-y-4"
+      noValidate
+    >
       {formError ? (
         <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
           {formError}

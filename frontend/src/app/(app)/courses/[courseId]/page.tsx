@@ -147,7 +147,7 @@ function OverviewTab({ course, canEdit }: { course: CourseResponse; canEdit: boo
   });
 
   return (
-    <form onSubmit={handleSubmit((values) => save.mutate(values))} className="space-y-4" noValidate>
+    <form method="post" onSubmit={handleSubmit((values) => save.mutate(values))} className="space-y-4" noValidate>
       <Card>
         <CardHeader title="Details" />
         <CardBody className="space-y-4">
@@ -361,7 +361,7 @@ function BatchesTab({ course }: { course: CourseResponse }) {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent size="md">
           <DialogHeader title="New batch" description={`A new cohort for ${course.title}.`} />
-          <form onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
+          <form method="post" onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
             {banner ? (
               <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {banner}

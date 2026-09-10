@@ -36,7 +36,7 @@ import {
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Badge, Card, CardBody, CardHeader, Switch } from "@/components/ui/primitives";
+import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -187,18 +187,6 @@ function ResourceDrawer({
     queryKey: ["resources", "detail", resourceId],
     queryFn: () => api.get<ResourceResponse>(`/resources/${segment(resourceId!)}`),
     enabled: resourceId !== null,
-  });
-
-  const shares = useQuery({
-    queryKey: ["resources", resourceId, "shares"],
-    queryFn: () =>
-      api.post<SharedResourceResponse[]>(`/resources/${segment(resourceId!)}/share`, {
-        body: { user_ids: [] },
-      }),
-    // Deliberately not fetched: the API has no GET for a resource's share
-    // list, and POSTing an empty share to read it would be a write pretending
-    // to be a read. See docs/BACKEND-GAPS.md.
-    enabled: false,
   });
 
   const grants = useQuery({

@@ -11,6 +11,55 @@
 
 import { apiBaseUrl } from "@/lib/env";
 
+/**
+ * How long the API has to *start* responding.
+ *
+ * The timeout is cleared the moment the response headers arrive, so it bounds
+ * time-to-first-byte and leaves the body free to stream for as long as it
+ * needs -- a large CSV export or a file download must not be cut off by the
+ * same clock that catches an unresponsive server.
+ *
+ * Without this, `fetch` waits indefinitely: when the API was stopped
+ * mid-request during development the console sat on "Loading your account"
+ * for 118 seconds with no error, because nothing ever rejected. Failing at 30
+ * seconds instead surfaces the error state, which says what happened and
+ * offers a retry.
+ */
+export const UPSTREAM_HEADERS_TIMEOUT_MS = Number(
+  process.env.LMS_API_TIMEOUT_MS ?? 30_000,
+);
+
+/**
+ * `fetch`, bounded by time-to-first-byte rather than total duration.
+ *
+ * Throws `UpstreamTimeout` when the API does not begin responding in time, so
+ * the caller can answer 504 instead of hanging or reporting a generic 500.
+ */
+export class UpstreamTimeout extends Error {
+  constructor() {
+    super(`The API did not respond within ${UPSTREAM_HEADERS_TIMEOUT_MS}ms.`);
+    this.name = "UpstreamTimeout";
+  }
+}
+
+export async function fetchUpstream(
+  input: string | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new UpstreamTimeout();
+    throw error;
+  } finally {
+    // Cleared as soon as the headers are in. The body streams unbounded from
+    // here, which is the point.
+    clearTimeout(timer);
+  }
+}
+
 export interface Tokens {
   access_token: string;
   refresh_token: string;
@@ -25,7 +74,7 @@ export async function refreshTokens(refreshToken: string): Promise<Tokens | null
 
   const attempt = (async (): Promise<Tokens | null> => {
     try {
-      const response = await fetch(`${apiBaseUrl()}/auth/refresh`, {
+      const response = await fetchUpstream(`${apiBaseUrl()}/auth/refresh`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),

@@ -54,9 +54,14 @@ export function UserPicker({
     return () => clearTimeout(timer);
   }, [term]);
 
-  useEffect(() => {
+  // Forget the remembered label when the caller clears the field from
+  // outside. Done during render rather than in an effect so the stale name is
+  // never painted after the value has already gone.
+  const [lastValue, setLastValue] = useState(value);
+  if (lastValue !== value) {
+    setLastValue(value);
     if (!value) setSelected(null);
-  }, [value]);
+  }
 
   const { data, isFetching } = useQuery({
     queryKey: ["users", "picker", debounced, role ?? null],

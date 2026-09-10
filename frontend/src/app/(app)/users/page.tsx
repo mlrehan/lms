@@ -88,6 +88,7 @@ function CreateUserDialog({
           description="The account is usable immediately. This deployment sends no email, so there is no invitation or verification step -- you are the vouching step, and you must pass the password on yourself."
         />
         <form
+          method="post"
           className="space-y-4"
           onSubmit={handleSubmit((values) => create.mutate(values))}
           noValidate

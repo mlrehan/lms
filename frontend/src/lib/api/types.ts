@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * GENERATED from the LMS backend's OpenAPI document -- do not edit by hand.
  *
