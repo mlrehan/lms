@@ -15,6 +15,7 @@ import type {
   UnlockResponse,
   UserResponse,
 } from "@/lib/api/types";
+import type { UserLoginAccessResponse } from "@/lib/api/types";
 import { GendersValues, UserStatusValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
@@ -500,6 +501,20 @@ function SecurityTab({ user }: { user: UserResponse }) {
     onSuccess: () => setPassword(""),
   });
 
+  const setLoginAccess = useApiMutation<UserLoginAccessResponse, boolean>({
+    mutationFn: (canLogin) =>
+      api.put<UserLoginAccessResponse>(`/users/${segment(user.public_id)}/login-access`, {
+        body: { can_login: canLogin },
+      }),
+    success: (result) =>
+      result.can_login
+        ? result.default_password_in_use
+          ? "Sign-in enabled. This account still has the shared default password — set a new one before passing it on."
+          : "Sign-in enabled."
+        : "Sign-in disabled. Any open session was ended.",
+    invalidate: [["users"]],
+  });
+
   const unlock = useApiMutation<UnlockResponse, void>({
     mutationFn: () =>
       api.post<UnlockResponse>(`/security/accounts/${segment(user.public_id)}/unlock`),
@@ -522,6 +537,8 @@ function SecurityTab({ user }: { user: UserResponse }) {
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge value={user.status} kind="user" />
             {user.is_locked ? <Badge tone="danger">Locked out</Badge> : null}
+            {!user.can_login ? <Badge tone="warning">Sign-in off</Badge> : null}
+            {user.is_synced ? <Badge>Provisioned from LAIT</Badge> : null}
             <span className="text-xs text-muted-foreground">
               Last signed in {formatDateTime(user.last_login, { timeZone })} · created{" "}
               {formatDateTime(user.created_at, { timeZone })}
@@ -553,6 +570,24 @@ function SecurityTab({ user }: { user: UserResponse }) {
               ) : null}
             </div>
           ) : null}
+
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Allow this person to sign in</p>
+              <p className="text-xs text-muted-foreground">
+                {user.is_synced
+                  ? "Accounts provisioned from LAIT start with sign-in off and a shared default password. Turn this on only once you have set a password of their own, or told them to reset it."
+                  : "Off blocks every sign-in and ends their open sessions, without changing their status or roles."}
+              </p>
+              {isSelf ? <p className="text-xs text-warning">You cannot change your own sign-in access.</p> : null}
+            </div>
+            <Switch
+              aria-label="Allow sign-in"
+              checked={user.can_login ?? true}
+              disabled={!permissions.has("user.allow_login") || isSelf || setLoginAccess.isPending}
+              onCheckedChange={(next) => setLoginAccess.mutate(next)}
+            />
+          </div>
 
           {user.is_locked && permissions.has("security.manage") ? (
             <Button variant="secondary" loading={unlock.isPending} onClick={() => unlock.mutate()}>

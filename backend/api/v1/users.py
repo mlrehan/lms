@@ -14,6 +14,8 @@ from backend.schemas.base import Page, PageParams
 from backend.schemas.user import (
     AdminSetPasswordRequest,
     UserCreateRequest,
+    UserLoginAccessRequest,
+    UserLoginAccessResponse,
     UserResponse,
     UserRolesRequest,
     UserStatusRequest,
@@ -109,6 +111,25 @@ async def set_user_status(
     """Anything other than ACTIVE also ends every session that user holds."""
     user = await UserService(session).set_status(user_id, payload.status, actor=actor)
     return UserResponse.model_validate(user)
+
+
+@router.put(
+    "/{user_id}/login-access",
+    response_model=UserLoginAccessResponse,
+    summary="Allow or block a user from signing in",
+)
+async def set_login_access(
+    user_id: uuid.UUID,
+    payload: UserLoginAccessRequest,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.USER, Action.ALLOW_LOGIN)))],
+) -> UserLoginAccessResponse:
+    """Accounts provisioned from LAIT start blocked. Turning this on while the
+    shared default password is still set is allowed but flagged in the response."""
+    user, default_in_use = await UserService(session).set_login_access(
+        user_id, payload.can_login, actor=actor
+    )
+    return UserLoginAccessResponse(can_login=user.can_login, default_password_in_use=default_in_use)
 
 
 @router.put(

@@ -588,6 +588,10 @@ export interface CurrentUserResponse {
   full_name: string;
   status: UserStatus;
   profile_picture?: string | null;
+  can_login?: boolean;
+  is_synced?: boolean;
+  external_student_id?: number | null;
+  external_tutor_id?: number | null;
   title?: string | null;
   gender: Genders;
   date_of_birth?: string | null;
@@ -1443,6 +1447,14 @@ export interface PageSubmissionResponse {
   offset: number;
 }
 
+export interface PageSyncRunResponse {
+  items: SyncRunResponse[];
+  /** Total rows matching the query, ignoring paging. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PageTagResponse {
   items: TagResponse[];
   /** Total rows matching the query, ignoring paging. */
@@ -2031,6 +2043,18 @@ export interface SyncResultResponse {
   skipped_ungraded?: number;
 }
 
+export interface SyncRunResponse {
+  public_id: string;
+  trigger_type: string;
+  dry_run: boolean;
+  status: string;
+  started_at: string;
+  finished_at?: string | null;
+  stats?: Record<string, unknown> | null;
+  errors?: (Record<string, unknown>)[] | null;
+  failure_reason?: string | null;
+}
+
 export interface TagResponse {
   public_id: string;
   name: string;
@@ -2147,8 +2171,20 @@ export interface UserCreateRequest {
   date_of_birth?: string | null;
   phone_number?: string | null;
   mobile?: string | null;
+  /** An administrator who types in a password is vouching for the account, so a manually created user can sign in. Synced accounts are the opposite: they start disabled. */
+  can_login?: boolean;
   /** Role names to grant. Must already exist in the role catalog. */
   roles?: string[];
+}
+
+export interface UserLoginAccessRequest {
+  can_login: boolean;
+}
+
+export interface UserLoginAccessResponse {
+  can_login: boolean;
+  /** True while the account still has the shared default password -- enabling login then hands the account to anyone who knows it. */
+  default_password_in_use: boolean;
 }
 
 /**
@@ -2163,6 +2199,10 @@ export interface UserResponse {
   full_name: string;
   status: UserStatus;
   profile_picture?: string | null;
+  can_login?: boolean;
+  is_synced?: boolean;
+  external_student_id?: number | null;
+  external_tutor_id?: number | null;
   title?: string | null;
   gender: Genders;
   date_of_birth?: string | null;
@@ -2220,6 +2260,8 @@ export interface UserSummary {
   full_name: string;
   status: UserStatus;
   profile_picture?: string | null;
+  can_login?: boolean;
+  is_synced?: boolean;
 }
 
 /**

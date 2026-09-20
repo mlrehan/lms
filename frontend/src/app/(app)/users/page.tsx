@@ -19,6 +19,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/
 import { Field, FormGrid, Input, NativeSelect } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
+import { LaitSyncControls } from "@/components/domain/lait-sync";
+import { Badge } from "@/components/ui/primitives";
 import { useSession } from "@/lib/auth/session";
 
 const createSchema = z.object({
@@ -226,7 +228,13 @@ export default function UsersPage() {
     {
       key: "status",
       header: "Status",
-      cell: (user) => <StatusBadge value={user.status} kind="user" />,
+      cell: (user) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <StatusBadge value={user.status} kind="user" />
+          {user.can_login === false ? <Badge tone="warning">Sign-in off</Badge> : null}
+          {user.is_synced ? <Badge tone="neutral">LAIT</Badge> : null}
+        </span>
+      ),
     },
   ];
 
@@ -236,11 +244,14 @@ export default function UsersPage() {
         title="Users"
         description="Every account in the institution. Roles decide what each person can do; the server enforces that on every request."
         actions={
-          permissions.has("user.create") ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus /> New account
-            </Button>
-          ) : null
+          <>
+            <LaitSyncControls canSync={permissions.has("user.sync")} />
+            {permissions.has("user.create") ? (
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus /> New account
+              </Button>
+            ) : null}
+          </>
         }
       />
 

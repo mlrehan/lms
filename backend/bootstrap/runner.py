@@ -68,6 +68,7 @@ async def ensure_super_admin(
         first_name="Super",
         last_name="Admin",
         status=UserStatus.ACTIVE,
+        can_login=True,  # a Super Admin created here is meant to sign in
     )
     user.roles = [role]
     session.add(user)

@@ -33,7 +33,7 @@ class User(Base, TimestampMixin, PublicIdMixin):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    title: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     gender: Mapped[Genders] = mapped_column(
         SQLEnum(Genders, name="genders", native_enum=False),
         server_default=text(f"'{Genders.MALE.value}'"),
@@ -73,6 +73,27 @@ class User(Base, TimestampMixin, PublicIdMixin):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"), nullable=False)
     is_locked: Mapped[bool] = bool_column(default=False, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- Sign-in gate ---------------------------------------------------------
+    # Separate from `status` on purpose. `status` says whether the account
+    # *exists and is in good standing*; this says whether anyone has decided
+    # it may *sign in*. Accounts provisioned from the LAIT sync are ACTIVE (a
+    # real student record) yet ship with a shared default password, so they
+    # must not be able to authenticate until a Super Admin opts each one in.
+    # Server default is false: an account is closed until someone opens it.
+    can_login: Mapped[bool] = bool_column(
+        default=False,
+        nullable=False,
+        comment="False = cannot sign in, whatever the password. Set by a Super Admin.",
+    )
+
+    # --- External (LAIT) identities -------------------------------------------
+    # Two columns, not one: StudentID and tutor_id are separate number spaces
+    # (StudentID 30 and tutor_id 30 can be different people) and one person
+    # can appear in both feeds. Traceability only -- the sync matches on the
+    # LAIT GUID, which is stored as `public_id`.
+    external_student_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
+    external_tutor_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
 
     created_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -217,6 +238,30 @@ class User(Base, TimestampMixin, PublicIdMixin):
         if self.locked_until is None:
             return True
         return self.locked_until > datetime.now(timezone.utc)
+
+    @property
+    def is_login_permitted(self) -> bool:
+        """May this account authenticate, ignoring any failed-login lockout?
+
+        **One rule, one place** -- for the same reason `is_locked_out` is: the
+        sign-in path, the token-refresh path and the per-request check each
+        used to decide "is this account usable" for themselves, and they
+        drifted. Login, refresh and `get_current_user` all ask this.
+
+        Deliberately excludes the lockout, which `authenticate` reports with
+        its own message *before* the password is checked. Callers on the
+        request path combine this with `not is_locked_out`.
+        """
+        return (
+            self.status is UserStatus.ACTIVE
+            and self.deleted_at is None
+            and bool(self.can_login)
+        )
+
+    @property
+    def is_synced(self) -> bool:
+        """Provisioned from (or linked to) the external LAIT system."""
+        return self.external_student_id is not None or self.external_tutor_id is not None
 
     def has_roles(self, roles: List[str]) -> bool:
         user_role_names = {r.name.lower() for r in (self.roles or [])}

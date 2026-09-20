@@ -27,7 +27,7 @@ from backend.models.identity.user import User
 from backend.repositories.user import UserRepository
 from backend.security.jwt import JWTService
 from backend.services.auth_service import AuthService
-from backend.utils.enums import Roles, UserStatus
+from backend.utils.enums import Roles
 
 # `auto_error=False` so a missing header raises our own AuthenticationError
 # (a `{code, message}` body like every other error) rather than FastAPI's
@@ -103,7 +103,7 @@ async def get_current_user(
     # `is_locked_out`, not the raw `is_locked` column: a lockout that has
     # lapsed is over, and reading the flag directly rejected a still-valid
     # token belonging to somebody who could sign in again perfectly well.
-    if user is None or user.status is not UserStatus.ACTIVE or user.is_locked_out:
+    if user is None or not user.is_login_permitted or user.is_locked_out:
         raise AuthenticationError("Authentication required.")
 
     # Feeds the structured logger, so every log line emitted while handling

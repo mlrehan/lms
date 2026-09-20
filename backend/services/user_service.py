@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Sequence
@@ -91,6 +92,7 @@ class UserService:
             email=str(payload.email).lower(),
             slug=await User.generate_slug(payload.username, self.session),
             hashed_password=pwd.hash_password(payload.password),
+            can_login=payload.can_login,
             first_name=payload.first_name,
             last_name=payload.last_name,
             title=payload.title,
@@ -162,6 +164,38 @@ class UserService:
             details={"fields": sorted(changes)},
         )
         return user
+
+    async def set_login_access(self, public_id: uuid.UUID, can_login: bool, *, actor: User) -> tuple[User, bool]:
+        """Switch sign-in on or off. Returns the user and whether the account
+        still carries the shared default password."""
+        user = await self.get(public_id, actor=actor)
+        if user.id == actor.id:
+            raise ConflictError("You cannot change your own sign-in access.")
+
+        default_in_use = await asyncio.to_thread(
+            pwd.verify_password, user.hashed_password, self._default_password()
+        )
+        user.can_login = can_login
+        user.updated_by = actor.id
+        if not can_login:
+            # Same reasoning as suspension: a switch that leaves existing
+            # sessions working has not switched anything off.
+            await self.tokens.revoke_all_for_user(user.id)
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=actor.id,
+            entity_type="user",
+            entity_id=user.id,
+            details={"can_login": can_login, "default_password_in_use": default_in_use},
+        )
+        return user, default_in_use
+
+    @staticmethod
+    def _default_password() -> str:
+        from backend.core.config import get_settings
+
+        return get_settings().lait.default_password.get_secret_value()
 
     async def set_status(
         self, public_id: uuid.UUID, new_status: UserStatus, *, actor: User

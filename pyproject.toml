@@ -38,3 +38,12 @@ dependencies = [
 # deployment on local storage doesn't carry the AWS SDK it never calls;
 # `backend/storage/r2.py` imports it lazily and names this extra if missing.
 r2 = ["boto3>=1.35"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

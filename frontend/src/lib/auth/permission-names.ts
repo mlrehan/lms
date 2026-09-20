@@ -102,10 +102,12 @@ export const PERMISSION_NAMES = [
   "session.update",
   "setting.read",
   "setting.update",
+  "user.allow_login",
   "user.create",
   "user.delete",
   "user.impersonate",
   "user.read",
+  "user.sync",
   "user.update",
 ] as const;
 
@@ -205,9 +207,11 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   "session.update": "Modify class sessions",
   "setting.read": "View system settings",
   "setting.update": "Modify system settings",
+  "user.allow_login": "Allow or block sign-in for user accounts",
   "user.create": "Create user accounts",
   "user.delete": "Delete user accounts",
   "user.impersonate": "Impersonate user accounts",
   "user.read": "View user accounts",
+  "user.sync": "Synchronise user accounts from the external LAIT system",
   "user.update": "Modify user accounts",
 };

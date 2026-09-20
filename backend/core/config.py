@@ -756,6 +756,55 @@ class StorageSettings(BaseSettings):
 # =============================================================================
 # MAIL
 # =============================================================================
+class LaitSettings(BaseSettings):
+    """The external LAIT system users are synchronised from.
+
+    `LAIT_API_BASE_URL` and `LAIT_API_KEY` already exist in `.env`; the rest
+    have defaults that describe how the LAIT API was observed to behave.
+    """
+
+    model_config = (
+        _BASE_SETTINGS_CONFIG
+        | SettingsConfigDict(
+            env_prefix="LAIT_",
+        )
+    )
+
+    api_base_url: str = "https://api.londonacademyofit.co.uk"
+    api_key: SecretStr = SecretStr("")
+    # Verified against the live API: `Authorization: Bearer` is refused with
+    # 401, `X-API-Key` is accepted. Configurable in case that changes.
+    api_key_header: str = "X-API-Key"
+    request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+    # LAIT emits `RegistrationDate` as a naive local timestamp ("2026-09-17T
+    # 15:10:20.987", no offset). It is UK time; the database stores UTC.
+    source_timezone: str = "Europe/London"
+
+    # Every synced account starts with this password, hashed with Argon2id
+    # like any other. It is only safe because a synced account also starts
+    # with `can_login = false`: the password cannot be used until a Super
+    # Admin opens the account. Kept out of the source by living here, and a
+    # SecretStr so it is never printed by accident.
+    default_password: SecretStr = SecretStr("123456")
+
+    # Whose id goes in `created_by` / `updated_by` for a *scheduled* run,
+    # when no person clicked anything. Looked up by username at run time; the
+    # run fails loudly if the account is missing rather than writing NULLs.
+    sync_actor_username: str = "superadmin"
+
+    # Seconds between passes when the worker runs with `--interval`.
+    sync_interval_seconds: int = Field(default=900, ge=30)
+
+    # A `RUNNING` row older than this is a process that died mid-run, not a
+    # sync still in progress, and stops blocking new runs.
+    stale_run_minutes: int = Field(default=30, ge=1)
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_base_url and self.api_key.get_secret_value())
+
+
 class MailSettings(BaseSettings):
     model_config = (
         _BASE_SETTINGS_CONFIG
@@ -927,6 +976,10 @@ class Settings(BaseModel):
 
     logging: LoggingSettings = Field(
         default_factory=LoggingSettings,
+    )
+
+    lait: LaitSettings = Field(
+        default_factory=LaitSettings,
     )
 
     # =========================================================================

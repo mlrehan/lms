@@ -37,12 +37,14 @@ from backend.api.v1 import (
     security,
     sessions,
     settings,
+    user_sync,
     users,
 )
 
 router = APIRouter()
 
 router.include_router(auth.router)
+router.include_router(user_sync.router)
 router.include_router(users.router)
 router.include_router(roles.router)
 router.include_router(geo.router)

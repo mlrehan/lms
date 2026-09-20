@@ -24,6 +24,7 @@ from .gradebook import GradeBand, GradeBookEntry, Transcript
 from .certificate import Certificate, CertificateIssued
 from .badge import Badge, UserBadge
 from .integration import CalendarFeed, WebhookDelivery, WebhookEndpoint
+from .user_sync import UserSyncRun
 from .notification import Notification, Announcement
 from .shared_links import SharedLink, SharedLinkTarget
 

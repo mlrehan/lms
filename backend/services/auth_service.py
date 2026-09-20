@@ -125,14 +125,26 @@ class AuthService:
         # Status is checked *after* the password, and reported with the same
         # message: checking first would let anyone probe which accounts are
         # suspended without knowing a single password.
-        if user.status is not UserStatus.ACTIVE:
+        #
+        # `can_login` rides on the same rule for the same reason. Accounts
+        # provisioned from LAIT are ACTIVE but ship with a shared default
+        # password, so the *correct* password alone must not be enough --
+        # and the refusal must be word-for-word the wrong-password one, or
+        # a caller who guesses the default learns that guess was right.
+        if not user.is_login_permitted:
             await audit_service.record_independently(
                 self._session_factory,
                 action=AuditAction.LOGIN_FAILED,
                 actor_user_id=user.id,
                 actor_email=user.email,
                 success=False,
-                details={"reason": f"status_{user.status.value.lower()}"},
+                details={
+                    "reason": (
+                        f"status_{user.status.value.lower()}"
+                        if user.status is not UserStatus.ACTIVE
+                        else "login_not_enabled"
+                    )
+                },
                 user_agent=user_agent,
             )
             raise AuthenticationError("Incorrect credentials.")
@@ -245,7 +257,7 @@ class AuthService:
             raise AuthenticationError("Invalid or expired session.")
 
         user = await self.users.get_by_id_with_roles(session_row.user_id)
-        if user is None or user.status is not UserStatus.ACTIVE:
+        if user is None or not user.is_login_permitted:
             # The session outlived the account's ability to use it -- a user
             # suspended five minutes ago must not be able to mint a fresh
             # access token from a refresh token issued before that.

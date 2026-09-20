@@ -1868,3 +1868,15 @@ change -- they are read from the running application, not maintained by hand:
 .venv\Scripts\python.exe frontend\scripts\generate_api_types.py
 .venv\Scripts\python.exe frontend\scripts\generate_permissions.py
 ```
+
+## LAIT user synchronisation
+
+Users are provisioned from the LAIT API (`/api/Students/latest`, `/api/Tutors`, by-guid detail) by a worker (`python -m backend.cli.sync_lait_users --once|--interval N [--dry-run]`) and by the admin **Sync from LAIT** button (`POST /v1/users/sync`, permission `user.sync`; history under `/users/sync/runs`). Settings: `LAIT_*` (`LaitSettings`); migration `a15c0de5f1d7`. Re-seed after upgrading (`LMS_ADMIN_PASSWORD=... python -m backend.cli.seed --skip-geo --non-interactive`) to pick up `user.sync` and `user.allow_login`.
+
+- **Access is separate from provisioning.** Synced accounts get the shared default password but `can_login=false`; only `user.allow_login` (Super Admin) flips it. One predicate, `User.is_login_permitted`, is used by login, refresh and `get_current_user`; refusal is the same generic message as a wrong password.
+- **Additive only.** `/latest` is a recent-registrations feed, so absence means nothing: the sync never suspends, deletes or demotes. It never writes status, can_login, password, slug or username on update; it can grant only STUDENT/TUTOR/CORPORATE_MANAGER/GUARDIAN, never admin roles. A username/email collision (crosswise) skips the row, never merges.
+- Country: fuzzy match only, never created. City: fuzzy within country (transposition-aware), created only when clearly new; ambiguous or junk -> left empty. `RegistrationDate` is UK time, stored UTC.
+- One transaction per record; dry-run does the work and rolls back; the `RUNNING` row (partial unique index) is the lock.
+- Tests: `tests/unit` (mapping/client/geo) and `tests/integration/test_lait_sync_service.py` (real Postgres, fake LAIT); guards mutation-tested. **Unpaired DB constraints can mask a missing app check** — assert the failure *reason*, not just that the row was skipped.
+- Windows: run uvicorn on a Selector loop (`asyncio.Runner(loop_factory=...)`); the seed CLI prompts for a password unless `LMS_ADMIN_PASSWORD` is set.
+- Not verified: a real (non-dry) sync against the live LAIT API — real people's data; run it deliberately.

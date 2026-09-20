@@ -75,6 +75,8 @@ class Action:
     IMPERSONATE: Final = "impersonate"
     VIEW_ALL: Final = "view_all"
     APPOINT: Final = "appoint"
+    SYNC: Final = "sync"
+    ALLOW_LOGIN: Final = "allow_login"
 
 
 def perm(module: str, action: str) -> str:
@@ -111,12 +113,23 @@ def _register(module: str, actions: tuple[str, ...], noun: str) -> None:
         Action.IMPERSONATE: f"Impersonate {noun}",
         Action.VIEW_ALL: f"View {noun} across the whole institution",
         Action.APPOINT: f"Appoint managers to {noun}",
+        Action.SYNC: f"Synchronise {noun} from the external LAIT system",
+        Action.ALLOW_LOGIN: f"Allow or block sign-in for {noun}",
     }
     for action in actions:
         _CATALOG[perm(module, action)] = verb_phrasing[action]
 
 
-_register(Module.USER, _CRUD + (Action.IMPERSONATE,), "user accounts")
+# `sync` and `allow_login` are separate from create/update on purpose.
+# `sync` decides who may pull accounts in from LAIT in bulk; `allow_login` is
+# the switch that turns a provisioned-but-closed account into one somebody can
+# sign in to, which is the moment a shared default password becomes dangerous
+# -- so it is held by fewer people than the ones who can edit a profile.
+_register(
+    Module.USER,
+    _CRUD + (Action.IMPERSONATE, Action.SYNC, Action.ALLOW_LOGIN),
+    "user accounts",
+)
 _register(Module.ROLE, _CRUD, "roles")
 _register(Module.PERMISSION, (Action.READ, Action.MANAGE), "permissions")
 _register(Module.COURSE, _CRUD + (Action.PUBLISH,), "courses")
@@ -233,6 +246,10 @@ _ADMIN: set[str] = (
     # Impersonation is a Super Admin capability: it defeats the audit trail's
     # ability to say who really acted, so it stays with the smallest group.
     perm(Module.USER, Action.IMPERSONATE),
+    # Opening a synced account to sign-in is a Super Admin decision. An
+    # Administrator can sync accounts in and edit them, but cannot decide who
+    # among them gets to authenticate.
+    perm(Module.USER, Action.ALLOW_LOGIN),
 }
 
 

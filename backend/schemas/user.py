@@ -45,10 +45,15 @@ class UserSummary(APIModel):
     full_name: str
     status: UserStatus
     profile_picture: str | None = None
+    can_login: bool = True
+    is_synced: bool = False
 
 
 class UserResponse(UserSummary):
     """The full profile, returned for a single-user read."""
+
+    external_student_id: int | None = None
+    external_tutor_id: int | None = None
 
     title: str | None = None
     gender: Genders
@@ -105,11 +110,17 @@ class UserCreateRequest(RequestModel):
     password: Password
     first_name: str | None = Field(default=None, max_length=50)
     last_name: str | None = Field(default=None, max_length=50)
-    title: str | None = Field(default=None, max_length=6)
+    title: str | None = Field(default=None, max_length=20)
     gender: Genders = Genders.MALE
     date_of_birth: date | None = None
     phone_number: str | None = Field(default=None, max_length=75)
     mobile: str | None = Field(default=None, max_length=75)
+    can_login: bool = Field(
+        default=True,
+        description="An administrator who types in a password is vouching for the "
+        "account, so a manually created user can sign in. Synced accounts are the "
+        "opposite: they start disabled.",
+    )
     roles: list[str] = Field(
         default_factory=list,
         description="Role names to grant. Must already exist in the role catalog.",
@@ -123,7 +134,7 @@ class UserUpdateRequest(RequestModel):
     email: EmailStr | None = None
     first_name: str | None = Field(default=None, max_length=50)
     last_name: str | None = Field(default=None, max_length=50)
-    title: str | None = Field(default=None, max_length=6)
+    title: str | None = Field(default=None, max_length=20)
     gender: Genders | None = None
     date_of_birth: date | None = None
     phone_number: str | None = Field(default=None, max_length=75)
@@ -173,3 +184,27 @@ class AdminSetPasswordRequest(RequestModel):
     the caller is acting on their own account."""
 
     new_password: Password
+
+
+class UserLoginAccessRequest(RequestModel):
+    can_login: bool
+
+
+class UserLoginAccessResponse(APIModel):
+    can_login: bool
+    default_password_in_use: bool = Field(
+        description="True while the account still has the shared default password "
+        "-- enabling login then hands the account to anyone who knows it."
+    )
+
+
+class SyncRunResponse(APIModel):
+    public_id: uuid.UUID
+    trigger_type: str
+    dry_run: bool
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    stats: dict | None = None
+    errors: list[dict] | None = None
+    failure_reason: str | None = None

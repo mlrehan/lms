@@ -49,6 +49,9 @@ class AuditAction:
     # constant here, so the first caller to use one crashed.
     UPLOAD = "UPLOAD"
     DOWNLOAD = "DOWNLOAD"
+    # One row per run of the LAIT user synchronisation, in addition to the
+    # per-account CREATE/UPDATE rows the run produces.
+    USER_SYNC = "USER_SYNC"
 
 
 def _build(
