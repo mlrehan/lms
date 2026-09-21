@@ -40,6 +40,9 @@ class BatchService:
         actor: User,
         course_public_id: uuid.UUID | None = None,
         is_active: bool | None = None,
+        query: str | None = None,
+        sort: str | None = None,
+        descending: bool = False,
     ) -> tuple[Sequence[Batch], int]:
         """Row-scoped: a Tutor sees the batches they teach, a Student the
         batch they are enrolled in, a Guardian/Manager the batches of the
@@ -51,7 +54,7 @@ class BatchService:
 
         scope = await self.scopes.visible_batch_ids(actor)
         return await self.batches.search(
-            params, scope=scope, course_id=course_id, is_active=is_active
+            params, scope=scope, course_id=course_id, is_active=is_active, query=query, sort=sort, descending=descending
         )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Batch:

@@ -77,6 +77,9 @@ class Resource(Base, PublicIdMixin):
     folder: Mapped[Optional["ResourceFolder"]] = relationship("ResourceFolder", back_populates="resources", lazy="selectin")
     uploader: Mapped["User"] = relationship("User", foreign_keys=[uploaded_by], back_populates="my_resources", lazy="selectin")
     course: Mapped["Course"] = relationship("Course", back_populates="resources", foreign_keys=[course_id], lazy="selectin")
+    # Same omission the folder above already had: the column was set on upload but nothing could read it back,
+    # so a batch-scoped resource reported batch_id null and no client could filter by batch.
+    batch: Mapped[Optional["Batch"]] = relationship("Batch", foreign_keys=[batch_id], lazy="selectin")
     versions: Mapped[List["ResourceVersion"]] = relationship(
         "ResourceVersion", back_populates="resource",
         cascade="all, delete-orphan", passive_deletes=True,

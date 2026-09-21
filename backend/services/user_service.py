@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Sequence
 
+from fastapi import UploadFile
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
@@ -18,6 +20,9 @@ from backend.schemas.base import PageParams
 from backend.schemas.user import UserCreateRequest, UserUpdateRequest
 from backend.security import password as pwd
 from backend.services import audit_service
+from backend.services.avatar import CONTENT_TYPE as AVATAR_CONTENT_TYPE, process_avatar
+from backend.storage import get_storage
+from backend.storage.base import build_key
 from backend.services.audit_service import AuditAction
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import UserStatus
@@ -124,7 +129,24 @@ class UserService:
         self, public_id: uuid.UUID, payload: UserUpdateRequest, *, actor: User
     ) -> User:
         user = await self.get(public_id, actor=actor)
+        await self._apply_update(user, payload, actor=actor)
+        return user
 
+    async def update_self(self, payload: UserUpdateRequest, *, actor: User) -> User:
+        """Edit your own profile. Deliberately narrower than `update`.
+
+        Identity is not self-service: changing the email changes the sign-in
+        identifier, and this deployment cannot verify a new address, so it is
+        an administrator's decision. Everything else about *you* is yours.
+        """
+        if "email" in payload.model_fields_set:
+            raise ValidationError("Ask an administrator to change your email address.")
+        user = await self.users.get_by_public_id_with_roles(actor.public_id)
+        assert user is not None
+        await self._apply_update(user, payload, actor=actor)
+        return user
+
+    async def _apply_update(self, user: User, payload: UserUpdateRequest, *, actor: User) -> None:
         # `exclude_unset` is what makes this a real PATCH: a field the client
         # never mentioned is left alone, while one explicitly sent as null is
         # cleared. Without it, every omitted field would be overwritten with
@@ -151,6 +173,9 @@ class UserService:
 
         for field, value in changes.items():
             setattr(user, field, value)
+        if "timezone" in changes:
+            # Whoever types a zone owns it: an address change must not quietly replace it (services/locale_service.py).
+            user.timezone_is_auto = False
 
         user.updated_by = actor.id
 
@@ -161,8 +186,56 @@ class UserService:
             actor_email=actor.email,
             entity_type="user",
             entity_id=user.id,
-            details={"fields": sorted(changes)},
+            details={"fields": sorted(changes), "self": user.id == actor.id},
         )
+
+    # -- profile picture -------------------------------------------------------
+
+    async def set_picture(self, user: User, upload: UploadFile, *, actor: User) -> User:
+        """Replace `user`'s picture. The caller has already authorised access to `user`."""
+        raw = await upload.read(5 * 1024 * 1024 + 1)  # bounded: never buffer an unbounded body
+        data = await asyncio.to_thread(process_avatar, raw)  # CPU-bound; keep the loop free
+
+        storage = get_storage()
+        key = build_key(prefix=f"avatars/{user.public_id}", filename="picture.webp")
+        await storage.save(key, data, content_type=AVATAR_CONTENT_TYPE)
+
+        previous = user.profile_picture
+        user.profile_picture = key
+        user.updated_by = actor.id
+        audit_service.record(
+            self.session, action=AuditAction.UPDATE, actor_user_id=actor.id, actor_email=actor.email,
+            entity_type="user", entity_id=user.id, details={"fields": ["profile_picture"], "self": user.id == actor.id},
+        )
+        await self.session.flush()
+        await self._discard(previous)
+        return user
+
+    async def remove_picture(self, user: User, *, actor: User) -> User:
+        previous = user.profile_picture
+        user.profile_picture = None
+        user.updated_by = actor.id
+        audit_service.record(
+            self.session, action=AuditAction.UPDATE, actor_user_id=actor.id, actor_email=actor.email,
+            entity_type="user", entity_id=user.id, details={"fields": ["profile_picture"], "removed": True},
+        )
+        await self.session.flush()
+        await self._discard(previous)
+        return user
+
+    @staticmethod
+    async def _discard(key: str | None) -> None:
+        """Best effort: an orphaned file is dead weight; failing the request over it is worse."""
+        if not key:
+            return
+        try:
+            await get_storage().delete(key)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def load_own(self, actor: User) -> User:
+        user = await self.users.get_by_public_id_with_roles(actor.public_id)
+        assert user is not None
         return user
 
     async def set_login_access(self, public_id: uuid.UUID, can_login: bool, *, actor: User) -> tuple[User, bool]:

@@ -1,6 +1,6 @@
 """Notifications and their preferences (spec §21).
 
-Moved out of `message_service.py`, where it landed in the messaging pass
+Originally written alongside the one-to-one messaging service, which `mail_service.py` has since replaced
 because a message arriving was the only thing that emitted one. It is not a
 messaging concern: a grade, an enrolment and a security event all produce
 notifications, and none of them should have to import the message service to
@@ -44,6 +44,7 @@ from backend.core.notification_types import (
     NotificationKind,
     assert_known,
 )
+from backend.models.guardian import StudentGuardian
 from backend.models.identity.user import User
 from backend.models.notification import Notification, NotificationPreference
 from backend.repositories.messaging import NotificationRepository
@@ -151,6 +152,65 @@ class NotificationService:
             if user_id in opted_out:
                 continue
             self.emit(user_id=user_id, type_=type_, title=title, body=body, meta=meta)
+            sent += 1
+        return sent
+
+    async def notify_guardians_of(
+        self,
+        student_ids: Sequence[int],
+        *,
+        type_: str,
+        title: str,
+        body: str,
+        meta: dict[str, Any] | None = None,
+    ) -> int:
+        """Tell the guardians of these students, naming the child. Returns how many were sent.
+
+        `title` and `body` are templates and may use `{student}`, which is substituted with the child's
+        display name. Naming them is the point: a parent of two told only that "a student in your care" was
+        set work has to go and find out which, and a guardian of two children in the same course would
+        otherwise receive two identical rows.
+
+        Emitted as its own fan-out rather than by appending guardians to the student list, so a large course
+        cannot push the combined audience past `MAX_FANOUT` and fail the very thing being announced. It is
+        also best effort: a guardian's copy is secondary to the student's own notification, and a failure
+        resolving the links must not roll back the grade or the enrolment that prompted it.
+        """
+        assert_known(type_)
+        wanted = list(dict.fromkeys(student_ids))
+        if not wanted:
+            return 0
+
+        rows = (
+            await self.session.execute(
+                select(StudentGuardian.guardian_id, StudentGuardian.student_id, User)
+                .join(User, User.id == StudentGuardian.student_id)
+                .where(StudentGuardian.student_id.in_(wanted))
+            )
+        ).all()
+        # A self-link would have somebody told about their own work in the third person.
+        pairs = [(g, s, u) for g, s, u in rows if g != s]
+        if not pairs:
+            return 0
+        if len(pairs) > MAX_FANOUT:
+            raise ValidationError(
+                "Too many guardians for a notification; use an announcement.",
+                details={"recipients": len(pairs), "limit": MAX_FANOUT},
+            )
+
+        opted_out = await self._opted_out([g for g, _, _ in pairs], type_)
+        sent = 0
+        for guardian_id, student_id, student in pairs:
+            if guardian_id in opted_out:
+                continue
+            name = " ".join(p for p in (student.first_name, student.last_name) if p) or student.username
+            self.emit(
+                user_id=guardian_id,
+                type_=type_,
+                title=title.format(student=name),
+                body=body.format(student=name),
+                meta={**(meta or {}), "student_id": str(student.public_id)},
+            )
             sent += 1
         return sent
 

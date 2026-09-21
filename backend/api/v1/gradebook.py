@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -42,7 +43,7 @@ def _entry_response(e: GradeBookEntry) -> GradeBookEntryResponse:
     return GradeBookEntryResponse(
         public_id=e.public_id,
         student_id=e.student.public_id,
-        student_username=e.student.username,
+        student_username=visible_username(e.student),
         batch_id=e.batch.public_id,
         batch_code=e.batch.batch_code,
         component_type=e.component_type,
@@ -59,7 +60,7 @@ def _transcript_response(t: Transcript) -> TranscriptResponse:
     return TranscriptResponse(
         public_id=t.public_id,
         student_id=t.student.public_id,
-        student_username=t.student.username,
+        student_username=visible_username(t.student),
         batch_id=t.batch.public_id,
         batch_code=t.batch.batch_code,
         course_id=t.course.public_id,

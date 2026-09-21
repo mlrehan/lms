@@ -33,6 +33,9 @@ class Attendance(Base, PublicIdMixin):
     )
     remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="Reason, esp. for EXCUSED")
     recorded_at: Mapped[datetime] = utc_datetime_column(default=True, nullable=False)
+    # Who last changed this row, and when. `recorded_by` is who first recorded it; the full history is on the sheet's events.
+    updated_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False, onupdate=False, nullable=True)
 
     # Relationships
     session: Mapped["BatchSession"] = relationship(

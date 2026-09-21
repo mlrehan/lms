@@ -24,6 +24,8 @@ from backend.api.v1 import (
     geo,
     gradebook,
     guardians,
+    team,
+    google_calendar,
     integrations,
     messages,
     notifications,
@@ -37,6 +39,7 @@ from backend.api.v1 import (
     security,
     sessions,
     settings,
+    academic_sync,
     user_sync,
     users,
 )
@@ -48,6 +51,7 @@ router.include_router(user_sync.router)
 router.include_router(users.router)
 router.include_router(roles.router)
 router.include_router(geo.router)
+router.include_router(academic_sync.router)
 router.include_router(courses.router)
 router.include_router(batches.router)
 router.include_router(sessions.router)
@@ -60,6 +64,7 @@ router.include_router(gradebook.router)
 router.include_router(resources.router)
 router.include_router(organizations.router)
 router.include_router(guardians.router)
+router.include_router(team.router)
 router.include_router(messages.router)
 router.include_router(notifications.router)
 router.include_router(announcements.router)
@@ -76,5 +81,6 @@ router.include_router(reports.router)
 router.include_router(audit.router)
 router.include_router(security.router)
 router.include_router(search.router)
+router.include_router(google_calendar.router)
 router.include_router(integrations.router)
 router.include_router(ops.router)

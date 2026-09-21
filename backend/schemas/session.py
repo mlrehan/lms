@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import Field, model_validator
@@ -73,3 +73,83 @@ class SessionUpdateRequest(_SessionTimes):
     recording_link: Annotated[str | None, Field(max_length=2048)] = None
     tutor_notes: str | None = None
     student_notes: str | None = None
+
+
+class CalendarSession(APIModel):
+    """One block on the calendar: enough to draw and filter it without a request per session."""
+
+    public_id: uuid.UUID
+    batch_id: uuid.UUID
+    batch_code: str
+    course_title: str | None = None
+    tutor_id: uuid.UUID
+    tutor_name: str | None = None
+    session_start_time: datetime
+    session_end_time: datetime = Field(description="Start plus duration (an hour if neither is stored) when no end was saved.")
+    platform: Platforms
+    classroom: str | None = None
+    meeting_link: str | None = None
+    origin: str | None = None
+
+
+class CalendarResponse(APIModel):
+    items: list[CalendarSession]
+    truncated: bool = Field(description="True when the window held more sessions than the cap; narrow it.")
+
+
+class OverviewPerson(APIModel):
+    public_id: uuid.UUID
+    name: str
+    email: str | None = Field(default=None, description="Only for administrators and the batch's tutors.")
+    phone: str | None = None
+    detail: str | None = Field(default=None, description="A guardian's relationship, or a manager's job title.")
+
+
+class OverviewRosterEntry(APIModel):
+    student: OverviewPerson
+    enrollment_status: str
+    attendance: str | None = None
+    organization: str | None = None
+    guardians: list[OverviewPerson] = []
+    managers: list[OverviewPerson] = []
+
+
+class OverviewCourse(APIModel):
+    public_id: uuid.UUID
+    title: str
+    code: str | None = None
+    level: str | None = None
+
+
+class OverviewBatch(APIModel):
+    public_id: uuid.UUID
+    batch_code: str
+    capacity: int | None = None
+    enrolled: int | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    is_active: bool
+
+
+class SessionOverview(APIModel):
+    public_id: uuid.UUID
+    number: int
+    total: int
+    session_start_time: datetime
+    session_end_time: datetime | None = None
+    duration_minutes: int | None = None
+    platform: Platforms
+    classroom: str | None = None
+    meeting_link: str | None = None
+    recording_link: str | None = None
+    student_notes: str | None = None
+    tutor_notes: str | None = None
+    origin: str | None = None
+    in_google: bool
+    course: OverviewCourse
+    batch: OverviewBatch
+    tutor: OverviewPerson
+    roster: list[OverviewRosterEntry]
+    roster_is_partial: bool = Field(description="True when the caller sees only their own people, not the whole batch.")
+    attendance_counts: dict[str, int]
+    can_see_contacts: bool

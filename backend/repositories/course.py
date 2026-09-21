@@ -9,11 +9,12 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.models.administration import CourseTag
-from backend.models.batch import Batch
-from backend.models.course import Course
+from backend.models.batch import Batch, BatchSession
+from backend.models.course import Course, TutorCourse
+from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
-from backend.utils.enums import CourseStatus
+from backend.utils.enums import CourseStatus, EnrollmentStatus
 
 # What an ordinary caller may see in the catalogue. A DRAFT course is not
 # ready to be advertised, and an ARCHIVED one has been withdrawn -- neither
@@ -90,6 +91,8 @@ class CourseRepository(BaseRepository[Course]):
         category_id: int | None = None,
         department_id: int | None = None,
         tag_id: int | None = None,
+        tutor_user_id: int | None = None,
+        student_user_id: int | None = None,
     ) -> tuple[Sequence[Course], int]:
         stmt = self._visible(
             self._base(), unrestricted=unrestricted, tutor_course_ids=tutor_course_ids
@@ -109,6 +112,32 @@ class CourseRepository(BaseRepository[Course]):
             # what the statement returns.
             stmt = stmt.where(
                 Course.id.in_(select(CourseTag.course_id).where(CourseTag.tag_id == tag_id))
+            )
+        if tutor_user_id is not None:
+            # A tutor's courses are the ones they are assigned to *or* actually teach a session
+            # of: synced batches carry the tutor on their sessions and never fill `tutor_courses`.
+            stmt = stmt.where(
+                or_(
+                    Course.id.in_(select(TutorCourse.course_id).where(TutorCourse.tutor_id == tutor_user_id)),
+                    Course.id.in_(
+                        select(Batch.course_id)
+                        .join(BatchSession, BatchSession.batch_id == Batch.id)
+                        .where(BatchSession.tutor_id == tutor_user_id)
+                    ),
+                )
+            )
+        if student_user_id is not None:
+            stmt = stmt.where(
+                Course.id.in_(
+                    select(Batch.course_id)
+                    .join(Enrollments, Enrollments.batch_id == Batch.id)
+                    .where(
+                        Enrollments.student_id == student_user_id,
+                        Enrollments.status.in_(
+                            (EnrollmentStatus.PENDING, EnrollmentStatus.CONFIRMED, EnrollmentStatus.COMPLETED)
+                        ),
+                    )
+                )
             )
         if query:
             like = f"%{query.strip().lower()}%"

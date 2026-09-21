@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Sequence
 
 from sqlalchemy import select
@@ -55,6 +55,15 @@ class SessionService:
             starts_before=starts_before,
         )
 
+    async def calendar(
+        self, *, actor: User, start: datetime, end: datetime, batch_public_id: uuid.UUID | None, limit: int
+    ) -> Sequence[BatchSession]:
+        batch_id = None
+        if batch_public_id is not None:
+            batch_id = (await self.batches.get(batch_public_id, actor=actor)).id
+        scope = await self.scopes.visible_session_ids(actor)
+        return await self.sessions.window(scope=scope, start=start, end=end, batch_id=batch_id, limit=limit)
+
     async def get(self, public_id: uuid.UUID, *, actor: User) -> BatchSession:
         row = await self.sessions.get_by_public_id_full(public_id)
         if row is None:
@@ -79,16 +88,22 @@ class SessionService:
             end=payload.session_end_time,
         )
 
+        # `duration_minutes` is offered as an alternative to an end time; keep the end so nothing downstream sees a session with no end.
+        end_time = payload.session_end_time
+        if end_time is None and payload.duration_minutes:
+            end_time = payload.session_start_time + timedelta(minutes=payload.duration_minutes)
+
         row = BatchSession(
             batch_id=batch.id,
             tutor_id=tutor.id,
             session_start_time=payload.session_start_time,
-            session_end_time=payload.session_end_time,
+            session_end_time=end_time,
             duration_minutes=payload.duration_minutes or self._derive_duration(payload),
             platform=payload.platform,
             classroom=payload.classroom,
             meeting_link=payload.meeting_link,
             tutor_notes=payload.tutor_notes,
+            origin="MANUAL",
         )
         await self.sessions.add_and_flush(row)
 

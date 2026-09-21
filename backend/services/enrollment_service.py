@@ -118,6 +118,12 @@ class EnrollmentService:
         student = await self._load_user(student_public_id)
         self._assert_is_student(student)
 
+        # Resolved here, before anything is read about the batch or the existing enrolments, because the
+        # refusals below describe real rows: "already enrolled in this batch" told a Corporate Manager that a
+        # student they cannot see is in a batch they cannot see, which `GET /users/{id}` and `GET /batches/{id}`
+        # both answer 404 to. Ownership first means a caller only ever learns about their own roster.
+        organization_id = await self._sponsoring_organization(actor=actor, student=student)
+
         batch = await self.batches.get_by_public_id_full(batch_public_id)
         if batch is None:
             raise NotFoundError("Batch not found.")
@@ -138,8 +144,6 @@ class EnrollmentService:
             # fresh row -- only a *live* duplicate is refused. The partial
             # unique index enforces the same rule at the database level.
             raise ConflictError("This student is already enrolled in this batch.")
-
-        organization_id = await self._sponsoring_organization(actor=actor, student=student)
 
         await self._reserve_seat(batch)
 
@@ -169,11 +173,19 @@ class EnrollmentService:
         # The student is told, in the same transaction as the enrolment
         # itself: a tray saying "you were enrolled" for a row that rolled
         # back is worse than silence.
-        await NotificationService(self.session).notify(
+        notifications = NotificationService(self.session)
+        await notifications.notify(
             user_id=student.id,
             type_=NotificationType.ENROLLED_IN_BATCH,
             title=f"Enrolled in {batch.batch_code}",
             body=f"You were enrolled in {batch.batch_code} ({enrollment.status.value.lower()}).",
+            meta={"batch_id": str(batch.public_id), "status": enrollment.status.value},
+        )
+        await notifications.notify_guardians_of(
+            [student.id],
+            type_=NotificationType.WARD_ENROLLED_IN_BATCH,
+            title=f"{{student}} was enrolled in {batch.batch_code}",
+            body=f"{batch.batch_code} ({enrollment.status.value.lower()}).",
             meta={"batch_id": str(batch.public_id), "status": enrollment.status.value},
         )
 

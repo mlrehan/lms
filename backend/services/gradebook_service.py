@@ -29,6 +29,7 @@ from typing import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.privacy import visible_username
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.attendance import Attendance
@@ -544,7 +545,7 @@ class GradeBookService:
         band = await self.bands.for_percentage(weighted) if weighted is not None else None
         return {
             "student_id": student.public_id,
-            "student_username": student.username,
+            "student_username": visible_username(student),
             "batch_id": batch.public_id,
             "batch_code": batch.batch_code,
             "components": components,

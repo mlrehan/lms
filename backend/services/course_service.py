@@ -6,10 +6,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Sequence
 
+import asyncio
+import re
+
+from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.config import get_settings
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.models.administration import Category, CourseTag, Department, Tag
 from backend.models.course import Course, TutorCourse
 from backend.models.identity.user import User
@@ -19,7 +24,12 @@ from backend.schemas.base import PageParams
 from backend.schemas.course import CourseCreateRequest, CourseUpdateRequest
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
+from backend.integrations import lait_academic as academic
+from backend.integrations.lait_pages import PageFetcher
+from backend.services.images import CONTENT_TYPE as IMAGE_CONTENT_TYPE, process_course_image
 from backend.services.scope import ScopeResolver
+from backend.storage import get_storage
+from backend.storage.base import build_key
 from backend.utils.enums import CourseStatus, Roles
 
 # Spec §5: Draft -> Published -> Running -> Completed -> Archived.
@@ -62,7 +72,17 @@ class CourseService:
         category_id: uuid.UUID | None = None,
         department_id: uuid.UUID | None = None,
         tag_id: uuid.UUID | None = None,
+        tutor_id: uuid.UUID | None = None,
+        student_id: uuid.UUID | None = None,
     ) -> tuple[Sequence[Course], int]:
+        tutor_user_id = student_user_id = None
+        if tutor_id is not None or student_id is not None:
+            # Filtering the catalogue by a *person* reveals who teaches and who studies what, so
+            # it is limited to callers who may already see the whole institution.
+            if not ScopeResolver.is_unrestricted(actor):
+                raise AuthorizationError("Filtering courses by tutor or student needs institution-wide access.")
+            tutor_user_id = await self._user_id(tutor_id, "Tutor") if tutor_id else None
+            student_user_id = await self._user_id(student_id, "Student") if student_id else None
         return await self.courses.search(
             params,
             unrestricted=ScopeResolver.is_unrestricted(actor),
@@ -73,7 +93,15 @@ class CourseService:
             category_id=await self._resolve(Category, category_id, "Category"),
             department_id=await self._resolve(Department, department_id, "Department"),
             tag_id=await self._resolve(Tag, tag_id, "Tag"),
+            tutor_user_id=tutor_user_id,
+            student_user_id=student_user_id,
         )
+
+    async def _user_id(self, public_id: uuid.UUID, label: str) -> int:
+        row = (await self.session.execute(select(User.id).where(User.public_id == public_id))).first()
+        if row is None:
+            raise NotFoundError(f"{label} not found.")
+        return int(row[0])
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Course:
         course = await self.courses.get_by_public_id_full(public_id)
@@ -94,19 +122,20 @@ class CourseService:
 
     async def create(self, payload: CourseCreateRequest, *, actor: User) -> Course:
         await self._assert_title_free(payload.title)
-        if payload.code:
-            await self._assert_code_free(payload.code)
+        code = payload.code or await self.suggest_code(payload.title)
+        await self._assert_code_free(code)
 
         course = Course(
             title=payload.title,
-            code=payload.code,
+            code=code,
             description=payload.description,
             level=payload.level,
             duration_hours=payload.duration_hours,
             prerequisites=payload.prerequisites,
             price=payload.price,
             course_link=payload.course_link,
-            course_picture=payload.course_picture,
+            course_image=payload.course_image,
+            small_course_image=payload.small_course_image,
             category_id=await self._resolve(Category, payload.category_id, "Category"),
             department_id=await self._resolve(Department, payload.department_id, "Department"),
             # Always DRAFT. A course that could be created already PUBLISHED
@@ -274,6 +303,111 @@ class CourseService:
             details={"tags": sorted(t.name for t in tags)},
         )
         return refreshed  # type: ignore[return-value]
+
+    # -- code suggestion ---------------------------------------------------------
+
+    _STOPWORDS = frozenset({"a", "an", "the", "for", "and", "of", "to", "in", "with", "on", "at", "by", "or"})
+
+    @classmethod
+    def _abbreviation(cls, title: str) -> str:
+        words = [w for w in re.findall(r"[A-Za-z0-9]+", title) if w.lower() not in cls._STOPWORDS]
+        if not words:
+            return "CRS"
+        initials = "".join(w[0] for w in words[:4]).upper()
+        if len(initials) < 3:
+            # "SQL for Beginners" -> "SB" is meaningless; keep the first word's own letters.
+            initials = (words[0][:3] + "".join(w[0] for w in words[1:3])).upper()
+        return initials[:6]
+
+    async def suggest_code(self, title: str) -> str:
+        """`Python Programming for Beginners` -> `PPB-001`: initials, then the next free number.
+
+        A suggestion, not a reservation: the caller may change it, and the unique
+        constraint remains the arbiter if two people are handed the same one.
+        """
+        prefix = self._abbreviation(title)
+        rows = (
+            await self.session.execute(select(Course.code).where(Course.code.like(f"{prefix}-%")))
+        ).scalars().all()
+        highest = 0
+        for code in rows:
+            m = re.fullmatch(rf"{re.escape(prefix)}-(\d+)", code or "")
+            if m:
+                highest = max(highest, int(m.group(1)))
+        return f"{prefix}-{highest + 1:03d}"
+
+    # -- images ------------------------------------------------------------------
+
+    async def set_image(self, public_id: uuid.UUID, kind: str, upload: UploadFile, *, actor: User) -> Course:
+        course = await self.get(public_id, actor=actor)
+        raw = await upload.read(5 * 1024 * 1024 + 1)  # bounded: never buffer an unbounded body
+        data = await asyncio.to_thread(process_course_image, raw, kind)
+
+        key = build_key(prefix=f"courses/{course.public_id}/{kind}", filename="image.webp")
+        await get_storage().save(key, data, content_type=IMAGE_CONTENT_TYPE)
+
+        column = "small_course_image" if kind == "small" else "course_image"
+        previous = getattr(course, column)
+        setattr(course, column, key)
+        await self._after_image_change(course, actor, kind)
+        await self._discard(previous)
+        return await self.courses.get_by_public_id_full(course.public_id)  # type: ignore[return-value]
+
+    async def remove_image(self, public_id: uuid.UUID, kind: str, *, actor: User) -> Course:
+        if kind not in ("small", "full"):
+            raise ValidationError("Unknown image kind.")
+        course = await self.get(public_id, actor=actor)
+        column = "small_course_image" if kind == "small" else "course_image"
+        previous = getattr(course, column)
+        setattr(course, column, None)
+        await self._after_image_change(course, actor, kind)
+        await self._discard(previous)
+        return await self.courses.get_by_public_id_full(course.public_id)  # type: ignore[return-value]
+
+    async def _after_image_change(self, course: Course, actor: User, kind: str) -> None:
+        course.updated_at = datetime.now(UTC)
+        audit_service.record(
+            self.session, action=AuditAction.UPDATE, actor_user_id=actor.id, actor_email=actor.email,
+            entity_type="course", entity_id=course.id, details={"fields": [f"{kind}_image"]},
+        )
+        await self.session.flush()
+
+    @staticmethod
+    async def _discard(key: str | None) -> None:
+        """Only an *uploaded* object (a storage key) is deleted; an external URL was never ours."""
+        if not key or key.lower().startswith(("http://", "https://")):
+            return
+        try:
+            await get_storage().delete(key)
+        except Exception:  # noqa: BLE001 - an orphaned file is dead weight; failing the request is worse
+            pass
+
+    async def image_key(self, public_id: uuid.UUID, kind: str, *, actor: User) -> str:
+        if kind not in ("small", "full"):
+            raise NotFoundError("No such image.")
+        course = await self.get(public_id, actor=actor)
+        value = course.small_course_image if kind == "small" else course.course_image
+        if not value or value.lower().startswith(("http://", "https://")):
+            raise NotFoundError("No uploaded image.")  # an external URL is served by its own host
+        return value
+
+    # -- link preview ---------------------------------------------------------------
+
+    async def link_preview(self, url: str) -> academic.CoursePage:
+        """Read a course page and report what it says. Nothing is saved.
+
+        Restricted to the LAIT site (https, allowed hosts): the URL comes from a
+        request body, so anything else would make the server fetch an address of the
+        caller's choosing.
+        """
+        settings = get_settings().lait
+        if not academic.host_allowed(url, settings.course_page_hosts):
+            raise ValidationError("Only course pages on the London Academy of IT website can be read.")
+        async with PageFetcher(settings.course_page_hosts, timeout=settings.course_page_timeout_seconds) as fetcher:
+            html = await fetcher.fetch(url)
+        if html is None:
+            raise ValidationError("That page could not be read. Check the link and try again.")
+        return academic.parse_course_page(html)
 
     async def _resolve_tags(self, public_ids: Sequence[uuid.UUID]) -> list[Tag]:
         wanted = list(dict.fromkeys(public_ids))

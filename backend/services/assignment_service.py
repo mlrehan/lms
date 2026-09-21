@@ -10,7 +10,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.enrollment import Enrollments
 from backend.models.batch import Batch
@@ -72,6 +72,18 @@ class AssignmentService:
     ) -> Assignment:
         course = await self.courses.get(course_public_id, actor=actor)
 
+        # Reading an assignment is scoped by `visible_course_ids` and creating one was not, so a tutor could set
+        # coursework on a colleague's course and then neither see nor delete it -- `get`, `update` and `delete`
+        # all answer 404 for exactly that row -- while its students were notified. Same predicate as the reads,
+        # which is the point: a write must not reach further than the read that would show its result.
+        #
+        # 403 rather than the reads' 404: the course catalogue is deliberately unscoped (see
+        # `ScopeResolver.visible_course_ids`), so the course's existence is already public and there is nothing
+        # to conceal. What the caller lacks is standing to teach it, and saying so is actionable.
+        scope = await self.scopes.visible_course_ids(actor)
+        if not scope.allows(course.id):
+            raise AuthorizationError("You can only set coursework on a course you teach.")
+
         row = Assignment(
             course_id=course.id,
             title=payload.title,
@@ -98,10 +110,19 @@ class AssignmentService:
         # The one fan-out in the system, and it is bounded by a course
         # roster. An announcement is the mechanism for anything wider -- see
         # `MAX_FANOUT` in the notification service for where the line is.
-        await NotificationService(self.session).notify_many(
-            await self.assignments.enrolled_student_ids(course.id),
+        roster = await self.assignments.enrolled_student_ids(course.id)
+        notifications = NotificationService(self.session)
+        await notifications.notify_many(
+            roster,
             type_=NotificationType.ASSIGNMENT_PUBLISHED,
             title=f"New assignment: {row.title}",
+            body=f"{course.title} — due {row.due_date:%d %b %Y}.",
+            meta={"assignment_id": str(row.public_id), "course_id": str(course.public_id)},
+        )
+        await notifications.notify_guardians_of(
+            roster,
+            type_=NotificationType.WARD_ASSIGNMENT_PUBLISHED,
+            title=f"New assignment for {{student}}: {row.title}",
             body=f"{course.title} — due {row.due_date:%d %b %Y}.",
             meta={"assignment_id": str(row.public_id), "course_id": str(course.public_id)},
         )
@@ -317,11 +338,20 @@ class AssignmentService:
             details={"grade": str(payload.grade)},
         )
 
-        await NotificationService(self.session).notify(
+        notifications = NotificationService(self.session)
+        await notifications.notify(
             user_id=row.student_id,
             type_=NotificationType.SUBMISSION_GRADED,
             title=f"Graded: {row.assignment.title}",
             body=f"You scored {payload.grade} out of {row.assignment.max_score}.",
+            meta={"assignment_id": str(row.assignment.public_id),
+                  "submission_id": str(row.public_id)},
+        )
+        await notifications.notify_guardians_of(
+            [row.student_id],
+            type_=NotificationType.WARD_SUBMISSION_GRADED,
+            title=f"Graded: {row.assignment.title}",
+            body=f"{{student}} scored {payload.grade} out of {row.assignment.max_score}.",
             meta={"assignment_id": str(row.assignment.public_id),
                   "submission_id": str(row.public_id)},
         )

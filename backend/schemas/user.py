@@ -7,8 +7,9 @@ from datetime import date, datetime
 from typing import Annotated
 from zoneinfo import available_timezones
 
-from pydantic import EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_serializer, field_validator
 
+from backend.core.privacy import may_see_contact
 from backend.schemas.auth import Password
 from backend.schemas.base import APIModel, RequestModel
 from backend.utils.enums import Genders, UserStatus
@@ -44,13 +45,31 @@ class UserSummary(APIModel):
     last_name: str | None = None
     full_name: str
     status: UserStatus
-    profile_picture: str | None = None
+    profile_picture: str | None = Field(
+        default=None,
+        validation_alias="profile_picture_url",
+        description="API path of the picture (fetch with the same credentials); null when none is set.",
+    )
     can_login: bool = True
     is_synced: bool = False
+
+    # Contact details are for the person themselves and the Super Admin only (see `core/privacy.py`). A login name
+    # is often the email address, so it is withheld the same way and replaced by the full name.
+    #
+    # Field serializers, not a model-level one: a model serializer collapses the OpenAPI schema to an untyped
+    # object and the generated client types with it.
+    @field_serializer("email")
+    def _email_for_viewer(self, value: str | None) -> str | None:
+        return value if may_see_contact(self.public_id) else None
+
+    @field_serializer("username")
+    def _username_for_viewer(self, value: str) -> str:
+        return value if may_see_contact(self.public_id) else self.full_name
 
 
 class UserResponse(UserSummary):
     """The full profile, returned for a single-user read."""
+
 
     external_student_id: int | None = None
     external_tutor_id: int | None = None
@@ -81,6 +100,10 @@ class UserResponse(UserSummary):
 
     roles: list[str] = Field(default_factory=list, description="Role names held by this user.")
 
+    @field_serializer("phone_number", "mobile", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship")
+    def _contact_for_viewer(self, value: str | None) -> str | None:
+        return value if may_see_contact(self.public_id) else None
+
     @field_validator("roles", mode="before")
     @classmethod
     def _role_names(cls, value: object) -> object:
@@ -102,6 +125,22 @@ class CurrentUserResponse(UserResponse):
     the server stays the only authority on what is actually allowed."""
 
     permissions: list[str] = Field(default_factory=list)
+
+    # Where the sign-in address says they are (see `services/locale_service.py`). Informational: a person's own
+    # location, shown to them so a time zone that changed by itself can be explained.
+    detected_timezone: str | None = None
+    locale_city: str | None = None
+    locale_country: str | None = None
+    timezone_is_auto: bool = False
+
+
+class LocaleRefreshResponse(APIModel):
+    ip_changed: bool
+    timezone_changed: bool
+    timezone: str | None = None
+    detected_timezone: str | None = None
+    city: str | None = None
+    country: str | None = None
 
 
 class UserCreateRequest(RequestModel):
@@ -200,6 +239,7 @@ class UserLoginAccessResponse(APIModel):
 
 class SyncRunResponse(APIModel):
     public_id: uuid.UUID
+    kind: str = "USERS"
     trigger_type: str
     dry_run: bool
     status: str

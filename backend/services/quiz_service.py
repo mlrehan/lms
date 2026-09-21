@@ -18,7 +18,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
 from backend.models.identity.user import User
@@ -95,6 +95,13 @@ class QuizService:
         self, course_public_id: uuid.UUID, payload: QuizCreateRequest, *, actor: User
     ) -> Quiz:
         course = await self.courses.get(course_public_id, actor=actor)
+
+        # The same gap assignments had, and for the same reason: reads here are scoped by `visible_course_ids`
+        # (see `list`/`get` above) while creation was not, so a quiz could be planted on a course the author
+        # cannot afterwards open. See `AssignmentService.create` for why this is a 403 and not a 404.
+        scope = await self.scopes.visible_course_ids(actor)
+        if not scope.allows(course.id):
+            raise AuthorizationError("You can only set coursework on a course you teach.")
 
         row = Quiz(
             course_id=course.id,

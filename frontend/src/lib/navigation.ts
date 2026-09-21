@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  UsersRound,
   Activity,
   BadgeCheck,
   BarChart3,
@@ -135,6 +136,7 @@ export const NAVIGATION: NavSection[] = [
   {
     label: "People",
     items: [
+      { href: "/team", label: "My team", icon: UsersRound, permission: "team.read" },
       { href: "/users", label: "Users", icon: Users, permission: "user.read" },
       { href: "/roles", label: "Roles", icon: ShieldCheck, permission: "role.read" },
       { href: "/permissions", label: "Permissions", icon: KeyRound, permission: "permission.read" },

@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -52,14 +53,14 @@ def _submission_response(s: AssignmentSubmission) -> SubmissionResponse:
         assignment_id=s.assignment.public_id,
         assignment_title=s.assignment.title,
         student_id=s.student.public_id,
-        student_username=s.student.username,
+        student_username=visible_username(s.student),
         submitted_at=s.submitted_at,
         files=s.files,
         content=s.content,
         grade=s.grade,
         feedback=s.feedback,
         graded_at=s.graded_at,
-        graded_by_username=s.grader.username if s.grader else None,
+        graded_by_username=visible_username(s.grader) if s.grader else None,
         is_late=bool(s.submitted_at and s.assignment.due_date and s.submitted_at > s.assignment.due_date),
     )
 

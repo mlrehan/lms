@@ -18,6 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -86,7 +87,7 @@ def _attempt_response(a: QuizAttempt) -> AttemptResponse:
         quiz_id=a.quiz.public_id,
         quiz_title=a.quiz.title,
         student_id=a.student.public_id,
-        student_username=a.student.username,
+        student_username=visible_username(a.student),
         attempt_number=a.attempt_number,
         started_at=a.started_at,
         finished_at=a.finished_at,

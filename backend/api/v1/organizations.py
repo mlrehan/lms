@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_email, visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -33,9 +34,9 @@ def _manager_response(m: OrganizationManager) -> ManagerResponse:
     return ManagerResponse(
         public_id=m.public_id,
         user_id=m.user.public_id,
-        username=m.user.username,
+        username=visible_username(m.user),
         full_name=m.user.full_name,
-        email=m.user.email,
+        email=visible_email(m.user),
         title=m.title,
         is_active=m.is_active,
         invited_at=m.invited_at,
@@ -46,9 +47,9 @@ def _membership_response(m: OrganizationMembership) -> MembershipResponse:
     return MembershipResponse(
         public_id=m.public_id,
         user_id=m.user.public_id,
-        username=m.user.username,
+        username=visible_username(m.user),
         full_name=m.user.full_name,
-        email=m.user.email,
+        email=visible_email(m.user),
         employee_code=m.employee_code,
         department=m.department,
         status=m.status,

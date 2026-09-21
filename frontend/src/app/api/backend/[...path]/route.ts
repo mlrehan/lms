@@ -40,6 +40,31 @@ export const dynamic = "force-dynamic";
  */
 const NEVER_REFRESH = ["auth/refresh", "auth/login", "auth/logout"];
 
+/**
+ * One refresh per refresh token, however many requests notice the expiry.
+ *
+ * A page load fires a dozen requests at once; when the access token has just
+ * expired, each of them gets a 401 and each would rotate the *same* refresh
+ * token. The first wins; the rest present a token that has just been retired,
+ * which the backend reads as theft, revoking the whole session family. So the
+ * requests share one in-flight refresh, and its result is remembered briefly
+ * for stragglers still carrying the old cookie.
+ */
+type Rotated = Awaited<ReturnType<typeof refreshTokens>>;
+const REFRESH_GRACE_MS = 15_000;
+const refreshes = new Map<string, Promise<Rotated>>();
+
+function refreshOnce(refreshToken: string): Promise<Rotated> {
+  const existing = refreshes.get(refreshToken);
+  if (existing) return existing;
+  const attempt = refreshTokens(refreshToken);
+  refreshes.set(refreshToken, attempt);
+  const forget = () => setTimeout(() => refreshes.delete(refreshToken), REFRESH_GRACE_MS);
+  // A failure is forgotten at once so a later, legitimate attempt is not poisoned.
+  void attempt.then((result) => (result ? forget() : refreshes.delete(refreshToken)), () => refreshes.delete(refreshToken));
+  return attempt;
+}
+
 async function proxy(request: NextRequest, path: string[]): Promise<NextResponse> {
   const suffix = path.join("/");
   const target = new URL(`${apiBaseUrl()}/${suffix}`);
@@ -76,11 +101,20 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
 
   const mayRefresh = !NEVER_REFRESH.some((p) => suffix === p || suffix.startsWith(`${p}/`));
   if (upstream.status === 401 && refreshToken && mayRefresh) {
-    // The first response's body is abandoned deliberately: we are about to
-    // replace it, and leaving it unread keeps the connection from being
-    // reused with a half-consumed stream.
-    await upstream.body?.cancel();
-    rotated = await refreshTokens(refreshToken);
+    // Read (not cancel) the 401 body: if the refresh fails this is the response
+    // we return, and a cancelled body cannot be handed to a new Response.
+    const firstBody = await upstream.arrayBuffer();
+    const firstStatus = upstream.status;
+    const firstHeaders = upstream.headers;
+    rotated = await refreshOnce(refreshToken);
+    if (!rotated) {
+      const failed = new NextResponse(firstBody, {
+        status: firstStatus,
+        headers: forwardableResponseHeaders(firstHeaders),
+      });
+      clearSessionCookies(failed);
+      return failed;
+    }
     if (rotated) {
       try {
         upstream = await send(rotated.access_token);

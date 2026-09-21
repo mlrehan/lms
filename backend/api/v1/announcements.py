@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -37,7 +38,7 @@ def _response(announcement: Announcement) -> AnnouncementResponse:
         author=(
             PartyRef(
                 public_id=author.public_id,
-                username=author.username,
+                username=visible_username(author),
                 full_name=author.full_name,
             )
             if author

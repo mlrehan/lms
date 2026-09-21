@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -33,7 +34,7 @@ def _response(e: Enrollments) -> EnrollmentResponse:
         enrollment_date=e.enrollment_date,
         is_transfer=e.is_transfer,
         student_id=e.student.public_id,
-        student_username=e.student.username,
+        student_username=visible_username(e.student),
         batch_id=e.batch.public_id,
         batch_code=e.batch.batch_code,
         course_title=e.batch.course.title if e.batch.course else None,

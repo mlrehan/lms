@@ -158,3 +158,41 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* FullCalendar, themed with the console's own tokens so it follows light/dark. */
+.fc {
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: var(--surface);
+  --fc-neutral-bg-color: var(--surface-muted);
+  --fc-neutral-text-color: var(--muted-foreground);
+  --fc-today-bg-color: color-mix(in oklch, var(--primary) 8%, transparent);
+  --fc-now-indicator-color: var(--primary);
+  --fc-event-border-color: transparent;
+  --fc-list-event-hover-bg-color: var(--surface-muted);
+  --fc-more-link-bg-color: transparent;
+  --fc-non-business-color: transparent;
+  font-size: 0.8125rem;
+  color: var(--foreground);
+}
+.fc .fc-event { cursor: pointer; border-radius: 4px; }
+.fc .fc-event-main { padding: 1px 3px; }
+.fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number, .fc .fc-list-day-text, .fc .fc-list-day-side-text, .fc .fc-multimonth-title { color: var(--foreground); text-decoration: none; }
+.fc .fc-more-link { color: var(--primary); font-weight: 500; }
+.fc .fc-timegrid-slot-label-cushion, .fc .fc-timegrid-axis-cushion { color: var(--muted-foreground); }
+.fc .fc-list-event-title a { color: inherit; text-decoration: none; }
+.fc .fc-highlight { background: color-mix(in oklch, var(--primary) 18%, transparent); }
+.fc-theme-standard .fc-scrollgrid { border-radius: 0.5rem; overflow: hidden; }
+
+/* Message bodies (the editor and the reader share this). Only the formatting the server keeps is styled. */
+.mail-body { line-height: 1.55; word-break: break-word; }
+.mail-body p { margin: 0 0 0.6em; }
+.mail-body p:last-child { margin-bottom: 0; }
+.mail-body ul { list-style: disc; padding-left: 1.4em; margin: 0 0 0.6em; }
+.mail-body ol { list-style: decimal; padding-left: 1.4em; margin: 0 0 0.6em; }
+.mail-body li > p { margin: 0; }
+.mail-body blockquote { margin: 0.4em 0; padding-left: 0.9em; border-left: 3px solid var(--border-strong); color: var(--muted-foreground); }
+.mail-body a { color: var(--primary); text-decoration: underline; }
+.mail-body h1, .mail-body h2, .mail-body h3 { font-weight: 600; margin: 0.6em 0 0.3em; }
+.mail-body pre { background: var(--surface-muted); padding: 0.6em 0.8em; border-radius: 6px; overflow-x: auto; }
+.mail-body code { font-family: var(--font-mono, monospace); font-size: 0.9em; }
+.ProseMirror:focus { outline: none; }

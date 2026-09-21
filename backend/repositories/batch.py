@@ -9,6 +9,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.models.batch import Batch
+from backend.models.course import Course
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
@@ -20,6 +21,14 @@ if TYPE_CHECKING:
 # An enrollment occupies a seat only while it is live. DROPPED and CANCELLED
 # free the seat; COMPLETED does too, since the batch has finished with them.
 SEAT_OCCUPYING_STATUSES = (EnrollmentStatus.PENDING, EnrollmentStatus.CONFIRMED)
+
+
+# The columns a batch list may be sorted by (a whitelist: `sort` comes from the query string).
+SORTABLE = {
+    "batch_code": Batch.batch_code, "course": Course.title, "start_date": Batch.start_date, "end_date": Batch.end_date,
+    "enrolled": Batch.total_enrollments, "capacity": Batch.capacity, "fee": Batch.batch_fee, "method": Batch.training_method,
+    "state": Batch.is_active,
+}
 
 
 class BatchRepository(BaseRepository[Batch]):
@@ -44,14 +53,21 @@ class BatchRepository(BaseRepository[Batch]):
         course_id: int | None = None,
         is_active: bool | None = None,
         query: str | None = None,
+        sort: str | None = None,
+        descending: bool = False,
     ) -> tuple[Sequence[Batch], int]:
         stmt = scope.apply(self._base(), Batch.id)
+        # The course title is searchable and sortable, so the list joins it once (it is also loaded, for display).
+        stmt = stmt.join(Course, Course.id == Batch.course_id)
 
         if query:
             needle = f"%{query.strip().lower()}%"
             stmt = stmt.where(
                 or_(
                     func.lower(Batch.batch_code).like(needle),
+                    func.lower(Course.title).like(needle),
+                    func.lower(func.coalesce(Batch.training_method, "")).like(needle),
+                    func.lower(func.coalesce(Batch.training_days, "")).like(needle),
                     func.lower(func.coalesce(Batch.notes, "")).like(needle),
                 )
             )
@@ -60,7 +76,9 @@ class BatchRepository(BaseRepository[Batch]):
         if is_active is not None:
             stmt = stmt.where(Batch.is_active.is_(is_active))
 
-        stmt = stmt.order_by(Batch.batch_code)
+        column = SORTABLE.get(sort or "", Batch.batch_code)
+        ordering = column.desc().nulls_last() if descending else column.asc().nulls_last()
+        stmt = stmt.order_by(ordering, Batch.id)  # `id` last, so equal values keep a stable page order
         return await self.paginate(stmt, params)  # type: ignore[return-value]
 
     async def occupied_seats(self, batch_id: int) -> int:

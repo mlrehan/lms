@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -45,7 +46,7 @@ def _exam_response(e: Exam, *, results: int = 0, published: int = 0) -> ExamResp
         course_title=e.course.title if e.course else None,
         batch_id=e.batch.public_id if e.batch else None,
         batch_code=e.batch.batch_code if e.batch else None,
-        invigilators=sorted(i.tutor.username for i in (e.invigilators or [])),
+        invigilators=sorted(visible_username(i.tutor) for i in (e.invigilators or [])),
         result_count=results,
         published_result_count=published,
     )
@@ -60,7 +61,7 @@ def _result_response(r: ExamResult) -> ExamResultResponse:
         exam_id=r.exam.public_id,
         exam_title=r.exam.title,
         student_id=r.student.public_id,
-        student_username=r.student.username,
+        student_username=visible_username(r.student),
         marks_obtained=r.marks_obtained,
         grade=r.grade,
         remarks=r.remarks,

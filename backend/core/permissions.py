@@ -47,6 +47,7 @@ class Module:
     GUARDIAN: Final = "guardian"
     ANNOUNCEMENT: Final = "announcement"
     MESSAGE: Final = "message"
+    TEAM: Final = "team"
     DISCUSSION: Final = "discussion"
     NOTIFICATION: Final = "notification"
     ACADEMIC: Final = "academic"
@@ -54,6 +55,7 @@ class Module:
     AUDIT: Final = "audit"
     SECURITY: Final = "security"
     INTEGRATION: Final = "integration"
+    GOOGLE: Final = "google"
     SETTING: Final = "setting"
     INSTITUTION: Final = "institution"
 
@@ -77,6 +79,8 @@ class Action:
     APPOINT: Final = "appoint"
     SYNC: Final = "sync"
     ALLOW_LOGIN: Final = "allow_login"
+    VIEW_CONTACT: Final = "view_contact"
+    OVERRIDE: Final = "override"
 
 
 def perm(module: str, action: str) -> str:
@@ -115,11 +119,15 @@ def _register(module: str, actions: tuple[str, ...], noun: str) -> None:
         Action.APPOINT: f"Appoint managers to {noun}",
         Action.SYNC: f"Synchronise {noun} from the external LAIT system",
         Action.ALLOW_LOGIN: f"Allow or block sign-in for {noun}",
+        Action.VIEW_CONTACT: f"See other people's email addresses, phone numbers and login names in {noun}",
+        Action.OVERRIDE: f"Take or correct {noun} on behalf of the assigned tutor",
     }
     for action in actions:
         _CATALOG[perm(module, action)] = verb_phrasing[action]
 
 
+# `view_contact` is held by the Super Admin alone (they hold the whole catalog by construction). Everyone
+# else -- Administrators, tutors, students, guardians and managers -- sees other people's *names* only.
 # `sync` and `allow_login` are separate from create/update on purpose.
 # `sync` decides who may pull accounts in from LAIT in bulk; `allow_login` is
 # the switch that turns a provisioned-but-closed account into one somebody can
@@ -127,16 +135,21 @@ def _register(module: str, actions: tuple[str, ...], noun: str) -> None:
 # -- so it is held by fewer people than the ones who can edit a profile.
 _register(
     Module.USER,
-    _CRUD + (Action.IMPERSONATE, Action.SYNC, Action.ALLOW_LOGIN),
+    _CRUD + (Action.IMPERSONATE, Action.SYNC, Action.ALLOW_LOGIN, Action.VIEW_CONTACT),
     "user accounts",
 )
+# `team.read` is the "people in my care" view: a manager's employees or a guardian's wards, with their progress. It is
+# scoped to those people by the service (enrolment visibility), not by this name.
+_register(Module.TEAM, (Action.READ,), "the progress of the people in your care")
 _register(Module.ROLE, _CRUD, "roles")
 _register(Module.PERMISSION, (Action.READ, Action.MANAGE), "permissions")
-_register(Module.COURSE, _CRUD + (Action.PUBLISH,), "courses")
+_register(Module.COURSE, _CRUD + (Action.PUBLISH, Action.SYNC), "courses")
 _register(Module.BATCH, _CRUD, "batches")
 _register(Module.SESSION, _CRUD, "class sessions")
 _register(Module.ENROLLMENT, _CRUD, "enrollments")
-_register(Module.ATTENDANCE, _CRUD, "attendance records")
+# `override` lets somebody other than the session's assigned tutor take or correct its register (the assigned tutor is
+# recorded alongside who actually did it). Super Admin only, by construction; an Administrator is deliberately without it.
+_register(Module.ATTENDANCE, _CRUD + (Action.OVERRIDE,), "attendance records")
 _register(Module.RESOURCE, _CRUD, "learning resources")
 _register(Module.ASSIGNMENT, _CRUD + (Action.SUBMIT, Action.GRADE), "assignments")
 _register(Module.QUIZ, _CRUD + (Action.ATTEMPT, Action.GRADE), "quizzes")
@@ -170,6 +183,10 @@ _register(Module.SECURITY, (Action.READ, Action.MANAGE), "security events, locko
 # store -- and withheld without taking the settings store away.
 _register(Module.INTEGRATION, _CRUD, "outbound integrations and calendar feeds")
 _register(Module.SETTING, (Action.READ, Action.UPDATE), "system settings")
+# Connecting or disconnecting the organisation's Google account is `google.update`, held by
+# the Super Admin only: it decides whose calendar the whole institution's schedule lives in.
+# Reading the connection and pushing changes (`google.sync`) are ordinary operations.
+_register(Module.GOOGLE, (Action.READ, Action.UPDATE, Action.SYNC), "the Google Calendar connection")
 
 # The scope modifier. Every other permission answers "may this role do X at
 # all"; this one answers "to which rows". Without it a caller sees only what
@@ -225,6 +242,8 @@ _ADMIN: set[str] = (
         perm(Module.INTEGRATION, Action.READ),
         perm(Module.INTEGRATION, Action.UPDATE),
         perm(Module.INTEGRATION, Action.DELETE),
+        perm(Module.GOOGLE, Action.READ),
+        perm(Module.GOOGLE, Action.SYNC),
         # Operational health and database statistics are gated on
         # `setting.read` rather than a module of their own: "may this person
         # see how the system is configured" and "may they see how it is
@@ -250,6 +269,11 @@ _ADMIN: set[str] = (
     # Administrator can sync accounts in and edit them, but cannot decide who
     # among them gets to authenticate.
     perm(Module.USER, Action.ALLOW_LOGIN),
+    # Other people's email addresses, phone numbers and login names (which are often the email). Super Admin only;
+    # an Administrator works from names.
+    perm(Module.USER, Action.VIEW_CONTACT),
+    # Taking attendance for a tutor is a Super Admin act: it puts words in the assigned tutor's mouth, and is audited.
+    perm(Module.ATTENDANCE, Action.OVERRIDE),
 }
 
 
@@ -352,6 +376,7 @@ _STUDENT: set[str] = {
 # organization_managers -> organization_memberships. The grants below say
 # "may do this at all"; the org join says "to these people".
 _CORPORATE_MANAGER: set[str] = {
+    perm(Module.TEAM, Action.READ),
     perm(Module.ORGANIZATION, Action.READ),
     perm(Module.ORGANIZATION, Action.UPDATE),
     perm(Module.ORGANIZATION, Action.INVITE),
@@ -383,6 +408,7 @@ _CORPORATE_MANAGER: set[str] = {
 # Read-only, and scoped in the service layer to their linked students via
 # student_guardians.
 _GUARDIAN: set[str] = {
+    perm(Module.TEAM, Action.READ),
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),
     # A guardian can already see which batch their ward is in via the

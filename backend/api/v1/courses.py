@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 # One definition of the batch response, imported rather than copied. This
 # file used to carry its own duplicate, and the two drifted the moment a
@@ -26,7 +28,11 @@ from backend.schemas.batch import (
 )
 from backend.schemas.administration import SetCourseTagsRequest
 from backend.schemas.course import (
+    CodeSuggestion,
+    CourseBatchBrief,
     CourseCreateRequest,
+    LinkPreviewRequest,
+    LinkPreviewResponse,
     CourseResponse,
     CourseStatusRequest,
     CourseSummary,
@@ -35,12 +41,14 @@ from backend.schemas.course import (
 )
 from backend.services.batch_service import BatchService
 from backend.services.course_service import CourseService
+from backend.services.tutor_visibility import tutors_visible_to
+from backend.storage import get_storage
 from backend.utils.enums import CourseStatus, Levels
 
 router = APIRouter(prefix="/courses", tags=["Courses"])
 
 
-def _course_response(course, batch_count: int = 0) -> CourseResponse:  # type: ignore[no-untyped-def]
+async def _course_response(session, actor, course, batch_count: int = 0) -> CourseResponse:  # type: ignore[no-untyped-def]
     """Built field by field rather than by `model_validate(course)`.
 
     `Course.category_id` is the internal integer foreign key while
@@ -58,7 +66,10 @@ def _course_response(course, batch_count: int = 0) -> CourseResponse:  # type: i
         level=course.level,
         duration_hours=course.duration_hours,
         price=course.price,
-        course_picture=course.course_picture,
+        # By alias: these two fields are declared with `validation_alias`, so a keyword named
+        # after the field (`course_image=`) would be silently ignored and the image dropped.
+        course_image_url=course.course_image_url,
+        small_course_image_url=course.small_course_image_url,
         description=course.description,
         prerequisites=course.prerequisites,
         course_link=course.course_link,
@@ -69,8 +80,12 @@ def _course_response(course, batch_count: int = 0) -> CourseResponse:  # type: i
         tags=sorted(t.name for t in (course.tags or [])),
         created_at=course.created_at,
         updated_at=course.updated_at,
-        tutors=[t.username for t in (course.tutors or [])],
+        tutors=[visible_username(t) for t in await tutors_visible_to(session, actor, course)],
         batch_count=batch_count,
+        batches=[
+            CourseBatchBrief.model_validate(b)
+            for b in sorted(course.batches or [], key=lambda b: (b.start_date is None, b.start_date), reverse=True)[:100]
+        ],
     )
 
 
@@ -85,6 +100,8 @@ async def list_courses(
     category_id: Annotated[uuid.UUID | None, Query()] = None,
     department_id: Annotated[uuid.UUID | None, Query()] = None,
     tag_id: Annotated[uuid.UUID | None, Query()] = None,
+    tutor_id: Annotated[uuid.UUID | None, Query(description="A tutor's public_id: courses they are assigned to or teach a session of.")] = None,
+    student_id: Annotated[uuid.UUID | None, Query(description="A student's public_id: courses they are enrolled in.")] = None,
 ) -> Page[CourseSummary]:
     """The catalogue is deliberately not row-scoped -- a Corporate Manager
     must be able to find a course to enrol employees into. What *is* hidden
@@ -100,10 +117,86 @@ async def list_courses(
         category_id=category_id,
         department_id=department_id,
         tag_id=tag_id,
+        tutor_id=tutor_id,
+        student_id=student_id,
     )
     return Page.build(
         [CourseSummary.model_validate(c) for c in courses], total=total, params=params
     )
+
+
+_WRITE_EITHER = Depends(
+    require_permissions(perm(Module.COURSE, Action.CREATE), perm(Module.COURSE, Action.UPDATE), require_all=False)
+)
+
+
+@router.get("/suggest-code", response_model=CodeSuggestion, summary="Suggest a course code for a title")
+async def suggest_code(
+    session: DBSession,
+    actor: Annotated[CurrentUser, _WRITE_EITHER],
+    title: Annotated[str, Query(min_length=1, max_length=255)],
+) -> CodeSuggestion:
+    """Initials plus the next free number (`Python Programming for Beginners` -> `PPB-001`).
+    A suggestion only: the caller may change it before saving."""
+    return CodeSuggestion(code=await CourseService(session).suggest_code(title))
+
+
+@router.post("/link-preview", response_model=LinkPreviewResponse, summary="Read price and details from a course page")
+async def link_preview(
+    payload: LinkPreviewRequest,
+    session: DBSession,
+    actor: Annotated[CurrentUser, _WRITE_EITHER],
+) -> LinkPreviewResponse:
+    """Fetches the page (London Academy of IT hosts only) and returns what it says as
+    suggestions. Nothing is saved."""
+    page = await CourseService(session).link_preview(payload.url)
+    return LinkPreviewResponse(
+        price=page.price, duration_hours=page.duration_hours,
+        level=Levels(page.level) if page.level else None, prerequisites=page.prerequisites,
+    )
+
+
+@router.get("/{course_id}/image/{kind}", summary="An uploaded course image", response_class=StreamingResponse)
+async def get_image(
+    course_id: uuid.UUID,
+    kind: Annotated[str, Path(pattern="^(small|full)$")],
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.COURSE, Action.READ)))],
+) -> StreamingResponse:
+    key = await CourseService(session).image_key(course_id, kind, actor=actor)
+    return StreamingResponse(
+        await get_storage().open_stream(key),
+        media_type="image/webp",
+        headers={
+            # The URL carries a version token, so a replaced image has a new URL.
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+        },
+    )
+
+
+@router.put("/{course_id}/image/{kind}", response_model=CourseResponse, summary="Upload a course image")
+async def put_image(
+    course_id: uuid.UUID,
+    kind: Annotated[str, Path(pattern="^(small|full)$")],
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.COURSE, Action.UPDATE)))],
+    file: Annotated[UploadFile, File()],
+) -> CourseResponse:
+    """`small` is a thumbnail (fits 320x320), `full` the main image (fits 1600x1200). JPEG,
+    PNG or WebP up to 5 MB; the stored copy is a re-encoded WebP with metadata removed."""
+    return await _course_response(session, actor, await CourseService(session).set_image(course_id, kind, file, actor=actor))
+
+
+@router.delete("/{course_id}/image/{kind}", response_model=CourseResponse, summary="Remove a course image")
+async def delete_image(
+    course_id: uuid.UUID,
+    kind: Annotated[str, Path(pattern="^(small|full)$")],
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.COURSE, Action.UPDATE)))],
+) -> CourseResponse:
+    return await _course_response(session, actor, await CourseService(session).remove_image(course_id, kind, actor=actor))
 
 
 @router.post(
@@ -115,7 +208,7 @@ async def create_course(
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.COURSE, Action.CREATE)))],
 ) -> CourseResponse:
     """Always created as DRAFT -- publishing is a separate, deliberate act."""
-    return _course_response(await CourseService(session).create(payload, actor=actor))
+    return await _course_response(session, actor, await CourseService(session).create(payload, actor=actor))
 
 
 @router.get("/{course_id}", response_model=CourseResponse, summary="Get one course")
@@ -126,7 +219,7 @@ async def get_course(
 ) -> CourseResponse:
     service = CourseService(session)
     course = await service.get(course_id, actor=actor)
-    return _course_response(course, await service.courses.count_batches(course.id))
+    return await _course_response(session, actor, course, await service.courses.count_batches(course.id))
 
 
 @router.patch("/{course_id}", response_model=CourseResponse, summary="Update a course")
@@ -136,7 +229,7 @@ async def update_course(
     session: DBSession,
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.COURSE, Action.UPDATE)))],
 ) -> CourseResponse:
-    return _course_response(await CourseService(session).update(course_id, payload, actor=actor))
+    return await _course_response(session, actor, await CourseService(session).update(course_id, payload, actor=actor))
 
 
 @router.put(
@@ -154,8 +247,8 @@ async def set_course_status(
 ) -> CourseResponse:
     """Draft → Published → Running → Completed → Archived. Illegal jumps are
     refused with 409 and the list of transitions that *are* available."""
-    return _course_response(
-        await CourseService(session).set_status(course_id, payload.status, actor=actor)
+    return await _course_response(
+        session, actor, await CourseService(session).set_status(course_id, payload.status, actor=actor)
     )
 
 
@@ -173,8 +266,8 @@ async def set_course_tutors(
     """This is an authorization write, not metadata: `tutor_courses` is what
     grants a tutor sight of the course's batches and the students enrolled in
     them."""
-    return _course_response(
-        await CourseService(session).set_tutors(course_id, payload.tutors, actor=actor)
+    return await _course_response(
+        session, actor, await CourseService(session).set_tutors(course_id, payload.tutors, actor=actor)
     )
 
 
@@ -253,4 +346,4 @@ async def set_course_tags(
     came back to find out which one was wrong."""
     service = CourseService(session)
     course = await service.set_tags(course_id, payload.tag_ids, actor=actor)
-    return _course_response(course, await service.courses.count_batches(course.id))
+    return await _course_response(session, actor, course, await service.courses.count_batches(course.id))

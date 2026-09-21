@@ -14,14 +14,13 @@ import type {
   BatchSummary,
   CourseResponse,
   PageBatchSummary,
-  PageCategoryResponse,
-  PageDepartmentResponse,
   PageTagResponse,
   PageUserSummary,
 } from "@/lib/api/types";
-import { CourseStatusValues, LevelsValues } from "@/lib/api/types";
+import { CourseStatusValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
+import { CourseForm } from "@/components/domain/course-form";
 import { Button } from "@/components/ui/button";
 import {
   Badge,
@@ -44,193 +43,17 @@ import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatCalendarDate, formatDateTime } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
-const detailSchema = z.object({
-  title: z.string().trim().min(2, "Give the course a title."),
-  code: z.string().trim(),
-  level: z.enum(LevelsValues),
-  description: z.string().trim(),
-  prerequisites: z.string().trim(),
-  duration_hours: z.string().trim(),
-  price: z.string().trim(),
-  course_link: z.string().trim(),
-  category_id: z.string().trim(),
-  department_id: z.string().trim(),
-});
-
-type DetailValues = z.infer<typeof detailSchema>;
-
-function numberOrNull(value: string): number | null {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function OverviewTab({ course, canEdit }: { course: CourseResponse; canEdit: boolean }) {
-  const { permissions } = useSession();
-  const canReadAcademic = permissions.has("academic.read");
-
-  const categories = useQuery({
-    queryKey: ["categories", "all"],
-    queryFn: () => api.get<PageCategoryResponse>("/categories", { query: { limit: 200 } }),
-    enabled: canReadAcademic,
-    staleTime: 5 * 60_000,
-  });
-
-  const departments = useQuery({
-    queryKey: ["departments", "all"],
-    queryFn: () => api.get<PageDepartmentResponse>("/departments", { query: { limit: 200 } }),
-    enabled: canReadAcademic,
-    staleTime: 5 * 60_000,
-  });
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setError,
-    formState: { errors, isDirty },
-  } = useForm<DetailValues>({
-    resolver: zodResolver(detailSchema),
-    defaultValues: {
-      title: course.title,
-      code: course.code ?? "",
-      level: course.level,
-      description: course.description ?? "",
-      prerequisites: course.prerequisites ?? "",
-      duration_hours: course.duration_hours?.toString() ?? "",
-      price: course.price?.toString() ?? "",
-      course_link: course.course_link ?? "",
-      category_id: course.category_id ?? "",
-      department_id: course.department_id ?? "",
-    },
-  });
-
-  const save = useApiMutation<CourseResponse, DetailValues>({
-    mutationFn: (values) =>
-      api.patch<CourseResponse>(`/courses/${segment(course.public_id)}`, {
-        body: {
-          title: values.title,
-          code: values.code || null,
-          description: values.description || null,
-          level: values.level,
-          duration_hours: numberOrNull(values.duration_hours),
-          price: numberOrNull(values.price),
-          prerequisites: values.prerequisites || null,
-          course_link: values.course_link || null,
-          category_id: values.category_id || null,
-          department_id: values.department_id || null,
-          // The API distinguishes "leave alone" from "clear", so an emptied
-          // picker has to say so explicitly -- omitting the field would keep
-          // the old category rather than removing it.
-          clear_category: values.category_id === "" && course.category_id !== null,
-          clear_department: values.department_id === "" && course.department_id !== null,
-        },
-      }),
-    success: "Course saved.",
-    invalidate: [["courses"]],
-    onSuccess: (updated) =>
-      reset({
-        title: updated.title,
-        code: updated.code ?? "",
-        level: updated.level,
-        description: updated.description ?? "",
-        prerequisites: updated.prerequisites ?? "",
-        duration_hours: updated.duration_hours?.toString() ?? "",
-        price: updated.price?.toString() ?? "",
-        course_link: updated.course_link ?? "",
-        category_id: updated.category_id ?? "",
-        department_id: updated.department_id ?? "",
-      }),
-    onError: (error) => {
-      applyFieldErrors<DetailValues>(error, setError, ["title", "code", "level", "course_link"]);
-    },
-  });
-
+  // Keyed on the last update so the form re-initialises after a save (or an image change)
+  // instead of showing the values it was first opened with.
   return (
-    <form method="post" onSubmit={handleSubmit((values) => save.mutate(values))} className="space-y-4" noValidate>
-      <Card>
-        <CardHeader title="Details" />
-        <CardBody className="space-y-4">
-          <FormGrid>
-            <Field label="Title" error={errors.title?.message} required>
-              {({ id }) => <Input id={id} disabled={!canEdit} {...register("title")} />}
-            </Field>
-            <Field label="Code" error={errors.code?.message}>
-              {({ id }) => <Input id={id} disabled={!canEdit} {...register("code")} />}
-            </Field>
-            <Field label="Level">
-              {({ id }) => (
-                <NativeSelect id={id} disabled={!canEdit} {...register("level")}>
-                  {LevelsValues.map((level) => (
-                    <option key={level} value={level}>
-                      {humanise(level)}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-            <Field label="Duration (hours)">
-              {({ id }) => (
-                <Input id={id} type="number" min={0} disabled={!canEdit} {...register("duration_hours")} />
-              )}
-            </Field>
-            <Field label="Price">
-              {({ id }) => (
-                <Input id={id} type="number" min={0} step="0.01" disabled={!canEdit} {...register("price")} />
-              )}
-            </Field>
-            <Field label="Course link" error={errors.course_link?.message}>
-              {({ id }) => <Input id={id} disabled={!canEdit} {...register("course_link")} />}
-            </Field>
-            <Field label="Category">
-              {({ id }) => (
-                <NativeSelect id={id} disabled={!canEdit || !canReadAcademic} {...register("category_id")}>
-                  <option value="">Uncategorised</option>
-                  {(categories.data?.items ?? []).map((category) => (
-                    <option key={category.public_id} value={category.public_id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-            <Field label="Department">
-              {({ id }) => (
-                <NativeSelect
-                  id={id}
-                  disabled={!canEdit || !canReadAcademic}
-                  {...register("department_id")}
-                >
-                  <option value="">None</option>
-                  {(departments.data?.items ?? []).map((department) => (
-                    <option key={department.public_id} value={department.public_id}>
-                      {department.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-          </FormGrid>
-          <Field label="Description">
-            {({ id }) => <Textarea id={id} disabled={!canEdit} {...register("description")} />}
-          </Field>
-          <Field label="Prerequisites">
-            {({ id }) => <Textarea id={id} rows={2} disabled={!canEdit} {...register("prerequisites")} />}
-          </Field>
-        </CardBody>
-      </Card>
-
-      {canEdit ? (
-        <FormActions>
-          <Button type="button" variant="ghost" onClick={() => reset()} disabled={!isDirty}>
-            Discard changes
-          </Button>
-          <Button type="submit" loading={save.isPending} disabled={!isDirty}>
-            Save course
-          </Button>
-        </FormActions>
-      ) : null}
-    </form>
+    <CourseForm
+      key={`${course.public_id}:${course.updated_at ?? ""}`}
+      mode="edit"
+      course={course}
+      canEdit={canEdit}
+      onSaved={() => undefined}
+    />
   );
 }
 

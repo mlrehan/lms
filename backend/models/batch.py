@@ -1,7 +1,7 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (Integer, String, ForeignKey, Date,
-                        Enum as SQLEnum, text, Text, Index)
+                        Enum as SQLEnum, text, Text, Index, Time, Numeric)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
@@ -26,6 +26,31 @@ class Batch(Base, PublicIdMixin):
     start_date: Mapped[Optional[date]] = utc_date_column(default=False)
     end_date: Mapped[Optional[date]] = utc_date_column(default=False)
     is_active: Mapped[bool] = bool_column(default=True)
+
+    # How the batch is scheduled. These say on which weekdays classes are held and when, so sessions can be generated
+    # (services/session_planner.py) instead of typed in one by one. `schedule_timezone` is the zone the clock times
+    # are written in; the sessions themselves are stored in UTC like everything else.
+    training_days: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment='e.g. "Monday & Friday"')
+    training_start_day: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, comment="Weekday of the first class")
+    training_end_day: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, comment="Weekday of the last class")
+    training_start_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    training_end_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    class_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    training_method: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment='Delivery method as named by the source, e.g. "Classroom Training"')
+    batch_fee: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
+    schedule_timezone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Google Calendar mirror. The calendar id is the mapping; the hash is the digest of what was
+    # last pushed, so an unchanged batch costs no API call.
+    google_calendar_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    google_synced_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    google_admins_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, comment="Admin emails the calendar was last shared with")
+    google_synced_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    google_pulled_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    total_enrollments: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0"),
+        comment="Seeded from LAIT's total_admission, then recounted from enrollments by the sync",
+    )
 
     course: Mapped["Course"] = relationship("Course", back_populates='batches', lazy="selectin")
     academic_year: Mapped[Optional["AcademicYear"]] = relationship("AcademicYear", back_populates="batches", lazy="selectin")
@@ -72,6 +97,12 @@ class BatchSession(Base, PublicIdMixin):
     # to `platform` and `recording_link`, which were already per-session for
     # the same reason.
     meeting_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    cancelled_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    origin: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, comment="LAIT | MANUAL | GOOGLE; NULL = legacy, treated as LAIT")
+    google_event_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    google_synced_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    google_synced_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
 
     tutor_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     student_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -93,4 +124,5 @@ class BatchSession(Base, PublicIdMixin):
             "idx_batch_sessions_batch",
             "batch_id",
         ),
+        Index("ux_batch_sessions_batch_start", "batch_id", "session_start_time", unique=True, postgresql_where=text("cancelled_at IS NULL")),
     )

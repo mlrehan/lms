@@ -7,51 +7,6 @@ from backend.models.base import Base, PublicIdMixin
 from .helpers import utc_datetime_column, bool_column
 
 
-class UserMessage(Base, PublicIdMixin):
-    """A private, one-to-one message (spec §16). Rating a tutor is a
-    different concern owned entirely by `TutorReview` below -- a message
-    used to also carry an optional star rating, which duplicated that table
-    for no reason and made "is this a message or a review?" ambiguous."""
-    __tablename__ = "user_messages"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
-    sender_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    recipient_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    course_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True)
-    batch_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("batches.id", ondelete="SET NULL"), nullable=True)
-    subject: Mapped[Optional[str]] = mapped_column(String(250), nullable=True)
-    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Deletion is **per side**, not shared. Both people are equally parties
-    # to a private message, so one flag for the row lets either of them
-    # erase the other's copy of a conversation -- a correspondence record
-    # destroyed unilaterally. `sender_deleted` / `recipient_deleted` hide it
-    # from one mailbox each; `is_deleted` is reserved for an administrative
-    # tombstone that withdraws it from both.
-    is_deleted: Mapped[bool] = bool_column(default=False, nullable=False)
-    sender_deleted: Mapped[bool] = bool_column(default=False, nullable=False)
-    recipient_deleted: Mapped[bool] = bool_column(default=False, nullable=False)
-    is_read: Mapped[bool] = bool_column(default=False, nullable=False, index=True)
-    # *When* it was read, not just that it was: "she says she never saw it"
-    # is a support question a boolean cannot answer.
-    read_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False, onupdate=False, nullable=True)
-    created_at: Mapped[datetime] = utc_datetime_column(default=True, onupdate=False, nullable=False)
-    updated_at: Mapped[datetime] = utc_datetime_column(default=True, onupdate=True, nullable=False)
-
-    # An inbox is always "mine, newest first" -- the single-column index on
-    # recipient_id alone still leaves the sort to be done in memory.
-    __table_args__ = (
-        Index("ix_user_messages_recipient_created", "recipient_id", "created_at"),
-        Index("ix_user_messages_sender_created", "sender_id", "created_at"),
-    )
-
-    sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id], back_populates="sent_messages", lazy="selectin")
-    recipient: Mapped["User"] = relationship("User", foreign_keys=[recipient_id], back_populates="received_messages", lazy="selectin")
-    # Present so a response can name the course/batch a message was about
-    # without the API layer holding a second lookup for every row.
-    course: Mapped[Optional["Course"]] = relationship("Course", lazy="selectin")
-    batch: Mapped[Optional["Batch"]] = relationship("Batch", lazy="selectin")
-
-
 class TutorReview(Base, PublicIdMixin):
     """Student feedback on tutors with rating & course/batch context."""
     __tablename__ = "tutor_reviews"
@@ -109,7 +64,7 @@ class TutorReview(Base, PublicIdMixin):
 
 class CourseDiscussion(Base, PublicIdMixin):
     """Spec §16's "Course discussions" -- a public, course-scoped thread,
-    distinct from a private `UserMessage`."""
+    distinct from a private message (`models/mail.py`)."""
     __tablename__ = "course_discussions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

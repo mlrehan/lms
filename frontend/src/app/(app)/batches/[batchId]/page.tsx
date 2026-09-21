@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -22,6 +22,7 @@ import type {
 import { EnrollmentStatusValues, PlatformsValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
+import { BatchGoogleCard } from "@/components/domain/batch-google-card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Badge,
@@ -46,6 +47,54 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatCalendarDate, formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { RecreateSessionsDialog } from "@/components/domain/recreate-sessions-dialog";
+import { SessionQueue } from "@/components/domain/attendance/session-queue";
+import { AttendanceSheetPanel } from "@/components/domain/attendance/sheet-panel";
+
+/** The batch's timetable facts in one glance: the reason a batch page is the workspace, not one tab among several. */
+function ScheduleCard({ batch }: { batch: BatchResponse }) {
+  const facts: [string, string | null | undefined][] = [
+    ["Days", batch.training_days],
+    ["Time", batch.training_start_time && batch.training_end_time ? `${batch.training_start_time} - ${batch.training_end_time}${batch.schedule_timezone ? ` (${batch.schedule_timezone})` : ""}` : null],
+    ["Class length", batch.class_duration_minutes ? `${Math.floor(batch.class_duration_minutes / 60)}h${batch.class_duration_minutes % 60 ? ` ${batch.class_duration_minutes % 60}m` : ""}` : null],
+    ["Method", batch.training_method],
+    ["Fee", batch.batch_fee == null ? null : `£${batch.batch_fee.toLocaleString("en-GB")}`],
+    ["Tutor", batch.tutor_name],
+  ];
+  return (
+    <Card>
+      <CardBody className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
+        {facts.map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</p>
+            <p className="truncate text-sm font-medium" title={v ?? undefined}>{v || "—"}</p>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  );
+}
+
+/** Attendance for this batch only: pick a session, take or review its register, without leaving the workspace. */
+function BatchAttendanceTab({ batchId }: { batchId: string }) {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+      <Card className="max-h-[32rem] overflow-y-auto">
+        <SessionQueue batchId={batchId} tutorId="" range="all" state="" selectedId={sessionId} onSelect={(item) => setSessionId(item.session_id)} />
+      </Card>
+      <section aria-label="Attendance sheet" className="min-w-0">
+        {sessionId ? (
+          <AttendanceSheetPanel key={sessionId} sessionId={sessionId} onBack={() => setSessionId(null)} />
+        ) : (
+          <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+            Choose a session to take or review its attendance.
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /* Overview                                                                    */
@@ -742,6 +791,9 @@ export default function BatchDetailPage({ params }: { params: Promise<{ batchId:
   const router = useRouter();
   const { permissions } = useSession();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [recreate, setRecreate] = useState(false);
+  const tabParam = useSearchParams().get("tab");
+  const initialTab = ["overview", "sessions", "attendance", "enrollments"].includes(tabParam ?? "") ? (tabParam as string) : "overview";
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["batches", "detail", batchId],
@@ -784,6 +836,11 @@ export default function BatchDetailPage({ params }: { params: Promise<{ batchId:
         }
         actions={
           <div className="flex items-center gap-2">
+            {permissions.has("session.create") && permissions.has("session.delete") ? (
+              <Button variant="secondary" size="sm" onClick={() => setRecreate(true)}>
+                <CalendarPlus /> Re-create sessions
+              </Button>
+            ) : null}
             {permissions.has("grade.read") ? (
               <Link
                 href={`/gradebook?batch=${data.public_id}`}
@@ -806,10 +863,15 @@ export default function BatchDetailPage({ params }: { params: Promise<{ batchId:
         }
       />
 
-      <Tabs defaultValue="overview">
+      <ScheduleCard batch={data} />
+
+      <BatchGoogleCard batchId={data.public_id} />
+
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTab value="overview">Overview</TabsTab>
           <TabsTab value="sessions">Sessions</TabsTab>
+          {permissions.has("attendance.create") ? <TabsTab value="attendance">Attendance</TabsTab> : null}
           <TabsTab value="enrollments">Enrollments</TabsTab>
         </TabsList>
         <TabsPanel value="overview">
@@ -818,10 +880,15 @@ export default function BatchDetailPage({ params }: { params: Promise<{ batchId:
         <TabsPanel value="sessions">
           <SessionsTab batch={data} />
         </TabsPanel>
+        <TabsPanel value="attendance">
+          <BatchAttendanceTab batchId={data.public_id} />
+        </TabsPanel>
         <TabsPanel value="enrollments">
           <EnrollmentsTab batch={data} />
         </TabsPanel>
       </Tabs>
+
+      {recreate ? <RecreateSessionsDialog batchId={data.public_id} batchCode={data.batch_code} onClose={() => setRecreate(false)} /> : null}
 
       <ConfirmDialog
         open={confirmDelete}

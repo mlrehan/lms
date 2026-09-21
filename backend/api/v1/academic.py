@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -247,7 +248,7 @@ def _department(department: Department, *, course_count: int = 0) -> DepartmentR
         name=department.name,
         code=department.code,
         head_tutor_id=head.public_id if head else None,
-        head_tutor_username=head.username if head else None,
+        head_tutor_username=visible_username(head) if head else None,
         course_count=course_count,
     )
 

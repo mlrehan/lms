@@ -64,10 +64,11 @@ async def _execute(service: LaitSyncService, run_id: int) -> None:
 async def list_runs(
     session: DBSession, params: Annotated[PageParams, Depends()], actor: _SYNC
 ) -> Page[SyncRunResponse]:
-    total = (await session.execute(select(func.count()).select_from(UserSyncRun))).scalar_one()
+    where = UserSyncRun.kind == "USERS"
+    total = (await session.execute(select(func.count()).select_from(UserSyncRun).where(where))).scalar_one()
     rows = (
         await session.execute(
-            select(UserSyncRun).order_by(UserSyncRun.started_at.desc()).limit(params.limit).offset(params.offset)
+            select(UserSyncRun).where(where).order_by(UserSyncRun.started_at.desc()).limit(params.limit).offset(params.offset)
         )
     ).scalars().all()
     return Page.build([SyncRunResponse.model_validate(r) for r in rows], total=total, params=params)
@@ -75,7 +76,7 @@ async def list_runs(
 
 @router.get("/runs/{run_id}", response_model=SyncRunResponse, summary="One synchronisation run")
 async def get_run(run_id: uuid.UUID, session: DBSession, actor: _SYNC) -> SyncRunResponse:
-    run = (await session.execute(select(UserSyncRun).where(UserSyncRun.public_id == run_id))).scalar_one_or_none()
+    run = (await session.execute(select(UserSyncRun).where(UserSyncRun.public_id == run_id, UserSyncRun.kind == "USERS"))).scalar_one_or_none()
     if run is None:
         raise NotFoundError("Synchronisation run not found.")
     return SyncRunResponse.model_validate(run)

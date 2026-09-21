@@ -32,7 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.permissions import Action, Module, perm
 from backend.models.identity.user import User
 from backend.repositories.announcement import AnnouncementRepository
-from backend.repositories.messaging import MessageRepository, NotificationRepository
+from backend.repositories.messaging import NotificationRepository
+from backend.services.mail_service import MailService
 from backend.repositories.reporting import ReportingRepository
 from backend.schemas.base import PageParams
 from backend.schemas.reporting import (
@@ -70,7 +71,7 @@ class DashboardService:
         self.session = session
         self.reports = ReportingRepository(session)
         self.scopes = ScopeResolver(session)
-        self.messages = MessageRepository(session)
+        self.mail = MailService(session)
         self.notifications = NotificationRepository(session)
         self.announcements = AnnouncementRepository(session)
 
@@ -123,7 +124,7 @@ class DashboardService:
 
     async def _personal(self, actor: User, *, held: set[str], now: datetime) -> PersonalPanel:
         messages = (
-            await self.messages.unread_count(actor.id) if _MESSAGE_READ in held else 0
+            await self.mail.unread_count(actor) if _MESSAGE_READ in held else 0
         )
         notifications = (
             await self.notifications.unread_count(actor.id)

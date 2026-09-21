@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, File, Request, Response, UploadFile, status
 
 from backend.api.deps import AuthServiceDep, CurrentUser, UserAgent, resolve_permissions
 from backend.core.context import get_client_ip
@@ -19,10 +20,12 @@ from backend.schemas.auth import (
     SessionResponse,
     TokenResponse,
 )
-from backend.schemas.user import CurrentUserResponse
+from backend.schemas.user import CurrentUserResponse, LocaleRefreshResponse, UserUpdateRequest
 from backend.security.refresh_tokens import hash_refresh_token
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
+from backend.services.locale_service import UserLocaleService
+from backend.services.user_service import UserService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -39,6 +42,8 @@ async def login(
         raw_password=payload.password,
         user_agent=user_agent,
     )
+    # Where they are signing in from decides a default time zone. Best effort: it can never fail a sign-in.
+    await UserLocaleService(session).refresh_quietly(user, client_ip=get_client_ip())
     issued = await auth.issue_tokens(
         user,
         remember_me=payload.remember_me,
@@ -109,6 +114,55 @@ async def me(current_user: CurrentUser) -> CurrentUserResponse:
     # they are the one field the ORM object cannot supply directly.
     response.permissions = sorted(resolve_permissions(current_user))
     return response
+
+
+def _me_response(user, ) -> CurrentUserResponse:  # noqa: ANN001
+    response = CurrentUserResponse.model_validate(user)
+    response.permissions = sorted(resolve_permissions(user))
+    info = user.locale_info or {}
+    response.detected_timezone = info.get("timezone")
+    response.locale_city = info.get("city")
+    response.locale_country = info.get("country_name")
+    return response
+
+
+@router.post("/me/locale/refresh", response_model=LocaleRefreshResponse, summary="Re-check where you are signed in from")
+async def refresh_my_locale(session: DBSession, current_user: CurrentUser) -> LocaleRefreshResponse:
+    """Called periodically by the console. When the address is the one already stored this is a comparison and
+    nothing more; a *different* address triggers one lookup and, if the time zone was not chosen by the person,
+    updates it."""
+    result = await UserLocaleService(session).refresh(current_user, client_ip=get_client_ip())
+    info = current_user.locale_info or {}
+    return LocaleRefreshResponse(
+        ip_changed=result.ip_changed, timezone_changed=result.timezone_changed, timezone=result.timezone,
+        detected_timezone=info.get("timezone"), city=info.get("city"), country=info.get("country_name"),
+    )
+
+
+@router.patch("/me", response_model=CurrentUserResponse, summary="Edit your own profile")
+async def update_me(
+    payload: UserUpdateRequest, session: DBSession, current_user: CurrentUser
+) -> CurrentUserResponse:
+    """Any signed-in user, about themselves only. Email, roles, status and
+    sign-in access are not editable here."""
+    user = await UserService(session).update_self(payload, actor=current_user)
+    return _me_response(user)
+
+
+@router.put("/me/picture", response_model=CurrentUserResponse, summary="Set your own profile picture")
+async def set_my_picture(
+    session: DBSession, current_user: CurrentUser, file: Annotated[UploadFile, File()]
+) -> CurrentUserResponse:
+    service = UserService(session)
+    user = await service.set_picture(await service.load_own(current_user), file, actor=current_user)
+    return _me_response(user)
+
+
+@router.delete("/me/picture", response_model=CurrentUserResponse, summary="Remove your own profile picture")
+async def remove_my_picture(session: DBSession, current_user: CurrentUser) -> CurrentUserResponse:
+    service = UserService(session)
+    user = await service.remove_picture(await service.load_own(current_user), actor=current_user)
+    return _me_response(user)
 
 
 @router.post(

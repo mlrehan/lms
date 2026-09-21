@@ -8,7 +8,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import NotFoundError, ValidationError
+from backend.core.errors import ConflictError, NotFoundError, ValidationError
 from backend.models.attendance import Attendance
 from backend.models.batch import BatchSession
 from backend.models.enrollment import Enrollments
@@ -125,62 +125,15 @@ class AttendanceService:
         tutor expects when fixing a mistake, `uq_attendances_session_student`
         would refuse the duplicate anyway.
         """
+        # The same authority, sheet and audit trail as the attendance workflow: only the session's assigned tutor
+        # (or the Super Admin, on their behalf) may mark a register, and it is recorded as a submission or an edit.
+        # A partial register is still accepted here, as this endpoint always did.
+        from backend.schemas.attendance_sheet import SaveSheetRequest, SheetEntry
+        from backend.services.attendance_sheet_service import AttendanceSheetService
+
+        request = SaveSheetRequest(entries=[SheetEntry(student_id=e.student_id, status=e.status, remarks=e.remarks) for e in entries], submit=True)
+        await AttendanceSheetService(self.session).save(actor, session_public_id, request, require_complete=False)
         batch_session = await self.session_service.get(session_public_id, actor=actor)
-
-        enrolled = await self._enrolled_student_ids(batch_session.batch_id)
-        by_public_id = await self._resolve_students([e.student_id for e in entries])
-
-        # Marking someone who is not in this batch is refused for the whole
-        # request rather than skipped: a register that silently drops names is
-        # worse than one that fails loudly, because nobody notices the gap.
-        not_enrolled = [
-            user.username
-            for public_id, user in by_public_id.items()
-            if user.id not in enrolled
-        ]
-        if not_enrolled:
-            raise ValidationError(
-                "These students are not enrolled in this session's batch.",
-                details={"not_enrolled": sorted(not_enrolled)},
-            )
-
-        existing = await self.attendance.existing_by_student(batch_session.id)
-        touched: list[Attendance] = []
-
-        for entry in entries:
-            student = by_public_id[entry.student_id]
-            row = existing.get(student.id)
-
-            if row is None:
-                row = Attendance(
-                    session_id=batch_session.id,
-                    student_id=student.id,
-                    recorded_by=actor.id,
-                    status=entry.status,
-                    remarks=entry.remarks,
-                )
-                self.session.add(row)
-            else:
-                row.status = entry.status
-                row.remarks = entry.remarks
-                row.recorded_by = actor.id
-            touched.append(row)
-
-        await self.session.flush()
-
-        audit_service.record(
-            self.session,
-            action=AuditAction.UPDATE,
-            actor_user_id=actor.id,
-            actor_email=actor.email,
-            entity_type="batch_session",
-            entity_id=batch_session.id,
-            details={
-                "attendance_marked": len(touched),
-                "statuses": sorted({e.status.value for e in entries}),
-            },
-        )
-
         return await self.attendance.list_for_session(batch_session.id)
 
     # -- helpers -------------------------------------------------------------

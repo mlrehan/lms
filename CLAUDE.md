@@ -1880,3 +1880,215 @@ Users are provisioned from the LAIT API (`/api/Students/latest`, `/api/Tutors`, 
 - Tests: `tests/unit` (mapping/client/geo) and `tests/integration/test_lait_sync_service.py` (real Postgres, fake LAIT); guards mutation-tested. **Unpaired DB constraints can mask a missing app check** — assert the failure *reason*, not just that the row was skipped.
 - Windows: run uvicorn on a Selector loop (`asyncio.Runner(loop_factory=...)`); the seed CLI prompts for a password unless `LMS_ADMIN_PASSWORD` is set.
 - Not verified: a real (non-dry) sync against the live LAIT API — real people's data; run it deliberately.
+
+## Profile pictures, self-service profile, account creation UX
+
+- **Pictures** are re-encoded server-side (`backend/services/avatar.py`): Pillow decides the type (JPEG/PNG/WebP only; SVG/GIF/HTML fail to decode), pixel budget checked before decoding, EXIF/GPS stripped, output a 512x512 WebP. Stored under `avatars/{public_id}/`; the old object is deleted on replace/remove. `profile_picture` in API responses is a *path* (`/users/{id}/picture?v=...`, `v` = key stem for cache busting), never the storage key. `GET` needs only a signed-in session; UUIDs are unguessable and "no user" and "no picture" are the same 404.
+- **Two routes to the same data:** admins `PUT/DELETE /users/{id}/picture` + `PATCH /users/{id}` (need `user.update`, scoped); everyone `PATCH /auth/me`, `PUT/DELETE /auth/me/picture` (own row only; email is refused with 422 — it is the sign-in identifier and cannot be verified here; roles/status are not in the schema). Verified live: a student gets 403 on another user's profile/picture.
+- **Frontend:** shared `ProfileForm` (mode `admin`|`self`, sticky dirty/save bar, `beforeunload` guard), `AvatarUploader`, `UserAvatar` (initials fallback), and a rebuilt `CreateUserDialog` (username suggested from email, role cards, generated/strength-metered password, one-time credentials screen).
+- **Bugs fixed on the way:** (1) BFF proxy 500'd when a refresh failed (response body cancelled then reused) and concurrent requests each rotated the same refresh token, which the backend reads as theft and revokes the session — refresh is now single-flight per token. (2) Create form and Change-password form allowed 8-char passwords while the server requires 12.
+
+## LAIT academic synchronisation (courses, batches, sessions, enrolments)
+
+`POST /v1/courses/sync` (`course.sync`; `--dry-run` via `?dry_run=true`), history under `/courses/sync/runs`, worker `python -m backend.cli.sync_lait_academic --once|--interval N|--dry-run|--status-only`. Migration `b27e4c90a1d3`; re-seed for `course.sync`. Built on the user sync: same `user_sync_runs` table (`kind` = USERS|ACADEMIC; **one RUNNING row across both kinds is the lock** — an academic run can create users) and it reuses `LaitSyncService.upsert_record` to create missing tutors/students on demand (without login access).
+
+- **Time:** LAIT sends naive UK time; everything is converted with `zoneinfo` (BST-aware), stored UTC. Verified on real data: a 6 PM UK batch is 17:00 UTC before 25 Oct and 18:00 UTC after.
+- **Sessions are derived** from `training_days` (free text: `Mon, Wed & Fri (2 wks)`, `5 Thursdays`, `Thursday to Friday`, ...) between start and end, capped at LAIT's `training_sessions`; all 13 real batches yield exactly the reported count (36). A disagreement is reported, never silently resolved. Re-sync matches on `(batch_id, session_start_time)` (unique index); a session that leaves the schedule is deleted only if pristine (no attendance/links/notes), otherwise kept and counted.
+- **Course fields from the public page** (`lait_academic.parse_course_page`, keyed on stable element ids): level (a range like "Intermediate to Advanced" resolves to its *lower* bound), duration, prerequisites (stops at "Software Requirements"). **Category comes from the site's own menu**, matched by course URL; a course listed under several headings takes the narrowest. Nothing is invented: unlisted -> no category.
+- **Page fetching never carries the API key**, only fetches https on `course_page_hosts` (and subdomains), does not follow redirects, and caps the body (`lait_pages.py`).
+- **Course status is derived, not taken from LAIT:** RUNNING while an *active* batch is in progress (UTC dates), else PUBLISHED; DRAFT/COMPLETED/ARCHIVED/deleted are never touched; recomputed on every run *including failed ones*, and via `--status-only`.
+- **LAIT owns what it sends; admins own the rest.** Never overwritten: enrolment `status` (a local DROPPED survives), batch `capacity`/edited `notes` (generated notes carry an `Auto: ` prefix), session links, a category once set. A locally deleted course stays deleted; a title collision with a different course is reported, not merged. Enrolments are never removed because a feed stopped listing them.
+- **`batches.total_enrollments`** starts from LAIT's `total_admission` and is then recounted from `enrollments`. `enrollments.previous_enrollment_id` = the student's latest enrolment in another batch. A student's `company` becomes an `organizations` row (placeholder values like "N/A"/"Self employed" are refused), shared per normalised name; **no membership is created** (memberships grant row-scope visibility).
+- `courses.course_picture` was renamed `course_image` and `small_course_image` added.
+- **Test hygiene lesson:** the first cut of the sync tests ran `DELETE FROM user_sync_runs`, wiping the dev database's real run history. Tests now delete only the run ids they created. A test that cleans a shared dev DB must scope its deletes.
+- Not verified: a real (non-dry) academic sync against live LAIT. Real dry run: 25 courses, 13 batches, 36 sessions, 18 enrolments, 0 errors.
+
+## Course management pass (list, create, edit, images, price)
+
+- **List:** thumbnail (`CourseThumb`, default icon when none or when the URL fails to load), tutor/student filters replace department/tag (`GET /courses?tutor_id=&student_id=`; **institution-wide callers only** — filtering by person reveals who teaches/studies what; anyone else gets 403), and a **View details** modal (`CourseDetailsDialog`; `CourseResponse` now carries `batches`). A tutor's courses = `tutor_courses` **or** a session they teach (synced batches never fill `tutor_courses`); a student's = active enrolments.
+- **One form for create and edit** (`components/domain/course-form.tsx`): staged image pickers with preview (uploaded *after* the course is saved; a failed image never undoes the course), code suggested from the title until typed over (`GET /courses/suggest-code`, `PPB-001`; unique constraint stays the arbiter), inline add of category/department (needs `academic.create`), price/link/prerequisites, **Fetch** from the link (`POST /courses/link-preview`: LAIT hosts only, fills *empty* fields only, saves nothing). An edit page for a course with a link but no price offers the price on open.
+- **Course images** are processed server-side (`services/images.py`: type from the bytes, pixel budget, re-encode to WebP, EXIF dropped, *fit* not crop: 320x320 / 1600x1200). Uploaded = a storage key in `course_image`/`small_course_image`; external = an http(s) URL. The API exposes an uploaded image only as a path (`/courses/{id}/image/{kind}?v=`), never the key. **A request body can only set an http(s) URL** (schema validator) — if it could set a key, the image endpoint would serve any stored object. The sync never overwrites an uploaded image, only URLs LAIT supplied.
+- **Price** comes from the page's "Regular Price" (`MainContent_lblPrice`), not the lower batch/group prices; the sync now sets it (**re-run Sync courses & batches** to fill existing courses).
+- **Lessons:** (1) a pydantic field with `validation_alias` is silently ignored when the model is built by its plain field name — `_course_response` dropped both images on the detail page while the list (`model_validate`) worked; caught in the browser, now covered by a response-shape test. (2) The project's `forms.test.ts` regex matches a literal form-tag string even inside a comment.
+
+## Google Calendar integration
+
+Calendar API only (scopes: `calendar.app.created`, `calendar.acls`, `openid`, `email`; no Classroom/Meet/YouTube). One organisation Google account (`GOOGLE_EMAIL`), connected once by a Super Admin at Integrations -> Google Calendar (`google.update`); ADMIN has `google.read`/`google.sync`. Settings live in the **root `.env`** (`backend/.env` is not read): `GOOGLE_EMAIL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (must be registered on the OAuth client), plus `GOOGLE_INVITE_ATTENDEES`, `GOOGLE_SEND_UPDATES` (default `none`: guests get the event with no email), `GOOGLE_SHARE_WITH_ADMINS`, `GOOGLE_PULL_SESSION_TIMES`, `GOOGLE_SYNC_INTERVAL_SECONDS`. Worker: `python -m backend.cli.sync_google_calendar --once|--interval N|--dry-run`. Migration `c48d7a2e9b15`.
+
+- **Shape:** one calendar per batch, one event per session; guests = the session's tutor + enrolled students + their guardians + their employers' managers; admins get writer access. Guests cannot see each other, edit, or invite; reminders are popups only; `tutor_notes` cannot reach Google (not an input to the builder).
+- **Flow:** LMS -> Google is the rule (per-batch/session digests mean an unchanged run makes no writes). Google -> LMS: **session time edits only** (sanity-checked: end after start, <=24h, <=366 days shift; audited). Guest-list edits are *not* applied to enrolments (an enrolment carries fees/certificates/grades); drift is reported and put back. An event deleted in Google is recreated; cancel a class by deleting the session in the LMS. Pull happens before push, and a difference older than our last push is not a Google edit.
+- **Credential:** the refresh token is AES-GCM encrypted with the master key, purpose-bound (`security/token_cipher.py`), never in any schema. The OAuth `state` is HMAC-signed and bound to the user; the connecting account must equal `GOOGLE_EMAIL`. `GoogleSettings.configuration_problem` turns a mis-pasted client ID (a real one was pasted as `http://<id>/`) into an instruction instead of Google's "invalid_client" page; a link-shaped paste is tidied.
+- **Verified live against real Google** on a throwaway batch with no guests: preview writes nothing; create; times UTC-exact; privacy flags; idempotent re-run; LMS reschedule flows out; a time edit made in Google flows back and settles; a Google-deleted event is recreated; a session deleted in the LMS deletes its event; cleanup. **Not exercised live:** guest invitations and admin sharing (both would touch real people/accounts) -- covered only against the fake Google in `tests/integration/test_google_calendar_sync.py`.
+- **Gotcha:** Google's calendar delete is eventually consistent (readable ~2s after a successful delete, then 404); do not assert "gone" immediately.
+
+## Managing the schedule FROM Google Calendar (Google -> our database)
+
+Migrations `d5a1c93f7e20`, `e6b2d84a1c39`. Every change below is written to **our database**, not just Google.
+
+- **Who may edit:** Google cannot say who made an edit, so write access to the calendar IS the authorisation. SUPER_ADMIN is shared as `writer`; ADMIN as `reader` (`GOOGLE_ADMINS_CAN_EDIT=true` makes them writers). Tutors/students/guardians/managers are only *guests* on their own events (never given the calendar), so they see just their own sessions; guests can't see each other and the description never names anyone.
+- **Add:** an event added to a batch calendar becomes a `batch_sessions` row (`origin='GOOGLE'`) after validation (end after start, 5 min-24 h, within 60 days of the batch, tutor not double-booked). Tutor = a guest holding the TUTOR role, else the batch's usual tutor. Location -> platform ("Zoom Video Conferencing", "Microsoft Teams"...) or, for any other text, `Classroom` + the text as `classroom`. The event is then rewritten to `Course (batch-code)` with "Session n of N" in the description. A refused event is left in place with `NOT ADDED TO THE LMS: <reason>` and a red colour, and is reconsidered only when it changes.
+- **Move:** dragging/resizing updates the session time (sanity-checked, tutor-clash-checked, audited).
+- **Delete:** deleting the event **deletes the session row**, unless it has attendance/recording/tutor notes, in which case it is kept as cancelled (`cancelled_at`, reason says why) so history is never destroyed. **A title starting `CANCEL`** always keeps the record as cancelled and removes the event from every calendar. Cancelled sessions are excluded from the schedule/timetable/feeds, don't block the tutor, refuse attendance, and no longer occupy their `(batch, start)` slot (partial unique index).
+- **Enrolments are proposals, not edits.** A guest added/removed in Google creates a `google_change_requests` row (ENROL_ADD/ENROL_REMOVE) shown under Integrations -> Google Calendar -> "Changes from Google". Approve applies it through the ordinary `EnrollmentService` (capacity, batch open, notifications, webhooks, audit; a removal is `DROPPED`, never a delete); if those rules refuse, the request stays PENDING with the reason. Reject leaves the LMS as it is. Until decided the calendar is put back to what the LMS says; proposals that the LMS already satisfies close themselves (`SUPERSEDED`).
+- **`batch_sessions.origin`:** `LAIT` (or NULL) sessions are derived data the LAIT sync may remove when a schedule shrinks; `MANUAL`/`GOOGLE` ones are decisions and are never deleted by it.
+- **Bugs the tests/live run found:** (1) our own previous push looks like a "Google edit" once an enrolment changes in the LMS (it proposed removing the student just approved) -> a guest/time difference only counts if `event.updated` is newer than our last write; (2) my revoked-connection test marked the developer's REAL `google_connections` row `ERROR`, silently disconnecting the console -> a test-only token override never touches the stored connection (regression test added); (3) a unique index on `(batch, start)` blocked replacing a cancelled session.
+- **Verified live against real Google** (throwaway batch, `example.com` guests, no emails): add, invalid-event refusal, move, CANCEL, delete, guest-add -> proposal -> approve -> enrolled in the DB and the calendar agrees; 16/16. Not exercised live: administrator sharing (reader/writer ACL), only against the fake.
+
+## Class schedule calendar (Batches page)
+
+`components/domain/batch-calendar.tsx` sits under the batch table, built on **FullCalendar 6** (core, daygrid, timegrid, list, multimonth, interaction, and the **luxon3** plugin -- named time zones need it, otherwise the display zone preference would be ignored). Pin `@fullcalendar/react` to 6.x: npm resolves 7.x, which does not match the 6.x core. It is drawn from **our own sessions**, not an embedded Google iframe: an iframe cannot add, move or delete anything in our database, and shows nothing to a guest not signed in to the right Google account. Google stays in step through the existing sync (a batch is pushed after every change; "Sync with Google" pulls Google-side edits).
+
+- **Views:** Day, Week, Month, Year, Schedule; phones default to Schedule. Loaded via `GET /sessions/calendar?from&to&batch_id` (row-scoped like the session list; window <= 400 days, cap 3000 rows, `truncated` flag). Loaded with `next/dynamic` `ssr:false`.
+- **Editing (admins only:** `session.create` + `.update` + `.delete`; tutors hold `session.update` for their own notes, deliberately not enough here): drag to move (15-minute snap), drag the bottom edge to resize, drag over empty time or click a day to add, click a class to edit/delete. A refused move (tutor clash) reverts and toasts the reason. Everyone else gets the same views read-only.
+- **Details modal:** `GET /sessions/{id}/overview` (`SessionOverviewService`). The roster is the caller's `EnrollmentVisibility` (admin all, tutor their batch, student themselves, guardian their wards, corporate manager their employees); contacts, guardians, managers, tutor notes and the live head-count are limited to administrators and the batch's tutors. `batches.total_enrollments` is a cached counter that lags -- never display it where a count matters.
+- Creating a session with only `duration_minutes` used to store no end time and crash the Google push. `SessionService.create` now derives the end and the sync coalesces a missing end for older rows.
+- Date maths for the old hand-built grid lives in `lib/calendar.ts` (tested); only `batchHue` is still used.
+- `package.json` asked for `eslint@^9.42.0`, which the registry does not have (eslint 10.10 was what was actually installed and working); it now says `^10.10.0` so `npm install` can resolve.
+- **Only batches that have been synced exist in Google.** The calendar in the project always shows every session; Google only has the batches that were pushed. A full push creates one calendar per batch and adds tutors, students, guardians and managers as guests (no emails, `send_updates=none`, but the event appears on their Google calendar) -- do it deliberately.
+
+## Display time zone (top bar)
+
+`components/shell/timezone-menu.tsx` is a visible, searchable popover in the top bar (name + `GMT+6`; offset only on phones), preselected to the zone in force. Choosing a zone re-renders every time in the console at once, because everything reads `useDisplayTimeZone()`. Precedence is unchanged: a choice made in this browser (`lms.timezone`), then the account's `timezone`, then the browser's. Picking the profile's own zone clears the local override; "Save as my default" PATCHes `/auth/me` so it follows the account across devices. Search matches name, region and offset (`dhaka`, `asia`, `+6`), the full IANA list comes from `Intl.supportedValuesOf` merged with `/geo/timezones`, and the popup offers "Your browser is in X -- use that" when the browser and profile disagree.
+
+**A time that "looks 4 hours wrong" is almost always the wrong zone being applied, not wrong data.** Batch 11285 is stored as 09:00 UTC = 15:00 in Dhaka; it displayed 11:00 because the *profile* said Europe/Paris and the profile outranks the browser. Check the top-bar zone before suspecting the data. (Browser automation note: the tool's key presses arrive with an empty `key`, so `Enter` handlers cannot be exercised that way; dispatch a `KeyboardEvent` instead.)
+
+## Contact privacy, teams, sign-in location and internal mail
+
+Four related changes made together. The thread running through them: **a person's email address, phone number and
+login name are the Super Admin's to see and nobody else's, and every new surface was built to that rule from the start.**
+
+### Contact details (`core/privacy.py`, permission `user.view_contact`)
+Only a holder of `user.view_contact` (SUPER_ADMIN, by construction; ADMIN was explicitly removed) sees another person's
+email, phone, mobile, emergency contact or **login name**; everyone sees their own. Being related changes nothing -- a
+tutor does not get a student's email because the student is in their batch. **Login names are covered because 54 of 77 are
+literally the email address**; hiding `email` while returning `username` would leak exactly what is protected. Wherever a
+mapper used `x.username` it now uses `visible_username(x)` (the person's full name when the viewer may not see the login
+name); `UserSummary`/`UserResponse` use per-field serializers (a model-level serializer collapses the OpenAPI schema).
+`get_current_user` records the viewer in a ContextVar; **no viewer means deny**. Also covered: user search (names only unless
+the viewer may see contact -- matching on email lets anyone confirm an address by typing it), audit actors and entity
+labels, search hits, security lists, Google change requests, and the session details modal. `tutors_visible_to()` limits
+the tutors shown on a course (a student sees their own tutors, a tutor only themselves).
+**Known residue:** audit `details` JSON still records usernames as written at the time; an Administrator can read them.
+To let Administrators see contact details again, grant `user.view_contact` to the ADMIN role.
+`tests/integration/test_contact_privacy.py` drives the app over HTTP as six different roles and asserts no other person's
+email or phone appears in any of nine endpoints; mutation-tested.
+
+### My team (`/team`, permission `team.read`)
+A corporate manager's employees, or a guardian's wards, with attendance, assignments (overdue flagged), scores/GPA, next
+session, and a "needs a look" rule (attendance < 75% over >= 3 sessions, or anything overdue). Who appears is
+`EnrollmentVisibility.cared_for_student_ids` minus the viewer -- nothing in the request names an organisation. An id outside
+the set is a 404. **Making someone a manager** = (1) they hold `CORPORATE_MANAGER`, (2) `POST /organizations/{id}/managers`,
+(3) each person `POST /organizations/{id}/members` (`activate_immediately`). Console: Organizations -> the organisation ->
+Managers / Members. Done for the University of the West of Scotland | London Campus group.
+
+### Sign-in location and time zone (`services/locale_service.py`, `integrations/ip_locale.py`, `LOCALE_*`)
+At sign-in, and every 10 minutes / on tab focus while the console is open, the person's public IP is compared with the
+one stored on the account (`users.locale_ip`); only a **different** address costs a lookup (icanhazip for the server's own
+address when the caller's is private -- local development; ipapi.co for what an address implies). Results are cached in
+process, failures back off, nothing ever raises into a sign-in. **A time zone the person chose is never overwritten**
+(`timezone_is_auto`); one that was itself filled in from an address follows it. **This sends people's IP addresses to
+ipapi.co**; `LOCALE_ENABLED=false` turns it off.
+
+### Internal mail (`/messages`, `models/mail.py`, `services/mail_*.py`, `integrations/smtp.py`)
+Replaces one-to-one `user_messages` (table dropped; it was empty). To/Cc/Bcc, drafts that autosave, threads, rich text,
+attachments, star/read, per-person removal. **Who may write to whom** (`MailAudience`, from live enrolment data on every
+send): administrators to anybody; a tutor to their students; a student to their tutors; a guardian/manager to the tutors of
+their people; everyone to administrators. The directory returns **names and a role label only**. **Bcc is disclosed to the
+sender alone.** Bodies are re-parsed by `nh3` and only formatting tags survive (`mail_html.py`) -- the stored HTML is what
+every reader gets. Attachments: 10 files, 10 MB each, 25 MB total, programs/scripts refused, names made safe, served only as
+downloads to the sender and the recipients. Email copies (`mail_delivery.py`) are sent **after** commit, one email per
+recipient addressed to them alone, **no email address in any body or header, no Reply-To**; a Bcc'd person's email is
+indistinguishable from the others'; the sender can ask for a copy. Off by default: set `MAIL_ENABLED=true` (plus
+`MAIL_APP_URL` for the reply link) -- until then every recipient is recorded as SKIPPED and nothing is sent.
+`MailSettings.from_email` is populated through its env alias `MAIL_FROM`, **not** its field name; a test that passes
+`from_email=` is silently ignored and gets the real sender. Tests use a local SMTP sink and cannot reach a real server.
+The compose/reader UI has typecheck, lint and API-level tests but **has not been driven in a browser signed in**.
+
+## Batch workspace, session planner and attendance sheets
+
+**Batch schedule.** `batches` carries the LAIT schedule (`training_days`, `training_start_day/end_day`, `training_start_time/end_time`, `class_duration_minutes`, `training_method`, `batch_fee`, `schedule_timezone`; migration `b3e8d17a5c46`). Batches synced before that need a LAIT re-sync, or the planner infers from existing sessions.
+
+**Re-create sessions.** `services/session_planner.py` is pure (plans in the chosen zone, converts to UTC at the end; DST gaps warn). `SessionPlanService` backs `POST /sessions/plan` (preview) and `/sessions/replace`. A session with attendance, a started sheet, a recording or notes is **never** deleted by a re-create; other sessions are replaced only on confirmation; a tutor clash refuses the whole operation atomically. UI: `recreate-sessions-dialog.tsx`, opened from the Batches row menu and the workspace header.
+
+**Attendance sheets** (migration `c4f9a26e8b57`). NOT_STARTED -> DRAFT -> FINALIZED; later edits are append-only events (`attendance_sheet_events`, UPDATE blocked by a trigger — a REVOKE means nothing against the owner role). Only the assigned tutor or a holder of `attendance.override` (Super Admin) may take/edit a register, and on-behalf submission is recorded. **ADMIN no longer takes a register without `attendance.override`.** Routes: `/attendance/queue`, `/attendance/sessions/{id}/sheet` (+ `/history`). Legacy `PUT /sessions/{id}/attendance` now goes through the sheet service.
+
+**Frontend.** DataTable v2 (server sort/paging, toolbar, row actions, sticky header) is used by Batches; other tables can adopt it opt-in. The batch page is the operational workspace (schedule card, Overview / Sessions / Attendance / Enrollments, `?tab=`). Timetable and Enrollments remain as cross-batch views of the same data.
+
+**Not driven in a browser** (sign-in is the user's to do) — verified by tsc, eslint, vitest, `next build` and backend tests only.
+
+## Role testing pass — five accounts driven in a browser
+
+Super Admin, two Tutors, a Student, a Guardian and a Corporate Manager were each signed in (by the user) and driven through their real surfaces. Isolation held everywhere it was probed; five defects were found and fixed.
+
+**Fixed in this pass:**
+1. `batch_response` never set `tutor_name`, so the batch workspace always showed Tutor "—" while the list showed it. Now derived from the batch's sessions.
+2. `UserPicker` displayed a raw UUID for a value set from outside (a default tutor, an existing session). It now looks the name up.
+3. `_resource_response` never mapped `batch_id`, so a batch-scoped resource always reported null and no client could filter by batch. **The identical omission had already been fixed for `ResourceFolder` and recurred on `Resource`** — the column existed, the schema field existed, only the mapper was missing.
+4. **`message_received` notifications were never raised.** The type was in the catalogue and shown as a preference toggle defaulting to on, while `mail_service.py` dispatched nothing — no such row existed anywhere in the database. Now sent to every recipient including Bcc. `tests/integration/test_mail.py`'s teardown needed a `notifications` delete as a result.
+5. **An enrollment oracle.** `EnrollmentService.enroll` ran the duplicate check *before* resolving the sponsoring organization, so a Corporate Manager probing an outside student got "already enrolled in this batch" — disclosing a student and a batch that `GET /users/{id}` and `GET /batches/{id}` both answer 404 to. Two distinguishable 409s made it enumerable. Ownership is now resolved immediately after loading the student, before the batch is read.
+
+**Coursework scoping, fixed after the pass:** `AssignmentService.create` and `QuizService.create` loaded the
+course through the deliberately-unscoped catalogue and never consulted `ScopeResolver.visible_course_ids`,
+while `get`/`update`/`delete` all do. A tutor could set coursework on a colleague's course, notify that
+course's students, and then get 404 for the row they had just made. Both now apply the same predicate as the
+reads — *a write must not reach further than the read that would show its result*. It is a **403, not the
+reads' 404**, because the catalogue is public by design so the course's existence is not a secret; what the
+caller lacks is standing to teach it. `tests/integration/test_coursework_scoping.py` drives two real tutors
+against live Postgres (a fake scope would assert nothing about the actor's relationship to the course) and
+includes an unrestricted-admin case, since a check that ignored `is_unrestricted` would lock administrators
+out everywhere. Mutation-tested: deleting either check fails exactly its own negative test.
+`ExamService.create` has the same unscoped shape but is gated on `exam.create`, which only unrestricted
+administrators hold, so it is latent rather than reachable — left alone rather than changed untested.
+
+**Guardian notifications, added after the pass:** guardians received nothing, ever — not one notification row
+existed for any guardian in the database, because every emitter addressed only the student. Three new types in
+a new `guardian` category (`ward_submission_graded`, `ward_assignment_published`, `ward_enrolled_in_batch`)
+are emitted alongside the student's own by `NotificationService.notify_guardians_of`.
+
+Four decisions worth not re-litigating:
+1. **Distinct `ward_*` codes, not the student's type sent to a guardian.** Every description in the catalogue
+   is second person about its subject ("Your submission was graded"), so reusing them would tell a parent
+   their own work was marked, and would leave both audiences sharing one opt-out switch.
+2. **The copy names the child.** A parent of two told only that "a student in your care" was graded has to go
+   and find out which, and a guardian of two children on one course would otherwise get two identical rows.
+3. **Its own fan-out, not guardians appended to the roster.** A large course would otherwise push the combined
+   audience past `MAX_FANOUT` and fail the assignment creation that triggered it.
+4. **Separately opt-out per type**, because the volumes differ by an order of magnitude: a parent may want
+   every grade and not every piece of homework.
+
+Only the three types with **live emitters** were wired. `GRADE_RECORDED`, `EXAM_RESULT_PUBLISHED`,
+`ENROLLMENT_STATUS_CHANGED`, `GUARDIAN_LINKED`, `ACCOUNT_LOCKED` and `PASSWORD_CHANGED` are declared in the
+catalogue and emitted by nothing — the decorative-field pattern again, and a guardian type mirroring one would
+inherit its silence. **There is still no attendance notification of any kind**, for students or guardians, so
+"your child was absent" remains unbuilt rather than broken.
+
+`tests/integration/test_guardian_notifications.py` covers the copy, the naming, the guardian's own opt-out and
+the no-guardian case; mutation-tested by removing the fan-out and by dropping the `{student}` substitution.
+
+**Care-circle messaging, added after the pass:** `MailAudience` routed a guardian or corporate manager only to
+the *tutors* teaching the people in their care, never to those people themselves — so a manager whose employees
+are not yet enrolled anywhere had an audience of administrators and nobody else, while being able to read those
+employees' grades. `_care_circle` now adds, in **both** directions, a manager's employees and an employee's
+managers, a guardian's wards and a ward's guardians.
+
+Two decisions worth not re-litigating:
+1. **Both directions, or Reply is refused on a message the platform just delivered.** The return leg is not a
+   nicety; without it the button is dead.
+2. **Computed in `mail_audience`, not taken from `ScopeResolver`.** That resolver answers whose *data* you may
+   read, and an employee being allowed to reply to their manager must not turn into the employee reading that
+   manager's enrolments. Writing to somebody is a smaller permission than reading about them, so it gets its
+   own, smaller query. A `REMOVED` membership is out of reach in both directions, matching where data
+   visibility already draws the line.
+
+`tests/integration/test_care_circle_messaging.py` (6 tests) covers both directions, the former employee, the
+guardian pair, the stranger still being refused, and the sender never being in their own audience.
+Mutation-tested: removing the care circle fails 4, ignoring membership status fails the former-employee test.
+Verified against live data — Lakshmi now reaches all 7 of her employees by name, they reach her, and neither
+reaches an unrelated student.
+
+**Found, not fixed — needs a product decision:**
+- **A Corporate Manager sees zero batches** despite holding `enrollment.create` and `organization.enroll`, so
+  the enrolment capability is unusable through the UI.
+- Tutors hold only `exam.read`, so Examinations is read-only for them.
+
+**Two behaviours that look like bugs and are not:** attendance "To do" means *takeable now* (not finalized and starting within the hour), so future classes correctly appear only under "All"; and Transcripts is gated on `grade.read`, not a transcript permission.

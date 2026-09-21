@@ -374,6 +374,7 @@ async def calendar_feed(
         .join(Course, Batch.course_id == Course.id)
         .where(
             BatchSession.id.in_(taught.union(enrolled)),
+            BatchSession.cancelled_at.is_(None),
             BatchSession.session_start_time >= window_start,
             BatchSession.session_start_time <= window_end,
         )

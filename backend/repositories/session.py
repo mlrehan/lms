@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Sequence
 
 from sqlalchemy import Select, func, select
@@ -40,8 +40,11 @@ class SessionRepository(BaseRepository[BatchSession]):
         tutor_id: int | None = None,
         starts_after: datetime | None = None,
         starts_before: datetime | None = None,
+        include_cancelled: bool = False,
     ) -> tuple[Sequence[BatchSession], int]:
         stmt = scope.apply(self._base(), BatchSession.id)
+        if not include_cancelled:
+            stmt = stmt.where(BatchSession.cancelled_at.is_(None))
 
         if batch_id is not None:
             stmt = stmt.where(BatchSession.batch_id == batch_id)
@@ -54,6 +57,20 @@ class SessionRepository(BaseRepository[BatchSession]):
 
         stmt = stmt.order_by(BatchSession.session_start_time.desc())
         return await self.paginate(stmt, params)  # type: ignore[return-value]
+
+    async def window(
+        self, *, scope: "Scope", start: datetime, end: datetime, batch_id: int | None, limit: int
+    ) -> Sequence[BatchSession]:
+        """Sessions overlapping [start, end), scoped to what the caller may see. Cancelled ones are not drawn."""
+        stmt = scope.apply(self._base(), BatchSession.id).where(
+            BatchSession.cancelled_at.is_(None),
+            BatchSession.session_start_time < end,
+            BatchSession.session_start_time >= start - timedelta(days=1),  # a session may end inside the window
+        )
+        if batch_id is not None:
+            stmt = stmt.where(BatchSession.batch_id == batch_id)
+        stmt = stmt.order_by(BatchSession.session_start_time, BatchSession.id).limit(limit)
+        return (await self.session.execute(stmt)).scalars().all()
 
     async def overlapping_for_tutor(
         self,
@@ -75,6 +92,7 @@ class SessionRepository(BaseRepository[BatchSession]):
         stmt = self._base().where(
             BatchSession.tutor_id == tutor_id,
             BatchSession.session_end_time.is_not(None),
+            BatchSession.cancelled_at.is_(None),  # a cancelled class frees the tutor
             # Standard interval overlap: existing.start < new.end
             # AND existing.end > new.start. Touching endpoints do not
             # overlap, so a 10:00-11:00 and an 11:00-12:00 are both fine.

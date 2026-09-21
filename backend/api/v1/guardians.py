@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -26,10 +27,10 @@ def _response(link: StudentGuardian) -> GuardianLinkResponse:
     return GuardianLinkResponse(
         public_id=link.public_id,
         guardian_id=link.guardian.public_id,
-        guardian_username=link.guardian.username,
+        guardian_username=visible_username(link.guardian),
         guardian_name=link.guardian.full_name,
         student_id=link.student.public_id,
-        student_username=link.student.username,
+        student_username=visible_username(link.student),
         student_name=link.student.full_name,
         relationship_type=link.relationship_type,
         is_primary=link.is_primary,

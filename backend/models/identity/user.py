@@ -1,5 +1,5 @@
 from sqlalchemy import (Integer, String, Text, Enum as SQLEnum, text,
-                        DateTime, Float, ForeignKey, Index, select)
+                        DateTime, Float, ForeignKey, Index, select, Boolean, JSON)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List, NamedTuple, Set
@@ -52,6 +52,13 @@ class User(Base, TimestampMixin, PublicIdMixin):
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     postcode: Mapped[Optional[str]] = mapped_column(String(35), nullable=True)
     timezone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # True while `timezone` was filled in from the person's IP address rather than chosen by them; only then may a
+    # later change of address change it. A zone somebody typed is never overwritten.
+    timezone_is_auto: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    # Where the person was last seen from: the address, what the lookup said about it (city, country, zone...) and when.
+    locale_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    locale_info: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    locale_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     country_id: Mapped[Optional[int]] = mapped_column(
@@ -124,15 +131,13 @@ class User(Base, TimestampMixin, PublicIdMixin):
     # authenticated request, to resolve permissions. That silently attached
     # "fetch this person's entire message and review history" to the hot
     # path of the whole API. Nothing needs them as collections: the
-    # messaging endpoints query `user_messages` directly, with paging and a
+    # messaging endpoints query `mail_recipients` directly, with paging and a
     # scope filter, which is the only shape that stays correct once a
     # mailbox has 10,000 rows in it. Raising is preferred to plain lazy
     # loading because a lazy load under asyncio fails as `MissingGreenlet`,
     # which reads like a driver bug rather than "you asked for too much".
     reviews_written: Mapped[List["TutorReview"]] = relationship("TutorReview", foreign_keys="[TutorReview.student_id]", back_populates="student", lazy="raise")
     reviews_received: Mapped[List["TutorReview"]] = relationship("TutorReview", foreign_keys="[TutorReview.tutor_id]", back_populates="tutor", lazy="raise")
-    sent_messages: Mapped[List["UserMessage"]] = relationship("UserMessage", back_populates="sender", foreign_keys="[UserMessage.sender_id]", lazy="raise")
-    received_messages: Mapped[List["UserMessage"]] = relationship("UserMessage", back_populates="recipient", foreign_keys="[UserMessage.recipient_id]", lazy="raise")
     # `AuditLog.actor_user_id` deliberately carries no `ForeignKey` (an audit
     # record must outlive the user it describes -- see audit.py's module
     # docstring), so SQLAlchemy has nothing to infer the join from on either
@@ -257,6 +262,20 @@ class User(Base, TimestampMixin, PublicIdMixin):
             and self.deleted_at is None
             and bool(self.can_login)
         )
+
+    @property
+    def profile_picture_url(self) -> str | None:
+        """The API path that serves the picture, versioned by the stored key.
+
+        The raw column is a storage key and must not leave the server. The
+        key's file name is a fresh UUID for every upload, so using it as the
+        cache-buster means a replaced picture is fetched again while an
+        unchanged one is cached indefinitely.
+        """
+        if not self.profile_picture:
+            return None
+        version = self.profile_picture.rsplit("/", 1)[-1].split(".")[0][:12]
+        return f"/users/{self.public_id}/picture?v={version}"
 
     @property
     def is_synced(self) -> bool:

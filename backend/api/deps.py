@@ -18,6 +18,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.privacy import set_viewer
 from backend.core.config import Settings, get_settings
 from backend.core.context import user_id_ctx
 from backend.core.errors import AuthenticationError, AuthorizationError
@@ -109,6 +110,8 @@ async def get_current_user(
     # Feeds the structured logger, so every log line emitted while handling
     # this request carries the acting user.
     user_id_ctx.set(str(user.public_id))
+    # Who is asking, for the contact-details rule in `core/privacy.py`.
+    set_viewer(user)
     return user
 
 

@@ -46,6 +46,13 @@ class NotificationType:
     ENROLLED_IN_BATCH: Final = "enrolled_in_batch"
     ENROLLMENT_STATUS_CHANGED: Final = "enrollment_status_changed"
     GUARDIAN_LINKED: Final = "guardian_linked"
+    # A guardian's own copies. Deliberately distinct codes rather than sending a student's type to their
+    # guardian: every description below is written in the second person about its subject ("Your submission
+    # was graded"), so reusing them would tell a parent that *their* work was marked, and would leave the two
+    # audiences sharing one opt-out switch.
+    WARD_SUBMISSION_GRADED: Final = "ward_submission_graded"
+    WARD_ASSIGNMENT_PUBLISHED: Final = "ward_assignment_published"
+    WARD_ENROLLED_IN_BATCH: Final = "ward_enrolled_in_batch"
     ACCOUNT_LOCKED: Final = "account_locked"
     ACCOUNT_UNLOCKED: Final = "account_unlocked"
     SESSIONS_REVOKED: Final = "sessions_revoked"
@@ -84,6 +91,22 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.GUARDIAN_LINKED, "enrollment",
         "A guardian was linked to your account, or you to a student.",
+    ),
+    # --- guardians ----------------------------------------------------------
+    # "Ward" matches the vocabulary the data model already uses: `User.wards` is the guardian side of
+    # `student_guardians`. Each is separately opt-out because their volumes differ by an order of magnitude --
+    # a parent may want every grade and no longer want every piece of homework.
+    NotificationKind(
+        NotificationType.WARD_SUBMISSION_GRADED, "guardian",
+        "A student in your care had a submission graded.",
+    ),
+    NotificationKind(
+        NotificationType.WARD_ASSIGNMENT_PUBLISHED, "guardian",
+        "A student in your care was set new coursework.",
+    ),
+    NotificationKind(
+        NotificationType.WARD_ENROLLED_IN_BATCH, "guardian",
+        "A student in your care was enrolled in a batch.",
     ),
     # --- security: mandatory ------------------------------------------------
     # Deliberately not opt-out. These exist so a person notices a compromise,

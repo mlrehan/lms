@@ -28,6 +28,7 @@ from typing import Any, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.privacy import visible_username
 from backend.core.errors import ValidationError
 from backend.core.permissions import Action, Module, perm
 from backend.models.identity.user import User
@@ -172,8 +173,8 @@ class SearchService:
             SearchHit(
                 type=SearchType.USER,
                 public_id=r.public_id,
-                label=r.full_name or r.username,
-                subtitle=r.username,
+                label=r.full_name or visible_username(r),
+                subtitle=visible_username(r),
                 created_at=getattr(r, "created_at", None),
             )
             for r in rows

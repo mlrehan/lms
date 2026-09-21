@@ -318,7 +318,7 @@ class ReportingRepository:
             select(BatchSession, Batch, Course)
             .join(Batch, BatchSession.batch_id == Batch.id)
             .join(Course, Batch.course_id == Course.id)
-            .where(BatchSession.session_start_time >= now)
+            .where(BatchSession.session_start_time >= now, BatchSession.cancelled_at.is_(None))
         )
         if tutor_id is not None:
             stmt = stmt.where(BatchSession.tutor_id == tutor_id)

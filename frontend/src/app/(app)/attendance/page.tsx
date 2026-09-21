@@ -1,234 +1,140 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, CircleSlash, Clock, ShieldQuestion } from "lucide-react";
-import { api } from "@/lib/api/client";
-import type { AttendanceResponse, AttendanceSummaryResponse, PageAttendanceResponse } from "@/lib/api/types";
-import { AttendanceStatusValues } from "@/lib/api/types";
-import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Card, CardHeader } from "@/components/ui/primitives";
-import { Column, DataTable, Pagination } from "@/components/ui/data-table";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
-import { Stat, StatGrid } from "@/components/ui/stat";
-import { StatusBadge } from "@/components/domain/status-badge";
-import { ErrorState, LoadingState } from "@/components/ui/states";
-import { useDisplayTimeZone } from "@/lib/preferences";
-import { formatDateTime } from "@/lib/format/datetime";
-import { humanise } from "@/lib/utils";
+import { Card, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
+import { NativeSelect } from "@/components/ui/form";
+import { LoadingState } from "@/components/ui/states";
+import { AttendanceRecords } from "@/components/domain/attendance/records-view";
+import { AttendanceSheetPanel } from "@/components/domain/attendance/sheet-panel";
+import { SessionQueue, type Range, type StateFilter } from "@/components/domain/attendance/session-queue";
+import { UserPicker } from "@/components/domain/user-picker";
+import { api } from "@/lib/api/client";
+import type { PageBatchSummary } from "@/lib/api/types";
+import { useSession } from "@/lib/auth/session";
+import { cn } from "@/lib/utils";
 
-export default function AttendancePage() {
-  const timeZone = useDisplayTimeZone();
-  const { limit, offset, setPage } = useListState();
-  const [status, setStatus] = useState("");
-  const [batchId, setBatchId] = useState("");
-  const [studentId, setStudentId] = useState("");
+const STATES: { value: StateFilter; label: string }[] = [
+  { value: "PENDING", label: "To do" },
+  { value: "DRAFT", label: "Drafts" },
+  { value: "FINALIZED", label: "Done" },
+  { value: "", label: "All" },
+];
 
-  const records = useQuery({
-    queryKey: ["attendance", "list", status, batchId, studentId, limit, offset],
-    queryFn: () =>
-      api.get<PageAttendanceResponse>("/attendance", {
-        query: {
-          status: status || undefined,
-          batch_id: batchId || undefined,
-          student_id: studentId || undefined,
-          limit,
-          offset,
-        },
-      }),
+/**
+ * Attendance, as the work it is: **Batch -> Session -> (Tutor) -> Attendance**.
+ *
+ * A tutor lands on the sessions assigned to them that still need doing; the Super Admin, who can also take a
+ * register on behalf of a tutor, can narrow by batch and by tutor first. People who cannot take attendance
+ * (students, guardians, managers) see the records that concern them instead.
+ */
+function AttendanceWorkspace() {
+  const params = useSearchParams();
+  const { permissions } = useSession();
+  const canTake = permissions.has("attendance.create");
+
+  const [batchId, setBatchId] = useState(params.get("batch") ?? "");
+  const [tutorId, setTutorId] = useState("");
+  const [range, setRange] = useState<Range>("week");
+  const [state, setState] = useState<StateFilter>("PENDING");
+  const [sessionId, setSessionId] = useState<string | null>(params.get("session"));
+
+  const batches = useQuery({
+    queryKey: ["batches", "picker"],
+    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 100, sort: "batch_code" } }),
+    enabled: canTake,
+    staleTime: 60_000,
   });
 
-  // The summary endpoint needs at least one of the two scopes; asking for
-  // "everyone, everywhere" is not a question it answers.
-  const summaryEnabled = Boolean(batchId || studentId);
-  const summary = useQuery({
-    queryKey: ["attendance", "summary", batchId, studentId],
-    queryFn: () =>
-      api.get<AttendanceSummaryResponse>("/attendance/summary", {
-        query: { batch_id: batchId || undefined, student_id: studentId || undefined },
-      }),
-    enabled: summaryEnabled,
-  });
+  if (!canTake) {
+    return (
+      <div className="space-y-5">
+        <PageHeader title="Attendance" description="The registers that concern you." />
+        <AttendanceRecords />
+      </div>
+    );
+  }
 
-  const columns: Column<AttendanceResponse>[] = [
-    {
-      key: "session",
-      header: "Session",
-      cell: (row) => (
-        <Link href={`/sessions/${row.session_id}`} className="font-medium hover:underline">
-          {formatDateTime(row.session_start_time, { timeZone })}
-        </Link>
-      ),
-    },
-    {
-      key: "batch",
-      header: "Batch",
-      secondary: true,
-      cell: (row) => <span className="font-mono text-xs">{row.batch_code ?? "—"}</span>,
-    },
-    {
-      key: "student",
-      header: "Student",
-      cell: (row) => (
-        <Link href={`/users/${row.student_id}`} className="hover:underline">
-          {row.student_username ?? row.student_id}
-        </Link>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (row) => <StatusBadge value={row.status} kind="attendance" />,
-    },
-    {
-      key: "remarks",
-      header: "Remarks",
-      secondary: true,
-      cell: (row) => (
-        <span className="block max-w-64 truncate text-xs text-muted-foreground">
-          {row.remarks ?? "—"}
-        </span>
-      ),
-    },
-    {
-      key: "recorded",
-      header: "Recorded",
-      secondary: true,
-      cell: (row) => (
-        <span className="text-xs text-muted-foreground">
-          {formatDateTime(row.recorded_at, { timeZone })}
-          {row.recorded_by_username ? ` by ${row.recorded_by_username}` : ""}
-        </span>
-      ),
-    },
-  ];
+  // Choosing a tutor is for people who can see other tutors' sessions; a tutor only has their own, so it is pointless to them.
+  const canPickTutor = permissions.has("attendance.override") || permissions.has("institution.view_all");
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Attendance"
-        description="Registers already taken. Marking one happens on the session itself."
-      />
+    <div className="space-y-4">
+      <PageHeader title="Attendance" description="Pick a session and mark who was there. Drafts save themselves; submitting makes it the record." />
 
-      <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
-          <Field label="Status" className="w-40">
-            {({ id }) => (
-              <NativeSelect
-                id={id}
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value);
-                  setPage({ limit, offset: 0 });
-                }}
-              >
-                <option value="">Any status</option>
-                {AttendanceStatusValues.map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
-            )}
-          </Field>
-          <Field label="Batch id" className="w-64">
-            {({ id }) => (
-              <Input
-                id={id}
-                value={batchId}
-                placeholder="Scope to one batch"
-                onChange={(event) => {
-                  setBatchId(event.target.value.trim());
-                  setPage({ limit, offset: 0 });
-                }}
-              />
-            )}
-          </Field>
-          <Field label="Student id" className="w-64">
-            {({ id }) => (
-              <Input
-                id={id}
-                value={studentId}
-                placeholder="Scope to one student"
-                onChange={(event) => {
-                  setStudentId(event.target.value.trim());
-                  setPage({ limit, offset: 0 });
-                }}
-              />
-            )}
-          </Field>
-        </div>
-      </Card>
+      <Tabs defaultValue="take">
+        <TabsList>
+          <TabsTab value="take">Take attendance</TabsTab>
+          <TabsTab value="records">Records</TabsTab>
+        </TabsList>
 
-      {summaryEnabled ? (
-        <Card>
-          <CardHeader
-            title="Summary for this scope"
-            description="The rate is (present + late) / (total - excused): an excused absence leaves the denominator rather than counting against the student."
-          />
-          <div className="p-4">
-            <StatGrid>
-              <Stat
-                label="Present"
-                value={summary.data?.present}
-                icon={CheckCircle2}
-                loading={summary.isPending}
-                tone="success"
-              />
-              <Stat label="Late" value={summary.data?.late} icon={Clock} loading={summary.isPending} tone="warning" />
-              <Stat
-                label="Absent"
-                value={summary.data?.absent}
-                icon={CircleSlash}
-                loading={summary.isPending}
-                tone="danger"
-              />
-              <Stat
-                label="Attendance rate"
-                value={
-                  summary.data?.attendance_rate === null || summary.data?.attendance_rate === undefined
-                    ? null
-                    : summary.data.attendance_rate.toFixed(1)
-                }
-                suffix="%"
-                icon={ShieldQuestion}
-                loading={summary.isPending}
-                hint={
-                  summary.data?.excused
-                    ? `${summary.data.excused} excused, excluded from the rate`
-                    : undefined
-                }
-              />
-            </StatGrid>
+        <TabsPanel value="take">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+            <Card className={cn("flex min-h-[28rem] flex-col overflow-hidden lg:max-h-[calc(100dvh-14rem)]", sessionId && "hidden lg:flex")}>
+              <div className="space-y-2 border-b border-border p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <NativeSelect className="h-8 text-[13px]" aria-label="Batch" value={batchId} onChange={(event) => setBatchId(event.target.value)}>
+                    <option value="">All batches</option>
+                    {(batches.data?.items ?? []).map((b) => (
+                      <option key={b.public_id} value={b.public_id}>
+                        {b.batch_code}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                  <NativeSelect className="h-8 text-[13px]" aria-label="Period" value={range} onChange={(event) => setRange(event.target.value as Range)}>
+                    <option value="today">Today</option>
+                    <option value="week">Last 7 days</option>
+                    <option value="month">Last 30 days</option>
+                    <option value="all">Any time</option>
+                  </NativeSelect>
+                </div>
+                {canPickTutor ? <UserPicker role="TUTOR" value={tutorId || null} onChange={(id) => setTutorId(id ?? "")} placeholder="Any tutor" /> : null}
+                <div role="group" aria-label="Show" className="flex gap-1">
+                  {STATES.map((s) => (
+                    <button
+                      key={s.label}
+                      type="button"
+                      aria-pressed={state === s.value}
+                      onClick={() => setState(s.value)}
+                      className={cn("flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors", state === s.value ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted")}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <SessionQueue batchId={batchId} tutorId={tutorId} range={range} state={state} selectedId={sessionId} onSelect={(item) => setSessionId(item.session_id)} />
+              </div>
+            </Card>
+
+            <section aria-label="Attendance sheet" className={cn("min-w-0", !sessionId && "hidden lg:block")}>
+              {sessionId ? (
+                <AttendanceSheetPanel key={sessionId} sessionId={sessionId} onBack={() => setSessionId(null)} />
+              ) : (
+                <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  Choose a session on the left to take its attendance.
+                </div>
+              )}
+            </section>
           </div>
-        </Card>
-      ) : null}
+        </TabsPanel>
 
-      <Card>
-        {records.isPending ? (
-          <LoadingState />
-        ) : records.error ? (
-          <ErrorState error={records.error} onRetry={() => void records.refetch()} />
-        ) : (
-          <>
-            <DataTable
-              columns={columns}
-              rows={records.data?.items ?? []}
-              rowKey={(row) => row.public_id}
-              emptyMessage="No attendance records match these filters."
-            />
-            <Pagination
-              total={records.data?.total ?? 0}
-              limit={limit}
-              offset={offset}
-              onChange={setPage}
-              label="records"
-            />
-          </>
-        )}
-      </Card>
+        <TabsPanel value="records">
+          <AttendanceRecords />
+        </TabsPanel>
+      </Tabs>
     </div>
+  );
+}
+
+export default function AttendancePage() {
+  // `useSearchParams` needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <AttendanceWorkspace />
+    </Suspense>
   );
 }

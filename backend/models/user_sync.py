@@ -35,6 +35,10 @@ class UserSyncRun(Base, PublicIdMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
+    kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'USERS'"),
+        comment="USERS | ACADEMIC. One RUNNING row across both kinds is the lock: an academic run can create users.",
+    )
     trigger_type: Mapped[str] = mapped_column(String(10), nullable=False)  # MANUAL | SCHEDULED
     triggered_by_user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True

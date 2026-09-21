@@ -105,16 +105,17 @@ class LaitSyncService:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(
-        self, *, trigger_type: str, triggered_by_user_id: int | None, dry_run: bool
+        self, *, trigger_type: str, triggered_by_user_id: int | None, dry_run: bool, kind: str = "USERS"
     ) -> UserSyncRun:
         """Record a RUNNING row. Raises ConflictError if a run is already live."""
-        if not self._settings.lait.is_configured:
+        if kind in ("USERS", "ACADEMIC") and not self._settings.lait.is_configured:
             raise ServiceUnavailableError("LAIT synchronisation is not configured.")
 
         await self._reap_stale()
         try:
             async with self._factory.begin() as session:
                 run = UserSyncRun(
+                    kind=kind,
                     trigger_type=trigger_type,
                     triggered_by_user_id=triggered_by_user_id,
                     dry_run=dry_run,
@@ -255,7 +256,7 @@ class LaitSyncService:
             report.roles_unknown += len(mapped.unknown_roles)
             stats.warnings += len(mapped.warnings)
 
-            outcome = await self._upsert(mapped, client, geo, dry_run, actor_id, run_id)
+            outcome, _user_id = await self._upsert(mapped, client, geo, dry_run, actor_id, run_id)
             setattr(stats, outcome, getattr(stats, outcome) + 1)
         except _Skip as exc:
             stats.skipped += 1
@@ -275,7 +276,9 @@ class LaitSyncService:
     async def _upsert(
         self, mapped: m.MappedUser, client: LaitClient | None, geo: GeoResolver,
         dry_run: bool, actor_id: int | None, run_id: int,
-    ) -> str:
+    ) -> tuple[str, int | None]:
+        """Create or update one account. Returns `(outcome, user_id)`; the id is
+        None when nothing was persisted (a dry run, or a skipped record)."""
         async with self._factory() as session:
             existing = await self._find_existing(session, mapped)
             hashed: str | None = None
@@ -330,15 +333,23 @@ class LaitSyncService:
             else:
                 changed = await self._apply_update(session, existing, mapped, country_id, city_id, actor_id)
                 if not changed:
-                    return "unchanged"
+                    return "unchanged", existing.id
                 self._audit(session, actor_id, existing.id, run_id, mapped.source, "updated", changed)
                 outcome = "updated"
 
+            user_id = user.id if existing is None else existing.id
             if dry_run:
                 await session.rollback()
-            else:
-                await session.commit()
-            return outcome
+                return outcome, (existing.id if existing is not None else None)
+            await session.commit()
+            return outcome, user_id
+
+    async def upsert_record(
+        self, mapped: m.MappedUser, client: LaitClient | None, geo: GeoResolver,
+        dry_run: bool, actor_id: int | None, run_id: int,
+    ) -> tuple[str, int | None]:
+        """Public entry for other syncs (the academic one creates tutors and students on demand)."""
+        return await self._upsert(mapped, client, geo, dry_run, actor_id, run_id)
 
     async def _find_existing(self, session: AsyncSession, mapped: m.MappedUser) -> User | None:
         conds = [User.public_id == mapped.guid]

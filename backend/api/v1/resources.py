@@ -9,6 +9,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, Path, Query, Response, UploadFile, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
@@ -49,7 +50,7 @@ def _folder_response(
         course_title=f.course.title if f.course else None,
         batch_id=f.batch.public_id if f.batch else None,
         batch_code=f.batch.batch_code if f.batch else None,
-        created_by_username=f.creator.username if f.creator else None,
+        created_by_username=visible_username(f.creator) if f.creator else None,
         child_folder_count=children,
         resource_count=resources,
         path=path or [],
@@ -69,7 +70,8 @@ def _resource_response(r: Resource) -> ResourceResponse:
         folder_name=r.folder.name if r.folder else None,
         course_id=r.course.public_id if r.course else None,
         course_title=r.course.title if r.course else None,
-        uploaded_by_username=r.uploader.username if r.uploader else None,
+        batch_id=r.batch.public_id if r.batch else None,
+        uploaded_by_username=visible_username(r.uploader) if r.uploader else None,
         updated_at=r.updated_at,
         is_deleted=r.is_deleted,
         deleted_at=r.deleted_at,
@@ -105,8 +107,8 @@ def _share_response(s: SharedResource) -> SharedResourceResponse:
     return SharedResourceResponse(
         resource_id=s.resource.public_id,
         resource_name=s.resource.name,
-        shared_with_username=s.shared_with_user.username if s.shared_with_user else None,
-        shared_by_username=s.shared_by_user.username if s.shared_by_user else None,
+        shared_with_username=visible_username(s.shared_with_user) if s.shared_with_user else None,
+        shared_by_username=visible_username(s.shared_by_user) if s.shared_by_user else None,
         created_at=s.created_at,
     )
 

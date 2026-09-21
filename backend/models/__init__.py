@@ -11,7 +11,9 @@ from .administration import (
 from .audit import AuditLog
 from .organization import Organization, OrganizationManager, OrganizationMembership
 from .guardian import StudentGuardian
-from .messaging import UserMessage, TutorReview, CourseDiscussion, DiscussionReply
+from .messaging import TutorReview, CourseDiscussion, DiscussionReply
+from .mail import MailMessage, MailRecipient, MailAttachment
+from .attendance_sheet import AttendanceSheet, AttendanceSheetEvent
 from .course import Course, TutorCourse
 from .batch import Batch, BatchSession
 from .enrollment import Enrollments
@@ -25,6 +27,7 @@ from .certificate import Certificate, CertificateIssued
 from .badge import Badge, UserBadge
 from .integration import CalendarFeed, WebhookDelivery, WebhookEndpoint
 from .user_sync import UserSyncRun
+from .google_connection import GoogleChangeRequest, GoogleConnection
 from .notification import Notification, Announcement
 from .shared_links import SharedLink, SharedLinkTarget
 
@@ -40,7 +43,7 @@ __all__ = [
     # Corporate organizations & guardianship
     "Organization", "OrganizationManager", "OrganizationMembership", "StudentGuardian",
     # Messaging
-    "UserMessage", "TutorReview", "CourseDiscussion", "DiscussionReply",
+    "MailMessage", "MailRecipient", "MailAttachment", "AttendanceSheet", "AttendanceSheetEvent", "TutorReview", "CourseDiscussion", "DiscussionReply",
     # Course & batch
     "Course", "TutorCourse", "Batch", "BatchSession",
     # Enrollment & attendance

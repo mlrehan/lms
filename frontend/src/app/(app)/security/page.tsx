@@ -130,12 +130,9 @@ function LockedAccounts() {
         </Link>
       ),
     },
-    {
-      key: "email",
-      header: "Email",
-      secondary: true,
-      cell: (row) => row.email ?? "—",
-    },
+    ...(permissions.has("user.view_contact")
+      ? [{ key: "email", header: "Email", secondary: true, cell: (row: LockedAccountResponse) => row.email ?? "—" }]
+      : []),
     {
       key: "attempts",
       header: "Failed attempts",

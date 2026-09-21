@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import Field, model_validator
@@ -20,11 +20,26 @@ class BatchSummary(APIModel):
     start_date: date | None = None
     end_date: date | None = None
     capacity: int | None = None
+    total_enrollments: int = Field(default=0, description="Recounted from enrollments by the LAIT sync.")
+
+    # What an operational list needs without a request per row. Filled by `api/v1/batches.summarise`.
+    course_title: str | None = None
+    training_days: str | None = None
+    training_method: str | None = None
+    batch_fee: float | None = None
+    class_duration_minutes: int | None = None
+    tutor_name: str | None = Field(default=None, description="The tutor teaching most of the batch's sessions.")
+    session_count: int = 0
+    next_session_start: datetime | None = None
 
 
 class BatchResponse(BatchSummary):
     course_id: uuid.UUID = Field(description="public_id of the owning course.")
-    course_title: str | None = None
+    training_start_day: str | None = None
+    training_end_day: str | None = None
+    training_start_time: str | None = Field(default=None, description="HH:MM, in `schedule_timezone`.")
+    training_end_time: str | None = None
+    schedule_timezone: str | None = None
     academic_year_id: uuid.UUID | None = None
     academic_year_label: str | None = None
     semester_id: uuid.UUID | None = None

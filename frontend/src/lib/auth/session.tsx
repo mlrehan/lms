@@ -11,10 +11,11 @@
  * revoked five minutes ago.
  */
 
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api/client";
-import type { CurrentUserResponse } from "@/lib/api/types";
+import { toast } from "sonner";
+import type { CurrentUserResponse, LocaleRefreshResponse } from "@/lib/api/types";
 import { permissionSet, type PermissionName, type PermissionSet } from "@/lib/auth/permissions";
 import { usePreferences } from "@/lib/preferences";
 
@@ -32,6 +33,50 @@ export interface SessionValue {
 const SessionContext = createContext<SessionValue | null>(null);
 
 export const CURRENT_USER_KEY = ["auth", "me"] as const;
+
+const LOCALE_CHECK_EVERY_MS = 10 * 60_000;
+const LOCALE_MIN_GAP_MS = 5 * 60_000;
+
+/**
+ * While the console is open, notice when the person's network address changes (a laptop moved from home to an
+ * office, a VPN switched on) and let the server update where they are. Every check is one cheap request whose
+ * answer is "same address" almost every time; only a *changed* address makes the server do a lookup. A time zone
+ * the person chose themselves is never touched by this: the server only moves one it had filled in.
+ */
+function useLocaleWatcher(active: boolean): void {
+  const queryClient = useQueryClient();
+  const lastCheck = useRef(0);
+
+  useEffect(() => {
+    if (!active) return undefined;
+
+    const check = async () => {
+      if (Date.now() - lastCheck.current < LOCALE_MIN_GAP_MS) return;
+      lastCheck.current = Date.now();
+      try {
+        const result = await api.post<LocaleRefreshResponse>("/auth/me/locale/refresh");
+        if (result.ip_changed) {
+          void queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY });
+          if (result.timezone_changed && result.timezone) {
+            toast.info(`Your location changed, so times now show in ${result.timezone.replace(/_/g, " ")}${result.city ? ` (${result.city})` : ""}.`);
+          }
+        }
+      } catch {
+        // A check that fails is simply skipped; the next one tries again.
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    const timer = window.setInterval(() => void check(), LOCALE_CHECK_EVERY_MS);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [active, queryClient]);
+}
 
 export function SessionProvider({ children }: { children: ReactNode }): ReactNode {
   const setAccountTimeZone = usePreferences((s) => s.setAccountTimeZone);
@@ -56,6 +101,8 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
   useEffect(() => {
     setAccountTimeZone(accountTimeZone);
   }, [accountTimeZone, setAccountTimeZone]);
+
+  useLocaleWatcher(query.data !== undefined);
 
   const value = useMemo<SessionValue>(() => {
     const user = query.data ?? null;

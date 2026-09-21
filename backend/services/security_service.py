@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.privacy import visible_email, visible_username
 from backend.core.errors import ConflictError, NotFoundError
 from backend.models.identity.token import Token
 from backend.models.identity.user import User
@@ -112,8 +113,8 @@ class SecurityService:
         return [
             LockedAccountResponse(
                 public_id=u.public_id,
-                username=u.username,
-                email=u.email,
+                username=visible_username(u),
+                email=visible_email(u),
                 full_name=u.full_name,
                 failed_login_attempts=u.failed_login_attempts or 0,
                 locked_until=u.locked_until,
@@ -151,7 +152,7 @@ class SecurityService:
             AdminSessionResponse(
                 public_id=token.public_id,
                 user_id=user.public_id,
-                username=user.username,
+                username=visible_username(user),
                 created_at=token.created_at,
                 expires_at=token.expires_at,
                 user_agent=token.user_agent,

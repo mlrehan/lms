@@ -5,9 +5,10 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { KeyRound, LogOut, ShieldAlert } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
+import { ProfileForm } from "@/components/domain/profile-form";
 import { PageHeader } from "@/components/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
@@ -21,7 +22,7 @@ import { describeTimeZone, formatDateTime } from "@/lib/format/datetime";
 const passwordSchema = z
   .object({
     current_password: z.string().min(1, "Enter your current password."),
-    new_password: z.string().min(8, "Use at least 8 characters."),
+    new_password: z.string().min(12, "Use at least 12 characters.").max(128, "Use 128 characters or fewer."),
     confirm: z.string().min(1, "Repeat the new password."),
   })
   .refine((values) => values.new_password === values.confirm, {
@@ -115,7 +116,7 @@ function ReadOnlyRow({ label, value }: { label: string; value: React.ReactNode }
 }
 
 export default function AccountPage() {
-  const { user, roles, permissions } = useSession();
+  const { user, roles } = useSession();
   const signOut = useSignOut();
   const timeZone = useDisplayTimeZone();
   const { density, setDensity } = usePreferences();
@@ -123,23 +124,11 @@ export default function AccountPage() {
 
   if (!user) return null;
 
-  const canEditOwnProfile = permissions.has("user.update");
-
   return (
     <div className="space-y-5">
       <PageHeader
         title="My account"
-        description="Your profile, password and preferences."
-        actions={
-          canEditOwnProfile ? (
-            <Link
-              href={`/users/${user.public_id}`}
-              className={buttonVariants({ variant: "secondary" })}
-            >
-              Edit my profile
-            </Link>
-          ) : null
-        }
+        description="Your picture, profile, password and preferences."
       />
 
       <Card>
@@ -159,30 +148,12 @@ export default function AccountPage() {
         />
         <div className="divide-y divide-border">
           <ReadOnlyRow label="Username" value={<span className="font-mono text-xs">{user.username}</span>} />
-          <ReadOnlyRow label="Phone" value={user.phone_number ?? user.mobile} />
-          <ReadOnlyRow label="Country" value={user.country?.name} />
-          <ReadOnlyRow label="City" value={user.city?.name} />
-          <ReadOnlyRow
-            label="Profile timezone"
-            value={user.timezone ? describeTimeZone(user.timezone) : "Not set"}
-          />
           <ReadOnlyRow label="Last sign-in" value={formatDateTime(user.last_login, { timeZone })} />
           <ReadOnlyRow label="Account created" value={formatDateTime(user.created_at, { timeZone })} />
         </div>
       </Card>
 
-      {!canEditOwnProfile ? (
-        <p className="flex items-start gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
-          <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>
-            This deployment has no &ldquo;edit my own profile&rdquo; endpoint: profile changes go
-            through <code className="font-mono text-xs">PATCH /users/&#123;id&#125;</code>, which needs
-            the <code className="font-mono text-xs">user.update</code> permission. Ask an
-            administrator to make changes for you. Recorded in{" "}
-            <code className="font-mono text-xs">docs/BACKEND-GAPS.md</code>.
-          </span>
-        </p>
-      ) : null}
+      <ProfileForm key={user.public_id} user={user} mode="self" canEdit />
 
       <ChangePassword />
 

@@ -15,7 +15,7 @@ caller meant.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import Field, field_validator
@@ -35,7 +35,24 @@ class CourseSummary(APIModel):
     level: Levels
     duration_hours: int | None = None
     price: float | None = None
-    course_picture: str | None = None
+    course_image: str | None = Field(
+        default=None, validation_alias="course_image_url",
+        description="Full-size image: an external URL, or an API path for an uploaded one.",
+    )
+    small_course_image: str | None = Field(
+        default=None, validation_alias="small_course_image_url",
+        description="Thumbnail: an external URL, or an API path for an uploaded one.",
+    )
+
+
+class CourseBatchBrief(APIModel):
+    public_id: uuid.UUID
+    batch_code: str
+    is_active: bool
+    start_date: date | None = None
+    end_date: date | None = None
+    capacity: int | None = None
+    total_enrollments: int = 0
 
 
 class CourseResponse(CourseSummary):
@@ -53,6 +70,7 @@ class CourseResponse(CourseSummary):
         default_factory=list, description="Usernames of tutors assigned to this course."
     )
     batch_count: int = 0
+    batches: list[CourseBatchBrief] = Field(default_factory=list)
 
     @field_validator("tutors", mode="before")
     @classmethod
@@ -73,9 +91,15 @@ class CourseCreateRequest(RequestModel):
     prerequisites: str | None = None
     price: float | None = Field(default=None, ge=0)
     course_link: str | None = Field(default=None, max_length=255)
-    course_picture: str | None = Field(default=None, max_length=255)
+    course_image: str | None = Field(default=None, max_length=500)
+    small_course_image: str | None = Field(default=None, max_length=500)
     category_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
+
+    @field_validator("course_image", "small_course_image")
+    @classmethod
+    def _external_url_only(cls, value: str | None) -> str | None:
+        return _http_url(value)
 
 
 class CourseUpdateRequest(RequestModel):
@@ -87,9 +111,15 @@ class CourseUpdateRequest(RequestModel):
     prerequisites: str | None = None
     price: float | None = Field(default=None, ge=0)
     course_link: str | None = Field(default=None, max_length=255)
-    course_picture: str | None = Field(default=None, max_length=255)
+    course_image: str | None = Field(default=None, max_length=500)
+    small_course_image: str | None = Field(default=None, max_length=500)
     category_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
+
+    @field_validator("course_image", "small_course_image")
+    @classmethod
+    def _external_url_only(cls, value: str | None) -> str | None:
+        return _http_url(value)
     clear_category: bool = Field(default=False, description="Uncategorise this course.")
     clear_department: bool = Field(
         default=False, description="Detach this course from its department."
@@ -107,3 +137,35 @@ class CourseTutorsRequest(RequestModel):
     tutors: list[uuid.UUID] = Field(
         description="The complete set of tutor public_ids for this course.",
     )
+
+
+def _http_url(value: str | None) -> str | None:
+    """Image fields accept an external http(s) URL and nothing else.
+
+    An *uploaded* image is stored as a storage key and is set only by the upload
+    endpoint. If a request body could set a key directly, the image endpoint
+    would serve whatever stored object it named -- another course's file, an
+    avatar, a resource -- to anyone who can read the course.
+    """
+    if value is None or value == "":
+        return None
+    if not value.lower().startswith(("http://", "https://")):
+        raise ValueError("Use an http(s) URL, or upload the image instead.")
+    return value
+
+
+class CodeSuggestion(APIModel):
+    code: str
+
+
+class LinkPreviewRequest(RequestModel):
+    url: str = Field(max_length=500)
+
+
+class LinkPreviewResponse(APIModel):
+    """What the course page says, offered as suggestions -- nothing is saved."""
+
+    price: float | None = None
+    duration_hours: int | None = None
+    level: Levels | None = None
+    prerequisites: str | None = None

@@ -37,11 +37,31 @@ class Course(Base, PublicIdMixin, SoftDeleteMixin):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     duration_hours: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     course_link: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    course_picture: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    course_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, comment="Full-size course image URL")
+    small_course_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, comment="Thumbnail image URL")
     prerequisites: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = utc_datetime_column(nullable=False, default=True)
     updated_at: Mapped[Optional[datetime]] = utc_datetime_column(onupdate=True, default=False)
+
+    def _image_url(self, kind: str, value: Optional[str]) -> Optional[str]:
+        """An external URL is passed through; an uploaded image (a storage key, which must
+        never leave the server) becomes the API path that serves it, versioned by the key's
+        file name so a replaced picture is fetched again and an unchanged one is cached."""
+        if not value:
+            return None
+        if value.lower().startswith(("http://", "https://")):
+            return value
+        version = value.rsplit("/", 1)[-1].split(".")[0][:12]
+        return f"/courses/{self.public_id}/image/{kind}?v={version}"
+
+    @property
+    def course_image_url(self) -> Optional[str]:
+        return self._image_url("full", self.course_image)
+
+    @property
+    def small_course_image_url(self) -> Optional[str]:
+        return self._image_url("small", self.small_course_image)
 
     category: Mapped[Optional["Category"]] = relationship("Category", back_populates="courses", lazy="selectin")
     department: Mapped[Optional["Department"]] = relationship("Department", back_populates="courses", lazy="selectin")

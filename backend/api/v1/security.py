@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
+from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession, commit_before_responding
@@ -142,7 +143,7 @@ async def unlock_account(
     # response -- see `commit_before_responding`.
     await commit_before_responding(session)
     return UnlockResponse(
-        public_id=user.public_id, username=user.username, was_locked=was_locked
+        public_id=user.public_id, username=visible_username(user), was_locked=was_locked
     )
 
 

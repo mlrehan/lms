@@ -3,181 +3,31 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Plus, Search } from "lucide-react";
+import { Eye, Plus, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api/client";
 import type {
-  CategoryResponse,
-  CourseResponse,
   CourseSummary,
-  DepartmentResponse,
   PageCategoryResponse,
   PageCourseSummary,
-  PageDepartmentResponse,
-  PageTagResponse,
 } from "@/lib/api/types";
 import { CourseStatusValues, LevelsValues } from "@/lib/api/types";
-import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
+import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
-import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog";
+import { Input, NativeSelect } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
+import { LaitSyncControls } from "@/components/domain/lait-sync";
+import { CourseForm } from "@/components/domain/course-form";
+import { CourseThumb } from "@/components/domain/course-image";
+import { CourseDetailsDialog } from "@/components/domain/course-details-dialog";
+import { UserPicker } from "@/components/domain/user-picker";
 import { useSession } from "@/lib/auth/session";
 import { humanise } from "@/lib/utils";
-
-const createSchema = z.object({
-  title: z.string().trim().min(2, "Give the course a title."),
-  code: z.string().trim().optional(),
-  level: z.enum(LevelsValues),
-  description: z.string().trim().optional(),
-  duration_hours: z.string().trim().optional(),
-  price: z.string().trim().optional(),
-  category_id: z.string().trim().optional(),
-  department_id: z.string().trim().optional(),
-});
-
-type CreateValues = z.infer<typeof createSchema>;
-
-function numberOrNull(value: string | undefined): number | null {
-  if (!value || value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function CreateCourseDialog({
-  open,
-  onOpenChange,
-  categories,
-  departments,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  categories: CategoryResponse[];
-  departments: DepartmentResponse[];
-}) {
-  const router = useRouter();
-  const [banner, setBanner] = useState<string | null>(null);
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setError,
-    formState: { errors },
-  } = useForm<CreateValues>({
-    resolver: zodResolver(createSchema),
-    defaultValues: { title: "", level: "BEGINNER" },
-  });
-
-  const create = useApiMutation<CourseResponse, CreateValues>({
-    mutationFn: (values) =>
-      api.post<CourseResponse>("/courses", {
-        body: {
-          title: values.title,
-          code: values.code || null,
-          description: values.description || null,
-          level: values.level,
-          duration_hours: numberOrNull(values.duration_hours),
-          price: numberOrNull(values.price),
-          category_id: values.category_id || null,
-          department_id: values.department_id || null,
-        },
-      }),
-    success: (course) => `Created "${course.title}". It starts as a draft.`,
-    invalidate: [["courses"]],
-    onSuccess: (course) => {
-      reset();
-      onOpenChange(false);
-      router.push(`/courses/${course.public_id}`);
-    },
-    onError: (error) => {
-      if (!applyFieldErrors<CreateValues>(error, setError, ["title", "code", "level"])) {
-        setBanner(error.message);
-      }
-    },
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg">
-        <DialogHeader
-          title="Create a course"
-          description="A new course starts in DRAFT and is invisible to students until it is published."
-        />
-        <form method="post" onSubmit={handleSubmit((values) => create.mutate(values))} className="space-y-4" noValidate>
-          {banner ? (
-            <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {banner}
-            </div>
-          ) : null}
-          <FormGrid>
-            <Field label="Title" error={errors.title?.message} required>
-              {({ id }) => <Input id={id} {...register("title")} />}
-            </Field>
-            <Field label="Code" error={errors.code?.message} hint="Unique across the institution.">
-              {({ id }) => <Input id={id} placeholder="MATH101" {...register("code")} />}
-            </Field>
-            <Field label="Level" required>
-              {({ id }) => (
-                <NativeSelect id={id} {...register("level")}>
-                  {LevelsValues.map((level) => (
-                    <option key={level} value={level}>
-                      {humanise(level)}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-            <Field label="Duration (hours)">
-              {({ id }) => <Input id={id} type="number" min={0} {...register("duration_hours")} />}
-            </Field>
-            <Field label="Category">
-              {({ id }) => (
-                <NativeSelect id={id} {...register("category_id")}>
-                  <option value="">Uncategorised</option>
-                  {categories.map((category) => (
-                    <option key={category.public_id} value={category.public_id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-            <Field label="Department">
-              {({ id }) => (
-                <NativeSelect id={id} {...register("department_id")}>
-                  <option value="">None</option>
-                  {departments.map((department) => (
-                    <option key={department.public_id} value={department.public_id}>
-                      {department.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-          </FormGrid>
-          <Field label="Description">
-            {({ id }) => <Textarea id={id} {...register("description")} />}
-          </Field>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={create.isPending}>
-              Create course
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 export default function CoursesPage() {
   const { permissions } = useSession();
@@ -185,12 +35,14 @@ export default function CoursesPage() {
   const [status, setStatus] = useState("");
   const [level, setLevel] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
-  const [tagId, setTagId] = useState("");
+  const [tutorId, setTutorId] = useState<string | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewId, setViewId] = useState<string | null>(null);
+  const router = useRouter();
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ["courses", "list", debouncedSearch, status, level, categoryId, departmentId, tagId, limit, offset],
+    queryKey: ["courses", "list", debouncedSearch, status, level, categoryId, tutorId, studentId, limit, offset],
     queryFn: () =>
       api.get<PageCourseSummary>("/courses", {
         query: {
@@ -198,8 +50,8 @@ export default function CoursesPage() {
           status: status || undefined,
           level: level || undefined,
           category_id: categoryId || undefined,
-          department_id: departmentId || undefined,
-          tag_id: tagId || undefined,
+          tutor_id: tutorId || undefined,
+          student_id: studentId || undefined,
           limit,
           offset,
         },
@@ -215,32 +67,21 @@ export default function CoursesPage() {
     staleTime: 5 * 60_000,
   });
 
-  const departments = useQuery({
-    queryKey: ["departments", "all"],
-    queryFn: () => api.get<PageDepartmentResponse>("/departments", { query: { limit: 200 } }),
-    enabled: canReadAcademic,
-    staleTime: 5 * 60_000,
-  });
-
-  const tags = useQuery({
-    queryKey: ["tags", "all"],
-    queryFn: () => api.get<PageTagResponse>("/tags", { query: { limit: 200 } }),
-    enabled: canReadAcademic,
-    staleTime: 5 * 60_000,
-  });
-
   const columns: Column<CourseSummary>[] = [
     {
       key: "title",
       header: "Course",
       cell: (course) => (
-        <div className="min-w-0">
-          <Link href={`/courses/${course.public_id}`} className="font-medium hover:underline">
-            {course.title}
-          </Link>
-          {course.code ? (
-            <p className="font-mono text-xs text-muted-foreground">{course.code}</p>
-          ) : null}
+        <div className="flex min-w-0 items-center gap-3">
+          <CourseThumb src={course.small_course_image} title={course.title} size="md" />
+          <div className="min-w-0">
+            <Link href={`/courses/${course.public_id}`} className="font-medium hover:underline">
+              {course.title}
+            </Link>
+            {course.code ? (
+              <p className="font-mono text-xs text-muted-foreground">{course.code}</p>
+            ) : null}
+          </div>
         </div>
       ),
     },
@@ -264,7 +105,22 @@ export default function CoursesPage() {
         <span className="tabular-nums">{course.duration_hours ?? "—"}</span>
       ),
     },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      cell: (course) => (
+        <Button variant="secondary" onClick={() => setViewId(course.public_id)} aria-label={`View details of ${course.title}`}>
+          <Eye /> View details
+        </Button>
+      ),
+    },
   ];
+
+  // Filtering by a person reveals who teaches and studies what, so it is offered
+  // only to callers the server would allow: institution-wide access, and the
+  // ability to search people at all.
+  const canFilterByPerson = permissions.has("institution.view_all") && permissions.has("user.read");
 
   return (
     <div className="space-y-5">
@@ -272,11 +128,19 @@ export default function CoursesPage() {
         title="Courses"
         description="The catalog. A course moves Draft -> Published -> Running -> Completed -> Archived; the server enforces which transitions are legal."
         actions={
-          permissions.has("course.create") ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus /> New course
-            </Button>
-          ) : null
+          <>
+            <LaitSyncControls
+              canSync={permissions.has("course.sync")}
+              runsPath="/courses/sync"
+              label="Sync courses & batches"
+              invalidate={[["courses"], ["batches"]]}
+            />
+            {permissions.has("course.create") ? (
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus /> New course
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -345,38 +209,32 @@ export default function CoursesPage() {
                   </option>
                 ))}
               </NativeSelect>
-              <NativeSelect
-                className="w-auto"
-                value={departmentId}
-                aria-label="Filter by department"
-                onChange={(event) => {
-                  setDepartmentId(event.target.value);
-                  setPage({ limit, offset: 0 });
-                }}
-              >
-                <option value="">Any department</option>
-                {(departments.data?.items ?? []).map((department) => (
-                  <option key={department.public_id} value={department.public_id}>
-                    {department.name}
-                  </option>
-                ))}
-              </NativeSelect>
-              <NativeSelect
-                className="w-auto"
-                value={tagId}
-                aria-label="Filter by tag"
-                onChange={(event) => {
-                  setTagId(event.target.value);
-                  setPage({ limit, offset: 0 });
-                }}
-              >
-                <option value="">Any tag</option>
-                {(tags.data?.items ?? []).map((tag) => (
-                  <option key={tag.public_id} value={tag.public_id}>
-                    {tag.name}
-                  </option>
-                ))}
-              </NativeSelect>
+            </>
+          ) : null}
+          {canFilterByPerson ? (
+            <>
+              <div className="w-52">
+                <UserPicker
+                  value={tutorId}
+                  role="TUTOR"
+                  placeholder="Any tutor"
+                  onChange={(id) => {
+                    setTutorId(id);
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              </div>
+              <div className="w-52">
+                <UserPicker
+                  value={studentId}
+                  role="STUDENT"
+                  placeholder="Any student"
+                  onChange={(id) => {
+                    setStudentId(id);
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              </div>
             </>
           ) : null}
         </div>
@@ -404,12 +262,24 @@ export default function CoursesPage() {
         )}
       </Card>
 
-      <CreateCourseDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        categories={categories.data?.items ?? []}
-        departments={departments.data?.items ?? []}
-      />
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent size="xl">
+          <DialogHeader
+            title="Create a course"
+            description="A new course starts in DRAFT and is invisible to students until it is published."
+          />
+          <CourseForm
+            mode="create"
+            onCancel={() => setCreateOpen(false)}
+            onSaved={(course) => {
+              setCreateOpen(false);
+              router.push(`/courses/${course.public_id}`);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <CourseDetailsDialog courseId={viewId} onOpenChange={(open) => !open && setViewId(null)} />
     </div>
   );
 }

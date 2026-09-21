@@ -31,6 +31,7 @@ from typing import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.privacy import may_see_contact
 from backend.core.errors import NotFoundError, ValidationError
 from backend.models.audit import AuditLog
 from backend.repositories.audit import (
@@ -169,7 +170,7 @@ class AuditQueryService:
                     action=row.action,
                     success=row.success,
                     actor_id=actor[0] if actor else None,
-                    actor_email=row.actor_email,
+                    actor_email=row.actor_email if may_see_contact() else None,
                     actor_username=actor[1] if actor else None,
                     entity_type=row.entity_type,
                     # `str(...)`, never the stored integer: the internal

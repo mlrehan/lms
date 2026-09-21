@@ -283,9 +283,25 @@ export interface BatchResponse {
   start_date?: string | null;
   end_date?: string | null;
   capacity?: number | null;
+  /** Recounted from enrollments by the LAIT sync. */
+  total_enrollments?: number;
+  course_title?: string | null;
+  training_days?: string | null;
+  training_method?: string | null;
+  batch_fee?: number | null;
+  class_duration_minutes?: number | null;
+  /** The tutor teaching most of the batch's sessions. */
+  tutor_name?: string | null;
+  session_count?: number;
+  next_session_start?: string | null;
   /** public_id of the owning course. */
   course_id: string;
-  course_title?: string | null;
+  training_start_day?: string | null;
+  training_end_day?: string | null;
+  /** HH:MM, in `schedule_timezone`. */
+  training_start_time?: string | null;
+  training_end_time?: string | null;
+  schedule_timezone?: string | null;
   academic_year_id?: string | null;
   academic_year_label?: string | null;
   semester_id?: string | null;
@@ -306,6 +322,17 @@ export interface BatchSummary {
   start_date?: string | null;
   end_date?: string | null;
   capacity?: number | null;
+  /** Recounted from enrollments by the LAIT sync. */
+  total_enrollments?: number;
+  course_title?: string | null;
+  training_days?: string | null;
+  training_method?: string | null;
+  batch_fee?: number | null;
+  class_duration_minutes?: number | null;
+  /** The tutor teaching most of the batch's sessions. */
+  tutor_name?: string | null;
+  session_count?: number;
+  next_session_start?: string | null;
 }
 
 export interface BatchUpdateRequest {
@@ -323,6 +350,22 @@ export interface BatchUpdateRequest {
   clear_academic_year?: boolean;
   /** Unschedule from its semester. */
   clear_semester?: boolean;
+}
+
+export interface BodyPutImageApiV1Coursesput {
+  file: string;
+}
+
+export interface BodySetMyPictureApiV1AuthMePicturePut {
+  file: string;
+}
+
+export interface BodySetPictureApiV1UserspicturePut {
+  file: string;
+}
+
+export interface BodyUploadAttachmentApiV1MessagesAttachmentsPost {
+  file: string;
 }
 
 export interface BodyUploadResourceApiV1ResourcesPost {
@@ -358,6 +401,31 @@ export interface CalendarFeedResponse {
   created_at?: string | null;
   last_accessed_at?: string | null;
   access_count?: number;
+}
+
+export interface CalendarResponse {
+  items: CalendarSession[];
+  /** True when the window held more sessions than the cap; narrow it. */
+  truncated: boolean;
+}
+
+/**
+ * One block on the calendar: enough to draw and filter it without a request per session.
+ */
+export interface CalendarSession {
+  public_id: string;
+  batch_id: string;
+  batch_code: string;
+  course_title?: string | null;
+  tutor_id: string;
+  tutor_name?: string | null;
+  session_start_time: string;
+  /** Start plus duration (an hour if neither is stored) when no end was saved. */
+  session_end_time: string;
+  platform: Platforms;
+  classroom?: string | null;
+  meeting_link?: string | null;
+  origin?: string | null;
 }
 
 /**
@@ -416,6 +484,10 @@ export interface CitySummary {
   timezone?: string | null;
 }
 
+export interface CodeSuggestion {
+  code: string;
+}
+
 export interface ComponentBreakdown {
   component_type: GradeComponentType;
   entries: number;
@@ -425,23 +497,35 @@ export interface ComponentBreakdown {
   weight: string;
 }
 
-/**
- * One row per correspondent, for a mailbox landing page.
- */
-export interface ConversationResponse {
-  counterpart: PartyRef;
-  last_message_id: string;
-  last_message_at?: string | null;
-  last_subject?: string | null;
-  last_snippet?: string | null;
-  unread_count?: number;
-  total_messages?: number;
+export interface ComposeRequest {
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  body_html?: string;
+  attachment_ids?: string[];
+  /** The message being replied to; puts this one in its thread. */
+  reply_to_id?: string | null;
+  /** Send (or update) this saved draft rather than starting a new message. */
+  draft_id?: string | null;
+  /** Also email a copy to my own address. */
+  email_copy?: boolean;
 }
 
 export interface CountryResponse {
   public_id: string;
   name: string;
   code: string;
+}
+
+export interface CourseBatchBrief {
+  public_id: string;
+  batch_code: string;
+  is_active: boolean;
+  start_date?: string | null;
+  end_date?: string | null;
+  capacity?: number | null;
+  total_enrollments?: number;
 }
 
 export interface CourseCreateRequest {
@@ -453,7 +537,8 @@ export interface CourseCreateRequest {
   prerequisites?: string | null;
   price?: number | null;
   course_link?: string | null;
-  course_picture?: string | null;
+  course_image?: string | null;
+  small_course_image?: string | null;
   category_id?: string | null;
   department_id?: string | null;
 }
@@ -466,7 +551,10 @@ export interface CourseResponse {
   level: Levels;
   duration_hours?: number | null;
   price?: number | null;
-  course_picture?: string | null;
+  /** Full-size image: an external URL, or an API path for an uploaded one. */
+  course_image?: string | null;
+  /** Thumbnail: an external URL, or an API path for an uploaded one. */
+  small_course_image?: string | null;
   description?: string | null;
   prerequisites?: string | null;
   course_link?: string | null;
@@ -480,6 +568,7 @@ export interface CourseResponse {
   /** Usernames of tutors assigned to this course. */
   tutors?: string[];
   batch_count?: number;
+  batches?: CourseBatchBrief[];
 }
 
 /**
@@ -505,7 +594,10 @@ export interface CourseSummary {
   level: Levels;
   duration_hours?: number | null;
   price?: number | null;
-  course_picture?: string | null;
+  /** Full-size image: an external URL, or an API path for an uploaded one. */
+  course_image?: string | null;
+  /** Thumbnail: an external URL, or an API path for an uploaded one. */
+  small_course_image?: string | null;
 }
 
 export interface CourseTutorsRequest {
@@ -522,7 +614,8 @@ export interface CourseUpdateRequest {
   prerequisites?: string | null;
   price?: number | null;
   course_link?: string | null;
-  course_picture?: string | null;
+  course_image?: string | null;
+  small_course_image?: string | null;
   category_id?: string | null;
   department_id?: string | null;
   /** Uncategorise this course. */
@@ -587,6 +680,7 @@ export interface CurrentUserResponse {
   last_name?: string | null;
   full_name: string;
   status: UserStatus;
+  /** API path of the picture (fetch with the same credentials); null when none is set. */
   profile_picture?: string | null;
   can_login?: boolean;
   is_synced?: boolean;
@@ -616,6 +710,10 @@ export interface CurrentUserResponse {
   /** Role names held by this user. */
   roles?: string[];
   permissions?: string[];
+  detected_timezone?: string | null;
+  locale_city?: string | null;
+  locale_country?: string | null;
+  timezone_is_auto?: boolean;
 }
 
 export interface DashboardResponse {
@@ -651,6 +749,10 @@ export interface DepartmentUpdateRequest {
   head_tutor_id?: string | null;
   /** Vacate the post. A separate flag because `head_tutor_id: null` is indistinguishable from 'not sent' once optional fields are omitted. */
   clear_head_tutor?: boolean;
+}
+
+export interface DirectoryResponse {
+  items: MailPerson[];
 }
 
 export interface DiscussionReplyResponse {
@@ -808,6 +910,16 @@ export interface ExamUpdateRequest {
   instructions?: string | null;
 }
 
+export interface ExistingSessions {
+  total: number;
+  /** Sessions that hold attendance, a recording or notes, and are never deleted by a re-create. */
+  protected: number;
+  replaceable: number;
+  protected_reasons?: string[];
+  first_start?: string | null;
+  last_start?: string | null;
+}
+
 export type ExportFormat = "json" | "csv";
 export const ExportFormatValues = ["json", "csv"] as const;
 
@@ -864,6 +976,66 @@ export interface GenerateTranscriptsResponse {
   skipped_final?: number;
   /** Students with no grade book entries to aggregate. */
   skipped_no_grades?: number;
+}
+
+export interface GoogleBatchResponse {
+  batch_id: string;
+  has_calendar: boolean;
+  calendar_url?: string | null;
+  last_synced_at?: string | null;
+  sessions: number;
+  sessions_in_google: number;
+}
+
+export interface GoogleCallbackRequest {
+  code: string;
+  state: string;
+}
+
+export interface GoogleChangeRequestResponse {
+  public_id: string;
+  /** ENROL_ADD or ENROL_REMOVE */
+  kind: string;
+  /** PENDING, APPROVED, REJECTED or SUPERSEDED */
+  status: string;
+  email?: string | null;
+  student_name?: string | null;
+  batch_id: string;
+  batch_code: string;
+  note?: string | null;
+  detected_at: string;
+  decided_at?: string | null;
+  decided_by?: string | null;
+  /** Why an approval was refused, when it was. */
+  last_error?: string | null;
+}
+
+export interface GoogleConnectResponse {
+  /** Send the browser here to sign in with Google. */
+  url: string;
+}
+
+export interface GoogleStatusResponse {
+  /** GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are set. */
+  configured: boolean;
+  /** Why sign-in cannot work yet, if it cannot. */
+  problem?: string | null;
+  connected: boolean;
+  account_email?: string | null;
+  connected_at?: string | null;
+  /** The account a Super Admin must sign in as. */
+  expected_email?: string | null;
+  /** Must be an Authorized redirect URI on the OAuth client in Google Cloud. */
+  redirect_uri: string;
+  invite_attendees: boolean;
+  send_updates: string;
+  share_with_admins: boolean;
+  pull_session_times: boolean;
+  /** Batches that currently have a Google calendar. */
+  calendars: number;
+  /** Enrolment changes made in Google that are waiting for a decision. */
+  pending_changes?: number;
+  admins_can_edit?: boolean;
 }
 
 export interface GradeAnswerInput {
@@ -999,6 +1171,29 @@ export interface InstitutionPanel {
 export type Levels = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
 export const LevelsValues = ["BEGINNER", "INTERMEDIATE", "ADVANCED"] as const;
 
+export interface LinkPreviewRequest {
+  url: string;
+}
+
+/**
+ * What the course page says, offered as suggestions -- nothing is saved.
+ */
+export interface LinkPreviewResponse {
+  price?: number | null;
+  duration_hours?: number | null;
+  level?: Levels | null;
+  prerequisites?: string | null;
+}
+
+export interface LocaleRefreshResponse {
+  ip_changed: boolean;
+  timezone_changed: boolean;
+  timezone?: string | null;
+  detected_timezone?: string | null;
+  city?: string | null;
+  country?: string | null;
+}
+
 /**
  * A minimal reference to a Country or City, embedded in a user's
  * profile. The full geo record (population, coordinates, ...) belongs to
@@ -1035,6 +1230,82 @@ export interface LoginRequest {
 
 export interface LogoutRequest {
   refresh_token: string;
+}
+
+export interface MailAttachmentInfo {
+  public_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
+/**
+ * How the email copies went. Only the sender sees this.
+ */
+export interface MailDelivery {
+  /** False when email delivery is switched off for this deployment. */
+  enabled: boolean;
+  sent?: number;
+  failed?: number;
+  skipped?: number;
+  pending?: number;
+  /** SENT, FAILED or SKIPPED; null when no copy was asked for. */
+  copy_to_me?: string | null;
+  /** Recipient names whose email failed. */
+  failures?: string[];
+}
+
+export type MailFolder = "inbox" | "sent" | "starred" | "drafts";
+export const MailFolderValues = ["inbox", "sent", "starred", "drafts"] as const;
+
+export interface MailListItem {
+  public_id: string;
+  thread_id: string;
+  subject: string;
+  snippet: string;
+  sender: MailPerson;
+  recipients_summary: string;
+  sent_at?: string | null;
+  updated_at?: string | null;
+  is_read: boolean;
+  is_starred: boolean;
+  is_draft: boolean;
+  has_attachments: boolean;
+  thread_count?: number;
+  is_mine?: boolean;
+}
+
+export interface MailMessageView {
+  public_id: string;
+  thread_id: string;
+  parent_id?: string | null;
+  subject: string;
+  body_html: string;
+  sender: MailPerson;
+  to: MailPerson[];
+  cc: MailPerson[];
+  /** Only ever filled in for the sender. */
+  bcc?: MailPerson[];
+  you_were_bcc?: boolean;
+  sent_at?: string | null;
+  is_draft?: boolean;
+  is_read?: boolean;
+  is_starred?: boolean;
+  is_mine?: boolean;
+  attachments?: MailAttachmentInfo[];
+  delivery?: MailDelivery | null;
+}
+
+export interface MailPerson {
+  public_id: string;
+  name: string;
+  role?: string | null;
+}
+
+export interface MailThread {
+  thread_id: string;
+  subject: string;
+  messages: MailMessageView[];
 }
 
 export interface ManagerResponse {
@@ -1079,22 +1350,6 @@ export interface MembershipResponse {
 
 export interface MembershipStatusRequest {
   status: OrganizationMembershipStatus;
-}
-
-export type MessageBox = "inbox" | "sent" | "all";
-export const MessageBoxValues = ["inbox", "sent", "all"] as const;
-
-export interface MessageResponse {
-  public_id: string;
-  sender: PartyRef;
-  recipient: PartyRef;
-  course_id?: string | null;
-  batch_id?: string | null;
-  subject?: string | null;
-  body?: string | null;
-  is_read?: boolean;
-  read_at?: string | null;
-  created_at?: string | null;
 }
 
 /**
@@ -1199,6 +1454,42 @@ export interface OrganizationUpdateRequest {
   is_active?: boolean | null;
 }
 
+export interface OverviewBatch {
+  public_id: string;
+  batch_code: string;
+  capacity?: number | null;
+  enrolled?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_active: boolean;
+}
+
+export interface OverviewCourse {
+  public_id: string;
+  title: string;
+  code?: string | null;
+  level?: string | null;
+}
+
+export interface OverviewPerson {
+  public_id: string;
+  name: string;
+  /** Only for administrators and the batch's tutors. */
+  email?: string | null;
+  phone?: string | null;
+  /** A guardian's relationship, or a manager's job title. */
+  detail?: string | null;
+}
+
+export interface OverviewRosterEntry {
+  student: OverviewPerson;
+  enrollment_status: string;
+  attendance?: string | null;
+  organization?: string | null;
+  guardians?: OverviewPerson[];
+  managers?: OverviewPerson[];
+}
+
 export interface PageAcademicYearResponse {
   items: AcademicYearResponse[];
   /** Total rows matching the query, ignoring paging. */
@@ -1279,14 +1570,6 @@ export interface PageCitySummary {
   offset: number;
 }
 
-export interface PageConversationResponse {
-  items: ConversationResponse[];
-  /** Total rows matching the query, ignoring paging. */
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 export interface PageCourseSummary {
   items: CourseSummary[];
   /** Total rows matching the query, ignoring paging. */
@@ -1343,6 +1626,14 @@ export interface PageExamSummary {
   offset: number;
 }
 
+export interface PageGoogleChangeRequestResponse {
+  items: GoogleChangeRequestResponse[];
+  /** Total rows matching the query, ignoring paging. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PageGradeBookEntryResponse {
   items: GradeBookEntryResponse[];
   /** Total rows matching the query, ignoring paging. */
@@ -1367,16 +1658,16 @@ export interface PageLockedAccountResponse {
   offset: number;
 }
 
-export interface PageMembershipResponse {
-  items: MembershipResponse[];
+export interface PageMailListItem {
+  items: MailListItem[];
   /** Total rows matching the query, ignoring paging. */
   total: number;
   limit: number;
   offset: number;
 }
 
-export interface PageMessageResponse {
-  items: MessageResponse[];
+export interface PageMembershipResponse {
+  items: MembershipResponse[];
   /** Total rows matching the query, ignoring paging. */
   total: number;
   limit: number;
@@ -1393,6 +1684,14 @@ export interface PageNotificationResponse {
 
 export interface PageOrganizationSummary {
   items: OrganizationSummary[];
+  /** Total rows matching the query, ignoring paging. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PageQueueItem {
+  items: QueueItem[];
   /** Total rows matching the query, ignoring paging. */
   total: number;
   limit: number;
@@ -1526,6 +1825,62 @@ export interface PersonalPanel {
   live_announcements?: number;
 }
 
+export interface PlanPerson {
+  public_id: string;
+  name: string;
+}
+
+/**
+ * Everything is optional except the zone: what is left out comes from the batch (or its existing sessions).
+ */
+export interface PlanRequest {
+  /** The zone the dates, weekdays and clock times are read in. */
+  timezone?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  /** 0 = Monday ... 6 = Sunday. */
+  weekdays?: number[] | null;
+  start_time?: string | null;
+  duration_minutes?: number | null;
+  sessions?: number | null;
+}
+
+export interface PlanResponse {
+  settings: PlanSettingsOut;
+  sessions: PlannedSessionOut[];
+  warnings: string[];
+  existing: ExistingSessions;
+  default_tutor?: PlanPerson | null;
+  default_platform?: Platforms | null;
+  batch_code: string;
+  course_title?: string | null;
+}
+
+export interface PlanSettingsOut {
+  timezone: string;
+  weekdays: number[];
+  training_days: string;
+  start_time?: string | null;
+  duration_minutes?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  sessions?: number | null;
+  /** Where the defaults came from: the batch's schedule, its existing sessions, or nothing. */
+  source: string;
+  /** Explains a carry across time zones, when there was one. */
+  note?: string | null;
+}
+
+export interface PlannedSessionOut {
+  index: number;
+  start_utc: string;
+  end_utc: string;
+  /** Wall-clock start in the plan's zone, `YYYY-MM-DDTHH:mm`. */
+  start_local: string;
+  duration_minutes: number;
+  weekday: string;
+}
+
 export type Platforms = "Zoom" | "Zoho" | "Google_Meet" | "Microsoft_Teams" | "Classroom";
 export const PlatformsValues = ["Zoom", "Zoho", "Google_Meet", "Microsoft_Teams", "Classroom"] as const;
 
@@ -1586,6 +1941,22 @@ export interface QuestionUpdateRequest {
   order?: number | null;
   settings?: unknown | null;
   options?: OptionInput[] | null;
+}
+
+export interface QueueItem {
+  session_id: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  batch_id: string;
+  batch_code: string;
+  course_title?: string | null;
+  tutor: SheetPerson;
+  enrolled: number;
+  state: SheetState;
+  marked?: number;
+  submitted_on_behalf?: boolean;
+  finalized_at?: string | null;
+  can_edit?: boolean;
 }
 
 export interface QuizCreateRequest {
@@ -1654,6 +2025,44 @@ export interface RecordExamResultsRequest {
 
 export interface RefreshRequest {
   refresh_token: string;
+}
+
+export interface ReplaceRequest {
+  sessions: ReplaceRow[];
+  /** Required when the batch already has sessions that would be replaced. */
+  confirm_replace?: boolean;
+  schedule?: ScheduleToSave | null;
+}
+
+export interface ReplaceResponse {
+  created: number;
+  /** Existing sessions removed to make way for the new ones. */
+  replaced: number;
+  /** Existing sessions kept because they hold attendance, a recording or notes. */
+  kept_protected: number;
+  /** Proposed sessions not created because a protected session already starts then. */
+  skipped: number;
+  total_sessions: number;
+}
+
+export interface ReplaceRow {
+  start_utc: string;
+  end_utc?: string | null;
+  duration_minutes?: number | null;
+  tutor_id: string;
+  platform?: Platforms;
+  classroom?: string | null;
+  meeting_link?: string | null;
+}
+
+/**
+ * Who a reply would go to -- already limited to people the caller may write to, so replying to everyone
+ * never includes somebody they are not allowed to message.
+ */
+export interface ReplyOptions {
+  reply: MailPerson[];
+  reply_all_to: MailPerson[];
+  reply_all_cc: MailPerson[];
 }
 
 export interface ReplyRequest {
@@ -1804,6 +2213,23 @@ export interface RotateSecretResponse {
   secret: string;
 }
 
+export interface SaveSheetRequest {
+  entries?: SheetEntry[];
+  notes?: string | null;
+  /** False saves a draft. True finalizes (or, on a finalized sheet, records an edit). */
+  submit?: boolean;
+}
+
+/**
+ * The schedule these sessions were generated from, kept on the batch so the next re-create starts from it.
+ */
+export interface ScheduleToSave {
+  timezone: string;
+  weekdays?: number[];
+  start_time?: string | null;
+  duration_minutes?: number | null;
+}
+
 export interface SearchGroup {
   type: SearchType;
   /** Matches this caller may see, ignoring the per-group cap. */
@@ -1873,16 +2299,6 @@ export interface SemesterUpdateRequest {
   end_date?: string | null;
 }
 
-export interface SendMessageRequest {
-  recipient_id: string;
-  subject?: string | null;
-  body: string;
-  /** Optional context: which course this is about. */
-  course_id?: string | null;
-  /** Optional context: which batch this is about. */
-  batch_id?: string | null;
-}
-
 export interface SessionBrief {
   public_id: string;
   batch_code: string;
@@ -1903,6 +2319,31 @@ export interface SessionCreateRequest {
   classroom?: string | null;
   meeting_link?: string | null;
   tutor_notes?: string | null;
+}
+
+export interface SessionOverview {
+  public_id: string;
+  number: number;
+  total: number;
+  session_start_time: string;
+  session_end_time?: string | null;
+  duration_minutes?: number | null;
+  platform: Platforms;
+  classroom?: string | null;
+  meeting_link?: string | null;
+  recording_link?: string | null;
+  student_notes?: string | null;
+  tutor_notes?: string | null;
+  origin?: string | null;
+  in_google: boolean;
+  course: OverviewCourse;
+  batch: OverviewBatch;
+  tutor: OverviewPerson;
+  roster: OverviewRosterEntry[];
+  /** True when the caller sees only their own people, not the whole batch. */
+  roster_is_partial: boolean;
+  attendance_counts: Record<string, number>;
+  can_see_contacts: boolean;
 }
 
 export interface SessionSessionResponse {
@@ -1986,6 +2427,113 @@ export interface SharedResourceResponse {
   created_at: string;
 }
 
+export interface SheetBatch {
+  public_id: string;
+  batch_code: string;
+  course_title?: string | null;
+  enrolled?: number;
+}
+
+export interface SheetChange {
+  student: string;
+  was?: string | null;
+  now?: string | null;
+  remarks_changed?: boolean;
+}
+
+export interface SheetEntry {
+  student_id: string;
+  /** Null clears a mark (draft only). */
+  status?: AttendanceStatus | null;
+  remarks?: string | null;
+}
+
+export interface SheetEvent {
+  action: string;
+  at: string;
+  actor: SheetPerson;
+  assigned_tutor: SheetPerson;
+  on_behalf: boolean;
+  counts?: Record<string, number>;
+  changes?: SheetChange[];
+  notes_changed?: boolean;
+}
+
+export interface SheetHistory {
+  events: SheetEvent[];
+}
+
+export interface SheetMeta {
+  state: SheetState;
+  assigned_tutor: SheetPerson;
+  started_by?: SheetPerson | null;
+  started_at?: string | null;
+  last_saved_by?: SheetPerson | null;
+  last_saved_at?: string | null;
+  finalized_by?: SheetPerson | null;
+  finalized_at?: string | null;
+  submitted_on_behalf?: boolean;
+  /** Marked before sheets existed: finalized, with no record of who started it. */
+  legacy?: boolean;
+}
+
+export interface SheetPermissions {
+  can_edit: boolean;
+  is_assigned_tutor: boolean;
+  /** True when the caller may edit only because they may act for the assigned tutor. */
+  would_be_on_behalf: boolean;
+}
+
+export interface SheetPerson {
+  public_id: string;
+  name: string;
+}
+
+export interface SheetRow {
+  student: SheetPerson;
+  /** Null until somebody has marked this student. */
+  status?: AttendanceStatus | null;
+  remarks?: string | null;
+}
+
+export interface SheetSession {
+  public_id: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  platform?: Platforms | null;
+  classroom?: string | null;
+  cancelled?: boolean;
+}
+
+export type SheetState = "NOT_STARTED" | "DRAFT" | "FINALIZED";
+export const SheetStateValues = ["NOT_STARTED", "DRAFT", "FINALIZED"] as const;
+
+export interface SheetSummary {
+  present?: number;
+  late?: number;
+  absent?: number;
+  excused?: number;
+  unmarked?: number;
+  total?: number;
+  /** (present + late) / (marked - excused), as a percentage. */
+  rate?: number | null;
+}
+
+export interface SheetView {
+  session: SheetSession;
+  batch: SheetBatch;
+  meta: SheetMeta;
+  permissions: SheetPermissions;
+  notes?: string | null;
+  roster: SheetRow[];
+  summary: SheetSummary;
+}
+
+export interface StateRequest {
+  read?: boolean | null;
+  starred?: boolean | null;
+}
+
 export interface StudentPanel {
   enrolled_batches?: number;
   active_courses?: number;
@@ -2045,6 +2593,7 @@ export interface SyncResultResponse {
 
 export interface SyncRunResponse {
   public_id: string;
+  kind?: string;
   trigger_type: string;
   dry_run: boolean;
   status: string;
@@ -2073,6 +2622,117 @@ export interface TeachingPanel {
   submissions_awaiting_grading?: number;
   quiz_attempts_awaiting_grading?: number;
   upcoming_sessions?: SessionBrief[];
+}
+
+export interface TeamAssignment {
+  title: string;
+  course_title?: string | null;
+  due_date: string;
+  /** PENDING, OVERDUE, SUBMITTED or GRADED. */
+  status: string;
+  submitted_at?: string | null;
+  grade?: number | null;
+  max_score?: number | null;
+}
+
+export interface TeamAttendanceBreakdown {
+  present?: number;
+  late?: number;
+  absent?: number;
+  excused?: number;
+}
+
+export interface TeamAttendanceRecord {
+  session_start: string;
+  batch_code: string;
+  course_title?: string | null;
+  status: string;
+}
+
+export interface TeamEnrollment {
+  batch_id: string;
+  batch_code: string;
+  course_title?: string | null;
+  status: string;
+  enrolled_at?: string | null;
+  attendance: TeamAttendanceBreakdown;
+  attendance_rate?: number | null;
+  score_percent?: number | null;
+  overall_grade?: string | null;
+  gpa?: number | null;
+}
+
+export interface TeamMemberDetail {
+  public_id: string;
+  full_name: string;
+  status: string;
+  last_login?: string | null;
+  organization?: string | null;
+  department?: string | null;
+  employee_code?: string | null;
+  /** A guardian's relationship to this ward. */
+  relationship?: string | null;
+  enrollments_active?: number;
+  enrollments_completed?: number;
+  /** Titles of the courses they are currently enrolled on. */
+  courses?: string[];
+  /** Percent of recorded sessions attended (present, late or excused). */
+  attendance_rate?: number | null;
+  sessions_recorded?: number;
+  assignments_total?: number;
+  assignments_submitted?: number;
+  assignments_overdue?: number;
+  /** Percent, from the grade book. */
+  average_score?: number | null;
+  gpa?: number | null;
+  next_session?: TeamNextSession | null;
+  needs_attention?: boolean;
+  attention_reasons?: string[];
+  enrollments?: TeamEnrollment[];
+  assignments?: TeamAssignment[];
+  recent_attendance?: TeamAttendanceRecord[];
+}
+
+export interface TeamMemberSummary {
+  public_id: string;
+  full_name: string;
+  status: string;
+  last_login?: string | null;
+  organization?: string | null;
+  department?: string | null;
+  employee_code?: string | null;
+  /** A guardian's relationship to this ward. */
+  relationship?: string | null;
+  enrollments_active?: number;
+  enrollments_completed?: number;
+  /** Titles of the courses they are currently enrolled on. */
+  courses?: string[];
+  /** Percent of recorded sessions attended (present, late or excused). */
+  attendance_rate?: number | null;
+  sessions_recorded?: number;
+  assignments_total?: number;
+  assignments_submitted?: number;
+  assignments_overdue?: number;
+  /** Percent, from the grade book. */
+  average_score?: number | null;
+  gpa?: number | null;
+  next_session?: TeamNextSession | null;
+  needs_attention?: boolean;
+  attention_reasons?: string[];
+}
+
+export interface TeamNextSession {
+  start: string;
+  batch_code: string;
+  course_title?: string | null;
+}
+
+export interface TeamOverview {
+  people: number;
+  needing_attention: number;
+  average_attendance_rate?: number | null;
+  assignments_overdue?: number;
+  items: TeamMemberSummary[];
 }
 
 export interface TestDeliveryResponse {
@@ -2198,6 +2858,7 @@ export interface UserResponse {
   last_name?: string | null;
   full_name: string;
   status: UserStatus;
+  /** API path of the picture (fetch with the same credentials); null when none is set. */
   profile_picture?: string | null;
   can_login?: boolean;
   is_synced?: boolean;
@@ -2259,6 +2920,7 @@ export interface UserSummary {
   last_name?: string | null;
   full_name: string;
   status: UserStatus;
+  /** API path of the picture (fetch with the same credentials); null when none is set. */
   profile_picture?: string | null;
   can_login?: boolean;
   is_synced?: boolean;

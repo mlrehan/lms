@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
@@ -22,7 +23,10 @@ from backend.schemas.user import (
     UserSummary,
     UserUpdateRequest,
 )
+from backend.core.errors import NotFoundError
+from backend.repositories.user import UserRepository
 from backend.services.user_service import UserService
+from backend.storage import get_storage
 from backend.utils.enums import UserStatus
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -110,6 +114,55 @@ async def set_user_status(
 ) -> UserResponse:
     """Anything other than ACTIVE also ends every session that user holds."""
     user = await UserService(session).set_status(user_id, payload.status, actor=actor)
+    return UserResponse.model_validate(user)
+
+
+@router.get(
+    "/{user_id}/picture",
+    summary="A user's profile picture",
+    response_class=StreamingResponse,
+)
+async def get_picture(user_id: uuid.UUID, session: DBSession, actor: CurrentUser) -> StreamingResponse:
+    """Any signed-in user may fetch any picture: it is what appears beside a
+    name in a roster or a discussion. Ids are unguessable UUIDs and the
+    response is uniform 404 for "no such user" and "no picture"."""
+    user = await UserRepository(session).get_by_public_id_with_roles(user_id)
+    if user is None or not user.profile_picture:
+        raise NotFoundError("No picture.")
+    stream = await get_storage().open_stream(user.profile_picture)
+    return StreamingResponse(
+        stream,
+        media_type="image/webp",
+        headers={
+            # The URL carries a version token, so a replaced picture has a new
+            # URL and an unchanged one can be cached for good.
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+        },
+    )
+
+
+@router.put("/{user_id}/picture", response_model=UserResponse, summary="Set a user's profile picture")
+async def set_picture(
+    user_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.USER, Action.UPDATE)))],
+    file: Annotated[UploadFile, File()],
+) -> UserResponse:
+    service = UserService(session)
+    user = await service.set_picture(await service.get(user_id, actor=actor), file, actor=actor)
+    return UserResponse.model_validate(user)
+
+
+@router.delete("/{user_id}/picture", response_model=UserResponse, summary="Remove a user's profile picture")
+async def remove_picture(
+    user_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.USER, Action.UPDATE)))],
+) -> UserResponse:
+    service = UserService(session)
+    user = await service.remove_picture(await service.get(user_id, actor=actor), actor=actor)
     return UserResponse.model_validate(user)
 
 

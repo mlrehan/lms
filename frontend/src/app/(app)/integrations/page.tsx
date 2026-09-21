@@ -28,6 +28,7 @@ import type {
 } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
+import { GoogleCalendarPanel } from "@/components/domain/google-calendar-panel";
 import { Button } from "@/components/ui/button";
 import {
   Badge,
@@ -650,6 +651,8 @@ function CalendarFeeds() {
 }
 
 export default function IntegrationsPage() {
+  const { permissions } = useSession();
+  const showGoogle = permissions.has("google.read");
   return (
     <div className="space-y-5">
       <PageHeader
@@ -657,11 +660,17 @@ export default function IntegrationsPage() {
         description="Outbound webhooks and calendar feeds. Registering an endpoint decides where institution data is sent, which is why it is its own permission."
       />
 
-      <Tabs defaultValue="webhooks">
+      <Tabs defaultValue={showGoogle ? "google" : "webhooks"}>
         <TabsList>
+          {showGoogle ? <TabsTab value="google">Google Calendar</TabsTab> : null}
           <TabsTab value="webhooks">Webhooks</TabsTab>
           <TabsTab value="calendar">Calendar feeds</TabsTab>
         </TabsList>
+        {showGoogle ? (
+          <TabsPanel value="google">
+            <GoogleCalendarPanel />
+          </TabsPanel>
+        ) : null}
         <TabsPanel value="webhooks">
           <Webhooks />
         </TabsPanel>

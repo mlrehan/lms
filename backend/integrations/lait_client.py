@@ -122,6 +122,16 @@ class LaitClient:
     async def tutor_by_guid(self, guid: uuid.UUID | str) -> dict[str, Any] | None:
         return await self._get_one(f"/api/Tutors/guid/{parse_guid(guid)}")
 
+    async def courses(self) -> list[dict[str, Any]]:
+        return await self._get_list("/api/Courses?status=1")
+
+    async def batches_upcoming(self) -> list[dict[str, Any]]:
+        return await self._get_list("/api/Batches/Upcoming")
+
+    async def batch_students(self, batch_id: int) -> list[dict[str, Any]]:
+        # `int()` is the guard: only digits can ever reach the URL path.
+        return await self._get_list(f"/api/Batches/{int(batch_id)}/Students")
+
     # -- transport ---------------------------------------------------------------
 
     async def _get_list(self, path: str) -> list[dict[str, Any]]:

@@ -32,6 +32,7 @@ import {
 import { Badge } from "@/components/ui/primitives";
 import { GlobalSearch } from "@/components/shell/global-search";
 import { TimeZoneMenu } from "@/components/shell/timezone-menu";
+import { UserAvatar } from "@/components/domain/user-avatar";
 import { cn } from "@/lib/utils";
 
 function UnreadDot({ count }: { count: number }): ReactNode {
@@ -109,14 +110,6 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
     permissions.has("notification.read"),
   );
 
-  const initials =
-    (user?.full_name ?? user?.username ?? "?")
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? "")
-      .join("") || "?";
-
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-surface/95 px-3 backdrop-blur sm:px-4">
       <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={onOpenNav}>
@@ -165,14 +158,7 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
                 className="ml-1 flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-muted"
                 aria-label="Account menu"
               >
-                <span
-                  className={cn(
-                    "flex size-7 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground",
-                  )}
-                  aria-hidden
-                >
-                  {initials}
-                </span>
+                <UserAvatar name={user?.full_name ?? user?.username} src={user?.profile_picture} size="sm" />
                 <span className="hidden max-w-32 truncate text-sm font-medium sm:inline">
                   {user?.full_name || user?.username}
                 </span>

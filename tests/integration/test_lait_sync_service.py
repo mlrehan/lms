@@ -72,12 +72,16 @@ def env():
     )
     db = DatabaseManager(settings.database, application_name="sync-tests")
 
+    run_ids: list[int] = []  # only the runs THIS test created are ever deleted
+
     def sync(dry_run: bool = False) -> UserSyncRun:
         async def go() -> UserSyncRun:
             client = LaitClient(settings.lait, transport=httpx.MockTransport(fake.handler))
             async with client:
                 svc = LaitSyncService(db.session_factory, settings, client=client)
-                return await svc.run(trigger_type="MANUAL", triggered_by_user_id=None, dry_run=dry_run)
+                run = await svc.run(trigger_type="MANUAL", triggered_by_user_id=None, dry_run=dry_run)
+                run_ids.append(run.id)
+                return run
 
         return loop.run_until_complete(go())
 
@@ -100,7 +104,8 @@ def env():
         async def cleanup() -> None:
             async with db.session_factory.begin() as s:
                 await s.execute(delete(User).where(User.username.like(f"{tag}.%")))
-                await s.execute(delete(UserSyncRun))
+                if run_ids:
+                    await s.execute(delete(UserSyncRun).where(UserSyncRun.id.in_(run_ids)))
 
         loop.run_until_complete(cleanup())
         loop.run_until_complete(db.dispose())
@@ -227,12 +232,21 @@ def test_only_one_run_can_be_live_at_a_time(env) -> None:
     tag, fake, sync, q, find = env
     from backend.core.errors import ConflictError
 
-    async def two(sess):  # noqa: ANN001, ANN202
+    async def make(sess):  # noqa: ANN001, ANN202
         from datetime import datetime, timezone
 
-        sess.add(UserSyncRun(trigger_type="MANUAL", dry_run=False, status="RUNNING", started_at=datetime.now(timezone.utc)))
+        row = UserSyncRun(trigger_type="MANUAL", dry_run=False, status="RUNNING", started_at=datetime.now(timezone.utc))
+        sess.add(row)
+        await sess.commit()
+        return row.id
+
+    async def remove(sess, run_id):  # noqa: ANN001, ANN202
+        await sess.execute(delete(UserSyncRun).where(UserSyncRun.id == run_id))
         await sess.commit()
 
-    q(two)
-    with pytest.raises(ConflictError):
-        sync()
+    blocker = q(make)
+    try:
+        with pytest.raises(ConflictError):
+            sync()
+    finally:
+        q(lambda sess: remove(sess, blocker))  # this test's own row only -- never anyone else's history

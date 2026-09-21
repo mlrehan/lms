@@ -26,6 +26,7 @@ from typing import Any, Sequence
 
 from sqlalchemy import Select, func, or_, select
 
+from backend.core.privacy import current_viewer, may_see_contact
 from backend.models.administration import (
     AcademicYear,
     Category,
@@ -44,7 +45,8 @@ from backend.models.guardian import StudentGuardian
 from backend.models.identity.role import Role
 from backend.models.identity.token import Token
 from backend.models.identity.user import User
-from backend.models.messaging import CourseDiscussion, DiscussionReply, UserMessage
+from backend.models.mail import MailMessage
+from backend.models.messaging import CourseDiscussion, DiscussionReply
 from backend.models.notification import Announcement
 from backend.models.organization import Organization, OrganizationMembership
 from backend.models.quiz import Question, Quiz, QuizAttempt
@@ -115,7 +117,7 @@ ENTITY_KINDS: dict[str, EntityKind] = {
     "token": EntityKind(Token),
     "transcript": EntityKind(Transcript),
     "user": EntityKind(User, User.username),
-    "user_message": EntityKind(UserMessage, UserMessage.subject),
+    "mail_message": EntityKind(MailMessage, MailMessage.subject),
 }
 
 # `system_setting`, `grade_band` and `resource_permission` are audited but
@@ -225,10 +227,15 @@ class AuditRepository(BaseRepository[AuditLog]):
         """`{internal id: (public_id, username)}` for a whole page at once."""
         if not actor_ids:
             return {}
-        stmt = select(User.id, User.public_id, User.username).where(User.id.in_(actor_ids))
-        return {
-            int(row[0]): (row[1], row[2]) for row in (await self.session.execute(stmt)).all()
-        }
+        stmt = select(User.id, User.public_id, User.username, User.first_name, User.last_name).where(User.id.in_(actor_ids))
+        # The login name is often the email address, so a viewer who may not see contact details gets the
+        # person's name instead (see `core/privacy.py`).
+        see_all = may_see_contact()
+        out: dict[int, tuple[uuid.UUID, str]] = {}
+        for uid, public_id, username, first, last in (await self.session.execute(stmt)).all():
+            name = " ".join(p for p in (first, last) if p) or username
+            out[int(uid)] = (public_id, username if (see_all or public_id == (current_viewer().public_id if current_viewer() else None)) else name)
+        return out
 
     async def resolve_entities(
         self, pairs: Sequence[tuple[str, int]]
@@ -259,6 +266,10 @@ class AuditRepository(BaseRepository[AuditLog]):
             else:
                 stmt = select(kind.pk)
 
+            if entity_type == "user" and not may_see_contact():
+                # A user's label is their login name, which is usually their email address: show the name instead.
+                name = func.coalesce(func.nullif(func.trim(func.concat_ws(" ", User.first_name, User.last_name)), ""), "A user")
+                stmt = select(kind.pk, kind.model.public_id, name)
             stmt = stmt.where(kind.pk.in_(ids))
             for row in (await self.session.execute(stmt)).all():
                 row_id = int(row[0])

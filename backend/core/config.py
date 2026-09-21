@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -756,6 +757,94 @@ class StorageSettings(BaseSettings):
 # =============================================================================
 # MAIL
 # =============================================================================
+class GoogleSettings(BaseSettings):
+    """Google Calendar. Calendar only: no Classroom, Meet or YouTube scopes are requested.
+
+    `GOOGLE_EMAIL`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` come from `.env`.
+    The LMS acts as **one organisation account** (`GOOGLE_EMAIL`): a Super Admin signs
+    in once, and batch calendars are created in that account and shared with admins.
+    """
+
+    model_config = _BASE_SETTINGS_CONFIG | SettingsConfigDict(env_prefix="GOOGLE_")
+
+    email: str = ""
+    client_id: str = ""
+    client_secret: SecretStr = SecretStr("")
+
+    @field_validator("client_id", mode="before")
+    @classmethod
+    def _tidy_client_id(cls, value: object) -> object:
+        """Accept the ID as it is commonly pasted: with quotes, or as a link (`http://<id>/`).
+
+        A client ID is a public identifier (it is in every consent URL), and after removing a
+        scheme and slashes what remains is either a valid ID or is rejected by
+        `configuration_problem`, so this cannot turn a wrong value into an accepted one.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip().strip("\"'").strip()
+        text = re.sub(r"^https?://", "", text, flags=re.I)
+        return text.strip("/ ")
+
+    # Must be registered as an "Authorized redirect URI" on the OAuth client in Google Cloud.
+    redirect_uri: str = "http://localhost:3000/integrations/google/callback"
+
+    # `calendar.app.created` is the narrowest scope that can create secondary calendars and
+    # manage the events on them; it cannot read or touch the account's other calendars.
+    # `calendar.acls` lets the LMS share a batch calendar with administrators.
+    scopes: tuple[str, ...] = (
+        "https://www.googleapis.com/auth/calendar.app.created",
+        "https://www.googleapis.com/auth/calendar.acls",
+        # Non-sensitive identity scopes: they let the LMS check WHICH Google account signed in,
+        # so connecting the wrong one is refused instead of quietly writing to it.
+        "openid",
+        "email",
+    )
+    calendar_timezone: str = "Europe/London"
+    request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+    # Who is put on an event. Guests see the event on their own calendar, which is the
+    # point ("tutors and students can see their schedule") -- but it means real people.
+    invite_attendees: bool = True
+    # "none": guests get the event without an email. "all" emails every change.
+    send_updates: Literal["none", "externalOnly", "all"] = "none"
+    share_with_admins: bool = True
+    # Who may create, move and delete events from Google. Google cannot say who made an edit, so
+    # write access to the calendar IS the authorisation: Super Admins write, Administrators view.
+    admins_can_edit: bool = False
+    # A change made to a session's time in Google is applied back to the LMS.
+    pull_session_times: bool = True
+    sync_interval_seconds: int = Field(default=300, ge=30)
+    # Batches that ended longer ago than this are left alone (unless already mirrored).
+    sync_past_days: int = Field(default=30, ge=0)
+    # Google allows a bounded number of guests per event.
+    max_attendees_per_event: int = Field(default=200, ge=1, le=200)
+
+    @property
+    def configuration_problem(self) -> str | None:
+        """Why Google sign-in cannot work with these settings, in words an administrator can act on.
+
+        A wrongly-pasted client ID does not fail here: Google answers with an "invalid_client"
+        page in the browser. Catching the shape locally turns that dead end into an instruction.
+        """
+        client_id = self.client_id.strip()
+        if not client_id:
+            return "GOOGLE_CLIENT_ID is not set."
+        if not self.client_secret.get_secret_value().strip():
+            return "GOOGLE_CLIENT_SECRET is not set."
+        if not re.fullmatch(r"\d{6,}-[A-Za-z0-9_-]{10,}\.apps\.googleusercontent\.com", client_id):
+            return (
+                "GOOGLE_CLIENT_ID does not look like a Google OAuth client ID. It should look like "
+                "123456789012-abc...xyz.apps.googleusercontent.com. Copy it from Google Cloud Console > "
+                "APIs & Services > Credentials > your Web application client."
+            )
+        return None
+
+    @property
+    def is_configured(self) -> bool:
+        return self.configuration_problem is None
+
+
 class LaitSettings(BaseSettings):
     """The external LAIT system users are synchronised from.
 
@@ -800,9 +889,41 @@ class LaitSettings(BaseSettings):
     # sync still in progress, and stops blocking new runs.
     stale_run_minutes: int = Field(default=30, ge=1)
 
+    # Course pages are scraped for level, duration, prerequisites and category.
+    # The URL comes from an external payload, so it is only ever fetched when it
+    # is https and its host is one of these (or a subdomain of one).
+    course_page_hosts: tuple[str, ...] = ("londonacademyofit.co.uk",)
+    course_page_timeout_seconds: int = Field(default=20, ge=1)
+    default_batch_capacity: int = Field(default=25, ge=1)
+
     @property
     def is_configured(self) -> bool:
         return bool(self.api_base_url and self.api_key.get_secret_value())
+
+
+class LocaleSettings(BaseSettings):
+    """Working out where a signed-in person is, and so which time zone to show them.
+
+    The person's public IP address is looked up once at sign-in and remembered against the account; it is looked
+    up again only when the address changes (checked at every sign-in, and periodically while they are using the
+    console). **This sends the person's IP address to a third-party service** (`LOCALE_LOOKUP_URL`, ipapi.co by
+    default); set `LOCALE_ENABLED=false` to turn it off, and the browser's own time zone is used instead.
+    """
+
+    model_config = _BASE_SETTINGS_CONFIG | SettingsConfigDict(env_prefix="LOCALE_")
+
+    enabled: bool = True
+    # `{ip}` is replaced by a validated IP address (never free text), so the URL cannot be steered elsewhere.
+    lookup_url: str = "https://ipapi.co/{ip}/json/"
+    # Asked for the *server's* public address, used only when the caller's own address is private (local
+    # development, where the browser and the API are on one machine, so it is also the person's address).
+    public_ip_url: str = "https://icanhazip.com"
+    use_server_ip_fallback: bool = True
+    timeout_seconds: float = Field(default=3.0, gt=0, le=15)
+    # How long a lookup result is reused for the same address, across all accounts.
+    cache_ttl_seconds: int = Field(default=86_400, ge=60)
+    # After a failed lookup (rate limit, outage), do not ask again for this long.
+    failure_backoff_seconds: int = Field(default=600, ge=10)
 
 
 class MailSettings(BaseSettings):
@@ -832,6 +953,8 @@ class MailSettings(BaseSettings):
     tls: bool = True
     ssl: bool = False
     suppress_send: bool = False
+    # Where the console lives (e.g. https://lms.example.com), for the "reply in the LMS" link in an email. Optional.
+    app_url: str = ""
     template_dir: Path = (
         PROJECT_ROOT
         / "templates"
@@ -978,6 +1101,8 @@ class Settings(BaseModel):
         default_factory=LoggingSettings,
     )
 
+    google: GoogleSettings = Field(default_factory=GoogleSettings)
+    locale: LocaleSettings = Field(default_factory=LocaleSettings)
     lait: LaitSettings = Field(
         default_factory=LaitSettings,
     )

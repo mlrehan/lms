@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Sequence
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
+from backend.core.privacy import may_see_contact
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
 from backend.repositories.base import BaseRepository
@@ -100,14 +101,11 @@ class UserRepository(BaseRepository[User]):
 
         if query:
             like = f"%{query.strip().lower()}%"
-            stmt = stmt.where(
-                or_(
-                    func.lower(User.username).like(like),
-                    func.lower(User.email).like(like),
-                    func.lower(User.first_name).like(like),
-                    func.lower(User.last_name).like(like),
-                )
-            )
+            name_match = [func.lower(User.first_name).like(like), func.lower(User.last_name).like(like)]
+            # Matching on the email or login name would let anyone who may not *see* them find out whether a given
+            # address exists by trying it, so those two are searchable only by a viewer who may see them.
+            contact_match = [func.lower(User.username).like(like), func.lower(User.email).like(like)] if may_see_contact() else []
+            stmt = stmt.where(or_(*contact_match, *name_match))
 
         stmt = stmt.order_by(User.id.desc())
         return await self.paginate(stmt, params)  # type: ignore[return-value]

@@ -52,6 +52,10 @@ class AuditAction:
     # One row per run of the LAIT user synchronisation, in addition to the
     # per-account CREATE/UPDATE rows the run produces.
     USER_SYNC = "USER_SYNC"
+    ACADEMIC_SYNC = "ACADEMIC_SYNC"
+    GOOGLE_SYNC = "GOOGLE_SYNC"
+    GOOGLE_CONNECT = "GOOGLE_CONNECT"
+    GOOGLE_DISCONNECT = "GOOGLE_DISCONNECT"
 
 
 def _build(

@@ -73,13 +73,23 @@ export function UserPicker({
     staleTime: 20_000,
   });
 
+  // A value that arrived from outside (a default tutor, an existing session) has no remembered name, so it is
+  // looked up. Showing the raw id there would put a UUID where a person's name belongs.
+  const needsLookup = canSearch && !!value && (!selected || selected.public_id !== value);
+  const known = useQuery({
+    queryKey: ["users", "label", value],
+    queryFn: () => api.get<UserSummary>(`/users/${value}`),
+    enabled: needsLookup,
+    staleTime: 5 * 60_000,
+  });
+
   // The selected person's name may not be in the current result page, so it
   // is remembered from the moment of selection rather than looked up again.
   const label = useMemo(() => {
-    if (selected) return selected.full_name || selected.username;
-    if (value) return value;
+    if (selected && selected.public_id === value) return selected.full_name || selected.username;
+    if (value) return known.data ? known.data.full_name || known.data.username : "Loading…";
     return null;
-  }, [selected, value]);
+  }, [selected, value, known.data]);
 
   if (!canSearch) {
     return (
