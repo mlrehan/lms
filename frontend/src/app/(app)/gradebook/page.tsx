@@ -132,7 +132,7 @@ function GradeBands() {
           />
 
           {canEdit ? (
-            <CardBody className="border-t border-border">
+            <CardBody className="border-t border-border-subtle">
               <FormGrid columns={3}>
                 <Field label="Minimum score">
                   {({ id }) => (
@@ -362,7 +362,7 @@ function EntriesTab({ batchId }: { batchId: string }) {
         }
       />
 
-      <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+      <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
         <Field label="Component" className="w-52">
           {({ id }) => (
             <NativeSelect

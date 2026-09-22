@@ -3,10 +3,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Lock } from "lucide-react";
+import Link from "next/link";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { EmptyState } from "@/components/ui/states";
-import { TooltipProvider } from "@/components/ui/primitives";
+import { Card, TooltipProvider } from "@/components/ui/primitives";
+import { buttonVariants } from "@/components/ui/button";
 import { useSession } from "@/lib/auth/session";
 import { permissionForPath } from "@/lib/navigation";
 
@@ -78,16 +80,36 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             {allowed ? (
               children
             ) : (
-              <EmptyState
-                icon={<Lock className="size-5" />}
-                title="You do not have access to this screen"
-                description={
-                  <>
-                    It needs the <code className="font-mono text-xs">{required}</code> permission,
-                    which your roles do not grant. Ask an administrator if you need it.
-                  </>
-                }
-              />
+              /*
+               * Somebody without the permission sees this instead of a screen, and on a
+               * console where roles are narrow that is a lot of the navigation. Framed and
+               * centred with a way out, because an unframed message floating at the top of
+               * an otherwise blank page reads as a page that failed to load rather than as
+               * an answer.
+               */
+              <div className="flex min-h-[60vh] items-center justify-center">
+                <Card className="w-full max-w-md">
+                  <EmptyState
+                    icon={<Lock />}
+                    title="You do not have access to this screen"
+                    description={
+                      <>
+                        It needs the{" "}
+                        <code className="rounded-xs bg-muted px-1 py-0.5 font-mono text-2xs text-foreground">
+                          {required}
+                        </code>{" "}
+                        permission, which your roles do not grant. Ask an administrator if you
+                        need it.
+                      </>
+                    }
+                    action={
+                      <Link href="/" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                        Back to dashboard
+                      </Link>
+                    }
+                  />
+                </Card>
+              </div>
             )}
           </main>
         </div>

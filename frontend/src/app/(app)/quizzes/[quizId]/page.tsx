@@ -292,7 +292,7 @@ function QuestionsTab({ quiz }: { quiz: QuizResponse }) {
           </p>
         </CardBody>
       ) : (
-        <ol className="divide-y divide-border">
+        <ol className="divide-y divide-border-subtle">
           {questions.map((question, index) => (
             <li key={question.public_id} className="space-y-2 px-4 py-3">
               <div className="flex items-start justify-between gap-3">
@@ -403,7 +403,7 @@ function GradeAttemptDialog({
         />
         <div className="space-y-3">
           {(attempt?.answers ?? []).map((answer) => (
-            <div key={answer.question_id} className="rounded-lg border border-border p-3">
+            <div key={answer.question_id} className="rounded-lg border border-border-subtle p-3">
               <p className="text-sm font-medium">{answer.question_text ?? answer.question_id}</p>
               <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">
                 {typeof answer.selected_options === "string"
@@ -614,7 +614,7 @@ function TakeQuizPanel({ quiz }: { quiz: QuizResponse }) {
         />
         <CardBody className="space-y-3">
           {quiz.instructions ? (
-            <p className="whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-muted p-3 text-sm">
+            <p className="whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-surface-muted p-3 text-sm">
               {quiz.instructions}
             </p>
           ) : null}
@@ -676,7 +676,7 @@ function TakeQuizPanel({ quiz }: { quiz: QuizResponse }) {
             {(questions.data ?? []).map((question, index) => {
               const value = answers[question.public_id] ?? { options: [], text: "" };
               return (
-                <div key={question.public_id} className="rounded-lg border border-border p-3">
+                <div key={question.public_id} className="rounded-lg border border-border-subtle p-3">
                   <p className="text-sm font-medium">
                     <span className="mr-2 text-muted-foreground">{index + 1}.</span>
                     {question.question_text}
@@ -729,7 +729,7 @@ function TakeQuizPanel({ quiz }: { quiz: QuizResponse }) {
               );
             })}
           </CardBody>
-          <div className="border-t border-border px-4 py-3">
+          <div className="border-t border-border-subtle px-4 py-3">
             <FormActions>
               <Button loading={submit.isPending} onClick={() => submit.mutate()}>
                 Submit attempt

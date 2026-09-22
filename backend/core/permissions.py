@@ -100,7 +100,13 @@ _CRUD = (Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE)
 _CATALOG: dict[str, str] = {}
 
 
-def _register(module: str, actions: tuple[str, ...], noun: str) -> None:
+def _register(
+    module: str,
+    actions: tuple[str, ...],
+    noun: str,
+    *,
+    phrasing: dict[str, str] | None = None,
+) -> None:
     verb_phrasing = {
         Action.CREATE: f"Create {noun}",
         Action.READ: f"View {noun}",
@@ -122,6 +128,8 @@ def _register(module: str, actions: tuple[str, ...], noun: str) -> None:
         Action.VIEW_CONTACT: f"See other people's email addresses, phone numbers and login names in {noun}",
         Action.OVERRIDE: f"Take or correct {noun} on behalf of the assigned tutor",
     }
+    if phrasing:
+        verb_phrasing.update(phrasing)
     for action in actions:
         _CATALOG[perm(module, action)] = verb_phrasing[action]
 
@@ -145,7 +153,15 @@ _register(Module.ROLE, _CRUD, "roles")
 _register(Module.PERMISSION, (Action.READ, Action.MANAGE), "permissions")
 _register(Module.COURSE, _CRUD + (Action.PUBLISH, Action.SYNC), "courses")
 _register(Module.BATCH, _CRUD, "batches")
-_register(Module.SESSION, _CRUD, "class sessions")
+# `session.override` is the authorised bypass of the join window: the link is
+# withheld until thirty minutes before the class, and this is who may have it
+# anyway -- someone setting the room up, or fixing it mid-class.
+_register(
+    Module.SESSION,
+    _CRUD + (Action.OVERRIDE,),
+    "class sessions",
+    phrasing={Action.OVERRIDE: "Join a class outside its scheduled join window"},
+)
 _register(Module.ENROLLMENT, _CRUD, "enrollments")
 # `override` lets somebody other than the session's assigned tutor take or correct its register (the assigned tutor is
 # recorded alongside who actually did it). Super Admin only, by construction; an Administrator is deliberately without it.

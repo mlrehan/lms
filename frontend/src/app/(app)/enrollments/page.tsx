@@ -218,7 +218,7 @@ export default function EnrollmentsPage() {
       />
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+        <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Status" className="w-44">
             {({ id }) => (
               <NativeSelect

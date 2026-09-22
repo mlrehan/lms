@@ -14,6 +14,7 @@ import { Field, Input } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
+import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { humanise } from "@/lib/utils";
 
 export default function TimetablePage() {
@@ -63,6 +64,22 @@ export default function TimetablePage() {
       cell: (session) => <span className="tabular-nums">{session.duration_minutes ?? "—"}</span>,
     },
     {
+      key: "join",
+      header: "",
+      align: "right",
+      // The link is not in this payload; the button asks the API for it.
+      cell: (session) => (
+        <JoinClassButton
+          sessionId={session.public_id}
+          canJoinNow={session.can_join_now ?? false}
+          opensAt={session.join_opens_at}
+          closesAt={session.join_closes_at}
+          size="xs"
+          className="justify-end"
+        />
+      ),
+    },
+    {
       key: "platform",
       header: "Where",
       cell: (session) => (
@@ -83,17 +100,19 @@ export default function TimetablePage() {
         description={`Sessions you can see, shown in ${timeZone}.`}
       />
 
-      <p className="flex items-start gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <span>
-          <code className="font-mono text-xs">GET /sessions</code> returns a summary that does not
-          include the batch, course or tutor, so this list cannot show them. Opening a session shows
-          all three. Recorded in <code className="font-mono text-xs">docs/BACKEND-GAPS.md</code>.
-        </span>
+      <p className="flex items-start gap-2 rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+        <Info className="mt-px size-3.5 shrink-0 text-subtle-foreground" aria-hidden />
+        {/*
+          Written from the reader's side of the screen. The previous copy named the
+          endpoint and cited a file in the repository, which tells somebody running a
+          timetable nothing they can act on -- what they need to know is that the
+          course and tutor are one click away.
+        */}
+        <span>This list shows times only. Open a session to see its course, batch and tutor.</span>
       </p>
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+        <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="From" className="w-44">
             {({ id }) => (
               <Input

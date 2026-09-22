@@ -57,7 +57,7 @@ export function RecipientField({
   }
 
   return (
-    <div className="relative flex items-start gap-2 border-b border-border px-3 py-1.5 text-sm">
+    <div className="relative flex items-start gap-2 border-b border-border-subtle px-3 py-1.5 text-sm">
       <span className="w-9 shrink-0 pt-1.5 text-muted-foreground">{label}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1" onClick={() => inputRef.current?.focus()}>
         {value.map((person) => (
@@ -116,7 +116,7 @@ export function RecipientField({
       </div>
 
       {open ? (
-        <ul id={listId} role="listbox" className="absolute left-12 right-3 top-full z-20 mt-0.5 max-h-60 overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-lg">
+        <ul id={listId} role="listbox" className="absolute left-12 right-3 top-full z-20 mt-0.5 max-h-60 overflow-y-auto rounded-lg border border-border-subtle bg-overlay py-1 shadow-overlay">
           {options.length === 0 ? (
             <li className="px-3 py-2 text-xs text-muted-foreground">{isFetching ? "Searching…" : debounced ? "Nobody you can write to matches." : "Start typing a name."}</li>
           ) : (

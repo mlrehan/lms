@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLef
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/primitives";
+import { EmptyState } from "@/components/ui/states";
 import { cn } from "@/lib/utils";
 
 /**
@@ -141,8 +142,11 @@ export function DataTable<T>({
                   aria-sort={column.sortable ? (active ? (sort?.dir === "asc" ? "ascending" : "descending") : "none") : undefined}
                   style={column.width ? { width: column.width } : undefined}
                   className={cn(
-                    "whitespace-nowrap border-b border-border bg-surface-muted px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
-                    stickyHeader && "sticky top-0 z-10",
+                    "group/th whitespace-nowrap border-b border-border-subtle px-3 py-2",
+                    "text-2xs font-semibold uppercase tracking-caps text-subtle-foreground",
+                    // Translucent + blurred rather than opaque: rows scrolling under the
+                    // header stay readable as motion instead of being clipped by a solid bar.
+                    stickyHeader ? "sticky top-0 z-10 bg-surface-muted/85 backdrop-blur-md" : "bg-surface-muted",
                     column.align === "right" && "text-right",
                     column.align === "center" && "text-center",
                     visibility(column),
@@ -153,10 +157,15 @@ export function DataTable<T>({
                     <button
                       type="button"
                       onClick={() => onSortChange(nextSort(column))}
-                      className={cn("-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 uppercase hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary", active && "text-foreground")}
+                      className={cn(
+                        "-mx-1 inline-flex items-center gap-1 rounded-xs px-1 py-0.5 uppercase",
+                        "transition-colors duration-200 ease-out hover:text-foreground",
+                        "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
+                        active && "text-foreground",
+                      )}
                     >
                       {column.header}
-                      {active ? sort?.dir === "asc" ? <ArrowUp className="size-3" aria-hidden /> : <ArrowDown className="size-3" aria-hidden /> : <ArrowUpDown className="size-3 opacity-40" aria-hidden />}
+                      {active ? sort?.dir === "asc" ? <ArrowUp className="size-3" aria-hidden /> : <ArrowDown className="size-3" aria-hidden /> : <ArrowUpDown className="size-3 opacity-0 transition-opacity duration-200 group-hover/th:opacity-50" aria-hidden />}
                     </button>
                   ) : (
                     column.header
@@ -165,7 +174,7 @@ export function DataTable<T>({
               );
             })}
             {rowActions ? (
-              <th scope="col" className={cn("w-10 border-b border-border bg-surface-muted px-2 py-2", stickyHeader && "sticky top-0 z-10")}>
+              <th scope="col" className={cn("w-10 border-b border-border-subtle px-2 py-2", stickyHeader ? "sticky top-0 z-10 bg-surface-muted/85 backdrop-blur-md" : "bg-surface-muted")}>
                 <span className="sr-only">Actions</span>
               </th>
             ) : null}
@@ -176,17 +185,22 @@ export function DataTable<T>({
             Array.from({ length: skeletonRows }).map((_, i) => (
               <tr key={`skeleton-${i}`} aria-hidden>
                 {columns.map((column, c) => (
-                  <td key={column.key} className={cn(pad, "border-b border-border/60", visibility(column))}>
+                  <td key={column.key} className={cn(pad, "border-b border-border-subtle", visibility(column))}>
                     <Skeleton className={cn("h-4", c === 0 ? "w-3/4" : "w-1/2", column.align === "right" && "ml-auto")} />
                   </td>
                 ))}
-                {rowActions ? <td className="border-b border-border/60 px-2" /> : null}
+                {rowActions ? <td className="border-b border-border-subtle px-2" /> : null}
               </tr>
             ))
           ) : empty ? (
             <tr>
               <td colSpan={columns.length + (rowActions ? 1 : 0)} className="px-4 py-2">
-                {emptyState ?? <div className="py-10 text-center text-sm text-muted-foreground">{emptyMessage}</div>}
+                {/*
+                  The designed empty state is the default, not an opt-in. A table that
+                  falls back to a line of grey text is the one place every screen looks
+                  unfinished, and there are twenty of them.
+                */}
+                {emptyState ?? <EmptyState title={emptyMessage} />}
               </td>
             </tr>
           ) : (
@@ -199,9 +213,9 @@ export function DataTable<T>({
                   key={key}
                   aria-selected={selectedKey != null ? selected : undefined}
                   className={cn(
-                    "group transition-colors hover:bg-surface-muted/70",
+                    "group transition-colors duration-200 ease-out hover:bg-surface-muted",
                     onRowClick && "cursor-pointer",
-                    selected && "bg-primary/[0.07] hover:bg-primary/10",
+                    selected && "bg-accent/60 hover:bg-accent/70 dark:bg-accent/40 dark:hover:bg-accent/50",
                     rowClassName?.(row),
                   )}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -212,8 +226,8 @@ export function DataTable<T>({
                       title={column.title?.(row)}
                       className={cn(
                         pad,
-                        "border-b border-border/60 align-middle text-foreground",
-                        selected && "first:shadow-[inset_3px_0_0_0_var(--primary)]",
+                        "border-b border-border-subtle align-middle text-foreground",
+                        selected && "first:shadow-[inset_2px_0_0_0_var(--primary)]",
                         column.align === "right" && "text-right tabular-nums",
                         column.align === "center" && "text-center",
                         column.truncate && "max-w-0 truncate", // `max-w-0` + `width` lets a truncating cell shrink to its column
@@ -226,7 +240,18 @@ export function DataTable<T>({
                     </td>
                   ))}
                   {rowActions ? (
-                    <td className="w-10 border-b border-border/60 px-1.5 text-right" onClick={(event) => event.stopPropagation()}>
+                    <td
+                      // The menu is contextual: it fades in on hover or keyboard focus, and stays
+                      // put on touch, where there is no hover to reveal it with.
+                      className={cn(
+                        "w-10 border-b border-border-subtle px-1.5 text-right",
+                        "opacity-0 transition-opacity duration-200 ease-out",
+                        "group-hover:opacity-100 group-focus-within:opacity-100",
+                        "has-[[data-popup-open]]:opacity-100 max-sm:opacity-100",
+                        selected && "opacity-100",
+                      )}
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       {actions.length > 0 ? <ActionMenu actions={actions} /> : null}
                     </td>
                   ) : null}
@@ -248,7 +273,12 @@ function ActionMenu({ actions }: { actions: RowAction[] }): ReactNode {
           <button
             type="button"
             aria-label="Row actions"
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary data-[popup-open]:bg-muted"
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-md text-subtle-foreground",
+              "transition-all duration-200 ease-out hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
+              "data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
+            )}
           />
         }
       >
@@ -301,7 +331,7 @@ export function Pagination({
   const go = (p: number) => onChange({ limit, offset: (Math.min(Math.max(p, 1), pages) - 1) * limit });
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border bg-surface px-3 py-2 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border-subtle bg-surface px-3 py-2 text-2xs">
       <p className="text-muted-foreground" aria-live="polite">
         {total === 0 ? (
           <>No {label}</>
@@ -318,7 +348,7 @@ export function Pagination({
         <label className="flex items-center gap-1.5 text-muted-foreground">
           Rows per page
           <select
-            className="h-7 rounded-md border border-border-strong bg-surface px-1.5 text-xs text-foreground"
+            className="h-7 cursor-pointer rounded-md border border-border-strong bg-surface px-1.5 text-2xs text-foreground transition-colors duration-200 ease-out hover:border-slate-400/70"
             value={limit}
             onChange={(event) => onChange({ limit: Number(event.target.value), offset: 0 })}
           >

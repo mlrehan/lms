@@ -76,6 +76,42 @@ class R2Storage(StorageBackend):
 
         return _iter()
 
+    async def open_range(self, key: str, start: int, end: int) -> AsyncIterator[bytes]:
+        assert_safe_key(key)
+        try:
+            response = await asyncio.to_thread(
+                self._client.get_object,
+                Bucket=self._bucket,
+                Key=key,
+                # S3 speaks the same inclusive-end convention as HTTP, so the
+                # range is passed through rather than translated -- a
+                # translation is one off-by-one away from a truncated video.
+                Range=f"bytes={start}-{end}",
+            )
+        except Exception as exc:  # noqa: BLE001 - botocore's error types are lazy-built
+            raise NotFoundError("File not found.") from exc
+
+        body = response["Body"]
+
+        async def _iter() -> AsyncIterator[bytes]:
+            try:
+                while chunk := await asyncio.to_thread(body.read, _CHUNK):
+                    yield chunk
+            finally:
+                await asyncio.to_thread(body.close)
+
+        return _iter()
+
+    async def size(self, key: str) -> int:
+        assert_safe_key(key)
+        try:
+            head = await asyncio.to_thread(
+                self._client.head_object, Bucket=self._bucket, Key=key
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise NotFoundError("File not found.") from exc
+        return int(head["ContentLength"])
+
     async def delete(self, key: str) -> None:
         assert_safe_key(key)
         await asyncio.to_thread(

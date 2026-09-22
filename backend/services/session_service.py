@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.live_class import JoinWindow, join_window
+from backend.core.permissions import Action, Module, perm
 from backend.models.batch import BatchSession
 from backend.models.identity.user import User
+from backend.models.resource import Resource
 from backend.repositories.session import SessionRepository
 from backend.schemas.base import PageParams
 from backend.schemas.session import SessionCreateRequest, SessionUpdateRequest
@@ -19,7 +23,56 @@ from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import Roles
+from backend.utils.enums import ResourcePermissionLevel, Roles
+
+_OVERRIDE = perm(Module.SESSION, Action.OVERRIDE)
+#: Holding this is what separates "may set the meeting link" from "may be given
+#: it". Tutors and administrators author a session; everyone else is let into
+#: the room by the API, during the window, one join at a time.
+_MANAGE = perm(Module.SESSION, Action.UPDATE)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _aware(moment: datetime | None) -> datetime | None:
+    """Storage hands back naive UTC on some drivers; comparing that to an aware
+    `now()` raises, and a join window that raises is a class nobody can enter."""
+    if moment is None:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class JoinTicket:
+    """One admission to one class."""
+
+    session: BatchSession
+    meeting_link: str
+    window: JoinWindow
+    #: True when the door was shut and the caller's `session.override` opened it.
+    #: Recorded on the ticket as well as in the audit trail so the UI can say so.
+    overridden: bool
+
+
+@dataclass(frozen=True)
+class RecordingView:
+    """What a caller may be told about a class recording."""
+
+    session: BatchSession
+    resource: Resource | None
+    playback_url: str | None
+    external_url: str | None
+
+
+@dataclass(frozen=True)
+class JoinState:
+    """What a *listing* may say about joining, with no link attached."""
+
+    opens_at: datetime | None
+    closes_at: datetime | None
+    can_join_now: bool
 
 
 class SessionService:
@@ -28,6 +81,7 @@ class SessionService:
         self.sessions = SessionRepository(session)
         self.batches = BatchService(session)
         self.scopes = ScopeResolver(session)
+        self._permission_cache: tuple[int, set[str]] | None = None
 
     # -- reads ---------------------------------------------------------------
 
@@ -72,6 +126,241 @@ class SessionService:
         scope = await self.scopes.visible_session_ids(actor)
         if not scope.allows(row.id):
             raise NotFoundError("Session not found.")
+        return row
+
+    # -- joining a class -----------------------------------------------------
+
+    def _held(self, actor: User) -> set[str]:
+        """The actor's flattened permissions, resolved once per service instance.
+
+        `join_state` is called per row, and the calendar draws up to 3000 of
+        them; re-walking every role's permission collection for each one is
+        work proportional to the window for an answer that cannot change
+        within a request.
+        """
+        if self._permission_cache is None or self._permission_cache[0] != actor.id:
+            self._permission_cache = (actor.id, ScopeResolver.held_permissions(actor))
+        return self._permission_cache[1]
+
+    def can_manage(self, actor: User) -> bool:
+        """May this caller see the raw meeting and recording links?
+
+        The people who *author* a session already hold them; withholding the
+        link from them would only mean they could not check what they had
+        entered. Everyone else is admitted through `join`.
+        """
+        return _MANAGE in self._held(actor)
+
+    def can_override(self, actor: User) -> bool:
+        return _OVERRIDE in self._held(actor)
+
+    def window_for(self, row: BatchSession) -> JoinWindow | None:
+        return join_window(
+            _aware(row.session_start_time),
+            _aware(row.session_end_time),
+            duration_minutes=row.duration_minutes,
+        )
+
+    def join_state(self, row: BatchSession, *, actor: User) -> JoinState:
+        """What a listing may say, with no link attached.
+
+        Deliberately separate from `join`: rendering a countdown must not be
+        able to obtain a link as a side effect, and `join` must not be
+        something a page calls for every row it draws.
+        """
+        window = self.window_for(row)
+        if window is None:
+            return JoinState(opens_at=None, closes_at=None, can_join_now=False)
+
+        open_now = window.contains(_now())
+        joinable = bool(row.meeting_link) and row.cancelled_at is None and (
+            open_now or self.can_override(actor)
+        )
+        return JoinState(
+            opens_at=window.opens_at, closes_at=window.closes_at, can_join_now=joinable
+        )
+
+    async def join(self, public_id: uuid.UUID, *, actor: User) -> JoinTicket:
+        """Hand out the meeting link, once, to someone entitled to it right now.
+
+        Every refusal below is a refusal the browser could not have enforced,
+        which is the reason the link is not in the session payload to begin
+        with.
+        """
+        row = await self.get(public_id, actor=actor)
+
+        if row.cancelled_at is not None:
+            raise ConflictError(
+                "This class was cancelled.",
+                details={"reason": row.cancelled_reason},
+            )
+
+        window = self.window_for(row)
+        if window is None:
+            raise ConflictError("This class has no scheduled start time yet.")
+
+        if not row.meeting_link:
+            # Not an authorization failure: the caller is entitled to join, the
+            # tutor simply has not recorded a link. Saying so is what stops a
+            # student reporting "access denied" for a scheduling omission.
+            raise ConflictError("No meeting link has been added to this class yet.")
+
+        overridden = False
+        now = _now()
+        if not window.contains(now):
+            if not self.can_override(actor):
+                # Early and late are different facts, and only one of them is
+                # worth waiting for. One message for both would have a student
+                # sitting in front of a class that finished yesterday.
+                raise ConflictError(
+                    "This class is not open to join yet."
+                    if now < window.opens_at
+                    else "This class has already finished.",
+                    details={
+                        "opens_at": window.opens_at.isoformat(),
+                        "closes_at": window.closes_at.isoformat(),
+                    },
+                )
+            overridden = True
+
+        audit_service.record(
+            self.session,
+            action=AuditAction.CLASS_JOIN,
+            actor_user_id=actor.id,
+            actor_email=actor.email,
+            entity_type="batch_session",
+            entity_id=row.id,
+            details={
+                "batch": row.batch.batch_code if row.batch else None,
+                "platform": row.platform.name if row.platform else None,
+                # The distinguishing fact for anyone reading the trail later:
+                # an ordinary join is noise, a join outside the window is not.
+                "outside_window": overridden,
+            },
+        )
+        return JoinTicket(
+            session=row, meeting_link=row.meeting_link, window=window, overridden=overridden
+        )
+
+    # -- recordings ----------------------------------------------------------
+
+    async def recording(
+        self, public_id: uuid.UUID, *, actor: User, audit: bool = False
+    ) -> RecordingView:
+        """Where this caller may play the class back.
+
+        `playback_url` is a path on this API, not a URL to the file: every
+        request for the bytes is re-checked, so revoking someone's place in the
+        batch revokes the recording with it. `external_url` is the provider's
+        own page, which does none of that, and is therefore only ever given to
+        someone who may edit the session -- they set it.
+        """
+        row = await self.get(public_id, actor=actor)
+
+        stored: Resource | None = None
+        if row.recording_resource_id is not None:
+            stored = (
+                await self.session.execute(
+                    select(Resource).where(
+                        Resource.id == row.recording_resource_id,
+                        # A withdrawn file stops being playable immediately;
+                        # leaving it would make soft-delete cosmetic for anyone
+                        # who still had the session open.
+                        Resource.is_deleted.is_(False),
+                    )
+                )
+            ).scalar_one_or_none()
+
+        if stored is not None and audit:
+            # Recorded here rather than on the byte stream: a player issues a
+            # request per seek, and a viewer who scrubs through an hour would
+            # otherwise write dozens of rows saying the same thing. The
+            # permission check still runs on every one of those requests; only
+            # the *record* is once per playback.
+            audit_service.record(
+                self.session,
+                action=AuditAction.RECORDING_VIEW,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="batch_session",
+                entity_id=row.id,
+                details={"resource_id": stored.id, "name": stored.name},
+            )
+
+        return RecordingView(
+            session=row,
+            resource=stored,
+            playback_url=(
+                f"/sessions/{row.public_id}/recording/stream" if stored else None
+            ),
+            external_url=row.recording_link if self.can_manage(actor) else None,
+        )
+
+    async def resolve_recording_stream(
+        self, public_id: uuid.UUID, *, actor: User
+    ) -> tuple[BatchSession, Resource]:
+        """Authorise playback and hand back the object to stream.
+
+        Separate from `recording` because a browser re-requests this on every
+        seek: the check runs each time, and the audit row is written once per
+        playback request rather than once per page view.
+        """
+        view = await self.recording(public_id, actor=actor)
+        if view.resource is None or not view.resource.path:
+            raise NotFoundError("No recording is stored for this class.")
+        return view.session, view.resource
+
+    async def attach_recording(
+        self, public_id: uuid.UUID, *, resource_public_id: uuid.UUID, actor: User
+    ) -> BatchSession:
+        """Publish an already-uploaded file to the class as its recording.
+
+        Deliberately a link, not an upload endpoint of its own: the file
+        manager already handles storing, versioning and validating uploads, and
+        a second path would grow its own quietly different rules.
+
+        EDIT on the resource, not merely the ability to see it. Attaching makes
+        a file playable by everyone in the batch, so the bar is "this is yours
+        to publish" rather than "you happen to have been shown it" -- otherwise
+        a tutor could expose any document they had been sent to a whole class.
+        """
+        row = await self.get(public_id, actor=actor)
+
+        from backend.services.resource_service import ResourceService  # circular at module scope
+
+        resources = ResourceService(self.session)
+        resource = await resources.get(resource_public_id, actor=actor)
+        await resources.require_level(resource, actor, ResourcePermissionLevel.EDIT)
+
+        row.recording_resource_id = resource.id
+
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=actor.id,
+            actor_email=actor.email,
+            entity_type="batch_session",
+            entity_id=row.id,
+            details={"recording_resource_id": resource.id, "name": resource.name},
+        )
+        return row
+
+    async def detach_recording(self, public_id: uuid.UUID, *, actor: User) -> BatchSession:
+        """Unpublish the recording. The file itself is untouched -- taking a
+        class recording down is not a reason to delete someone's upload."""
+        row = await self.get(public_id, actor=actor)
+        previous = row.recording_resource_id
+        row.recording_resource_id = None
+
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=actor.id,
+            actor_email=actor.email,
+            entity_type="batch_session",
+            entity_id=row.id,
+            details={"recording_resource_id": None, "was": previous},
+        )
         return row
 
     # -- writes --------------------------------------------------------------

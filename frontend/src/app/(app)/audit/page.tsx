@@ -102,7 +102,7 @@ function DetailDialog({
                   -- and treating attacker-influenced content as HTML is how a
                   stored XSS lands in the one screen a security team reads.
                 */}
-                <pre className="max-h-72 overflow-auto scrollbar-thin whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-muted p-3 font-mono text-xs">
+                <pre className="max-h-72 overflow-auto scrollbar-thin whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-surface-muted p-3 font-mono text-xs">
                   {JSON.stringify(log.details, null, 2)}
                 </pre>
               </div>

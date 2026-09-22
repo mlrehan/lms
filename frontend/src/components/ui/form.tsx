@@ -10,10 +10,26 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 
-const controlClasses =
-  "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-foreground " +
-  "placeholder:text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-60 " +
-  "aria-[invalid=true]:border-danger";
+/*
+ * One focus treatment for every control in the console: the border goes to
+ * the accent and a soft halo appears outside it.
+ *
+ * The halo replaces the global `:focus-visible` outline on form controls
+ * deliberately -- an outline offset 2px from a 36px input collides with its
+ * neighbour in a dense two-column form, whereas a ring hugs the control. It
+ * is 3px and 18% opacity: unmistakable, without the "glowing" look that a
+ * saturated ring gives.
+ */
+const controlClasses = cn(
+  "w-full rounded-md border border-border-strong bg-surface px-2.5 py-2",
+  "text-sm text-foreground placeholder:text-subtle-foreground",
+  "shadow-xs transition-all duration-200 ease-out",
+  "hover:border-slate-400/70 dark:hover:border-slate-500/70",
+  "focus-visible:outline-none focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/18",
+  "disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-60 disabled:shadow-none",
+  "aria-[invalid=true]:border-danger aria-[invalid=true]:focus-visible:border-danger",
+  "aria-[invalid=true]:focus-visible:ring-danger/18",
+);
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className, ...props }, ref) {
@@ -23,7 +39,14 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
   function Textarea({ className, rows = 4, ...props }, ref) {
-    return <textarea ref={ref} rows={rows} className={cn(controlClasses, className)} {...props} />;
+    return (
+      <textarea
+        ref={ref}
+        rows={rows}
+        className={cn(controlClasses, "resize-y leading-relaxed", className)}
+        {...props}
+      />
+    );
   },
 );
 
@@ -38,7 +61,7 @@ export const NativeSelect = forwardRef<
   SelectHTMLAttributes<HTMLSelectElement>
 >(function NativeSelect({ className, children, ...props }, ref) {
   return (
-    <select ref={ref} className={cn(controlClasses, "h-9 pr-8", className)} {...props}>
+    <select ref={ref} className={cn(controlClasses, "h-9 cursor-pointer pr-8", className)} {...props}>
       {children}
     </select>
   );
@@ -80,22 +103,25 @@ export function Field({
 
   return (
     <div className={cn("space-y-1.5", className)}>
-      <label htmlFor={id} className="block text-sm font-medium text-foreground">
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium tracking-normal text-muted-foreground"
+      >
         {label}
         {required ? (
-          <span className="ml-1 text-danger" aria-hidden>
+          <span className="ml-0.5 text-danger" aria-hidden>
             *
           </span>
         ) : null}
       </label>
       {typeof children === "function" ? children({ id, describedBy }) : children}
       {hint ? (
-        <p id={hintId} className="text-xs text-muted-foreground">
+        <p id={hintId} className="text-2xs leading-relaxed text-subtle-foreground">
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} role="alert" className="text-xs font-medium text-danger">
+        <p id={errorId} role="alert" className="text-2xs font-medium text-danger">
           {error}
         </p>
       ) : null}
@@ -103,8 +129,16 @@ export function Field({
   );
 }
 
+/**
+ * The footer of a form. A top hairline separates the commit actions from the
+ * fields, so "Save" never looks like it belongs to the last input.
+ */
 export function FormActions({ children }: { children: ReactNode }): ReactNode {
-  return <div className="flex items-center justify-end gap-2 pt-2">{children}</div>;
+  return (
+    <div className="flex items-center justify-end gap-2 border-t border-border-subtle pt-4">
+      {children}
+    </div>
+  );
 }
 
 export function FormGrid({
@@ -117,7 +151,7 @@ export function FormGrid({
   return (
     <div
       className={cn(
-        "grid gap-4",
+        "grid gap-x-4 gap-y-4",
         columns === 1 && "grid-cols-1",
         columns === 2 && "grid-cols-1 sm:grid-cols-2",
         columns === 3 && "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",

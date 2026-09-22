@@ -59,7 +59,7 @@ export function CourseDetailsDialog({
                 <img
                   src={imageSrc(data.course_image) ?? undefined}
                   alt=""
-                  className="max-h-40 max-w-full rounded-lg border border-border bg-surface object-contain"
+                  className="max-h-40 max-w-full rounded-lg border border-border-subtle bg-surface object-contain"
                 />
               ) : (
                 <CourseThumb src={data.small_course_image} title={data.title} size="lg" />
@@ -75,7 +75,7 @@ export function CourseDetailsDialog({
               </div>
             </div>
 
-            <dl className="divide-y divide-border rounded-lg border border-border px-4">
+            <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-4">
               <Row label="Price">{data.price != null ? gbp.format(data.price) : null}</Row>
               <Row label="Duration">{data.duration_hours != null ? `${data.duration_hours} hours` : null}</Row>
               <Row label="Course link">
@@ -105,32 +105,32 @@ export function CourseDetailsDialog({
               {(data.batches ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No batches yet.</p>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-border">
+                <div className="overflow-x-auto rounded-lg border border-border-subtle">
                   <table className="w-full text-sm">
-                    <thead className="bg-surface-muted text-left text-xs text-muted-foreground">
+                    <thead className="bg-surface-muted text-left">
                       <tr>
-                        <th className="px-3 py-2 font-medium">Batch</th>
-                        <th className="px-3 py-2 font-medium">Starts</th>
-                        <th className="px-3 py-2 font-medium">Ends</th>
-                        <th className="px-3 py-2 text-right font-medium">Enrolled</th>
-                        <th className="px-3 py-2 font-medium">State</th>
+                        <th className="eyebrow px-3 py-2 text-left">Batch</th>
+                        <th className="eyebrow px-3 py-2 text-left">Starts</th>
+                        <th className="eyebrow px-3 py-2 text-left">Ends</th>
+                        <th className="eyebrow px-3 py-2 text-right">Enrolled</th>
+                        <th className="eyebrow px-3 py-2 text-left">State</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border">
+                    <tbody className="divide-y divide-border-subtle">
                       {(data.batches ?? []).map((batch) => (
                         <tr key={batch.public_id}>
-                          <td className="px-3 py-2 font-mono">
+                          <td className="px-3 py-1.5 font-mono text-2xs">
                             <Link href={`/batches/${batch.public_id}`} className="hover:underline">
                               {batch.batch_code}
                             </Link>
                           </td>
-                          <td className="px-3 py-2">{formatCalendarDate(batch.start_date)}</td>
-                          <td className="px-3 py-2">{formatCalendarDate(batch.end_date)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">
+                          <td className="px-3 py-1.5 tabular-nums">{formatCalendarDate(batch.start_date)}</td>
+                          <td className="px-3 py-1.5 tabular-nums">{formatCalendarDate(batch.end_date)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">
                             {batch.total_enrollments ?? 0}
                             {batch.capacity ? ` / ${batch.capacity}` : ""}
                           </td>
-                          <td className="px-3 py-2">{batch.is_active ? <Badge tone="success">Active</Badge> : <Badge>Closed</Badge>}</td>
+                          <td className="px-3 py-1.5">{batch.is_active ? <Badge tone="success">Active</Badge> : <Badge>Closed</Badge>}</td>
                         </tr>
                       ))}
                     </tbody>

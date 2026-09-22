@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
@@ -20,11 +20,15 @@ from backend.db.dependencies import DBSession, commit_before_responding
 from backend.models.batch import BatchSession
 from backend.schemas.base import Page, PageParams
 from backend.schemas.session_plan import PlanRequest, PlanResponse, ReplaceRequest, ReplaceResponse
+from backend.api.streaming import stream_for_playback
 from backend.schemas.session import (
     CalendarResponse,
     CalendarSession,
     SessionCreateRequest,
+    SessionJoinResponse,
     SessionOverview,
+    SessionRecordingAttachRequest,
+    SessionRecordingResponse,
     SessionResponse,
     SessionSummary,
     SessionUpdateRequest,
@@ -36,7 +40,23 @@ from backend.services.session_service import SessionService
 router = APIRouter(tags=["Sessions"])
 
 
-def _response(s: BatchSession, *, attendance_recorded: bool = False) -> SessionResponse:
+def _response(
+    s: BatchSession,
+    *,
+    service: SessionService,
+    actor: CurrentUser,
+    attendance_recorded: bool = False,
+) -> SessionResponse:
+    """One session, with the meeting link withheld from anyone who is not
+    entitled to hold it outright.
+
+    A student's client gets the *window* and a boolean, never the URL: that is
+    what makes "the Join button is greyed out until 30 minutes before" a rule
+    instead of a decoration. They obtain the link from `POST .../join`, one
+    admission at a time, and every one is audited.
+    """
+    manage = service.can_manage(actor)
+    state = service.join_state(s, actor=actor)
     return SessionResponse(
         public_id=s.public_id,
         session_start_time=s.session_start_time,
@@ -49,11 +69,34 @@ def _response(s: BatchSession, *, attendance_recorded: bool = False) -> SessionR
         course_title=s.batch.course.title if s.batch.course else None,
         tutor_id=s.tutor.public_id,
         tutor_username=visible_username(s.tutor),
-        meeting_link=s.meeting_link,
-        recording_link=s.recording_link,
+        meeting_link=s.meeting_link if manage else None,
+        recording_link=s.recording_link if manage else None,
+        can_manage=manage,
         tutor_notes=s.tutor_notes,
         student_notes=s.student_notes,
         attendance_recorded=attendance_recorded,
+        join_opens_at=state.opens_at,
+        join_closes_at=state.closes_at,
+        can_join_now=state.can_join_now,
+        has_recording=bool(s.recording_resource_id) or (manage and bool(s.recording_link)),
+    )
+
+
+def _summary(s: BatchSession, *, service: SessionService, actor: CurrentUser) -> SessionSummary:
+    """A timetable row. Same withholding rule as `_response`, and the same
+    single source for whether the door is open."""
+    state = service.join_state(s, actor=actor)
+    return SessionSummary(
+        public_id=s.public_id,
+        session_start_time=s.session_start_time,
+        session_end_time=s.session_end_time,
+        duration_minutes=s.duration_minutes,
+        platform=s.platform,
+        classroom=s.classroom,
+        join_opens_at=state.opens_at,
+        join_closes_at=state.closes_at,
+        can_join_now=state.can_join_now,
+        has_recording=bool(s.recording_resource_id),
     )
 
 
@@ -76,7 +119,9 @@ async def session_calendar(
     """
     if end <= start or end - start > timedelta(days=400):
         raise ValidationError("The window must be positive and at most 400 days.")
-    rows = await SessionService(session).calendar(actor=actor, start=start, end=end, batch_public_id=batch_id, limit=_CALENDAR_CAP + 1)
+    service = SessionService(session)
+    rows = await service.calendar(actor=actor, start=start, end=end, batch_public_id=batch_id, limit=_CALENDAR_CAP + 1)
+    manage = service.can_manage(actor)
     items = []
     for s in rows[:_CALENDAR_CAP]:
         began = s.session_start_time if s.session_start_time.tzinfo else s.session_start_time.replace(tzinfo=timezone.utc)
@@ -86,7 +131,9 @@ async def session_calendar(
             course_title=s.batch.course.title if s.batch.course else None,
             tutor_id=s.tutor.public_id, tutor_name=" ".join(p for p in (s.tutor.first_name, s.tutor.last_name) if p) or visible_username(s.tutor),
             session_start_time=began, session_end_time=finish, platform=s.platform, classroom=s.classroom,
-            meeting_link=s.meeting_link, origin=s.origin,
+            meeting_link=s.meeting_link if manage else None,
+            can_join_now=service.join_state(s, actor=actor).can_join_now,
+            origin=s.origin,
         ))
     return CalendarResponse(items=items, truncated=len(rows) > _CALENDAR_CAP)
 
@@ -108,7 +155,8 @@ async def list_sessions(
     `mine_only=true` gives a tutor their own timetable — spec §17's "Today's
     classes" — by narrowing to sessions where they are the assigned tutor.
     """
-    rows, total = await SessionService(session).list_sessions(
+    service = SessionService(session)
+    rows, total = await service.list_sessions(
         params,
         actor=actor,
         batch_public_id=batch_id,
@@ -116,9 +164,7 @@ async def list_sessions(
         starts_before=starts_before,
         mine_only=mine_only,
     )
-    return Page.build(
-        [SessionSummary.model_validate(r) for r in rows], total=total, params=params
-    )
+    return Page.build([_summary(r, service=service, actor=actor) for r in rows], total=total, params=params)
 
 
 @router.post(
@@ -141,7 +187,8 @@ async def create_session(
 
     Double-booking a tutor across overlapping sessions is refused.
     """
-    return _response(await SessionService(session).create(batch_id, payload, actor=actor))
+    service = SessionService(session)
+    return _response(await service.create(batch_id, payload, actor=actor), service=service, actor=actor)
 
 
 @router.post("/batches/{batch_id}/session-plan", response_model=PlanResponse, summary="Propose a batch's sessions (changes nothing)")
@@ -181,12 +228,9 @@ async def list_batch_sessions(
     params: Annotated[PageParams, Depends()],
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
 ) -> Page[SessionSummary]:
-    rows, total = await SessionService(session).list_sessions(
-        params, actor=actor, batch_public_id=batch_id
-    )
-    return Page.build(
-        [SessionSummary.model_validate(r) for r in rows], total=total, params=params
-    )
+    service = SessionService(session)
+    rows, total = await service.list_sessions(params, actor=actor, batch_public_id=batch_id)
+    return Page.build([_summary(r, service=service, actor=actor) for r in rows], total=total, params=params)
 
 
 @router.get("/sessions/{session_id}/overview", response_model=SessionOverview, summary="Everything about one session, for the calendar")
@@ -204,6 +248,133 @@ async def session_overview(
     return SessionOverview.model_validate(await SessionOverviewService(session).overview(session_id, actor=actor))
 
 
+@router.post(
+    "/sessions/{session_id}/join",
+    response_model=SessionJoinResponse,
+    summary="Join a class",
+)
+async def join_session(
+    session_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
+) -> SessionJoinResponse:
+    """Hands out the meeting link, to someone entitled to it, right now.
+
+    The window opens thirty minutes before the start and closes at the end.
+    Outside it the request is refused with a 409 naming both times, unless the
+    caller holds `session.override` -- in which case the join happens and is
+    recorded as having been outside the window.
+
+    A POST rather than a GET because it is an act, not a property: it writes an
+    audit row, and must not be something a prefetch or a cache repeats on the
+    caller's behalf.
+    """
+    ticket = await SessionService(session).join(session_id, actor=actor)
+    row = ticket.session
+    await commit_before_responding(session)  # the audit row outlives the response
+    return SessionJoinResponse(
+        meeting_link=ticket.meeting_link,
+        platform=row.platform,
+        classroom=row.classroom,
+        session_start_time=row.session_start_time,
+        session_end_time=row.session_end_time,
+        join_opens_at=ticket.window.opens_at,
+        join_closes_at=ticket.window.closes_at,
+        joined_outside_window=ticket.overridden,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/recording",
+    response_model=SessionRecordingResponse,
+    summary="Where to play a class back",
+)
+async def get_session_recording(
+    session_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
+) -> SessionRecordingResponse:
+    """`playback_url` is a path on this API that re-checks permission on every
+    request. The provider's own link is returned only to callers who may edit
+    the session -- it works outside the LMS and past every check in it."""
+    view = await SessionService(session).recording(session_id, actor=actor, audit=True)
+    await commit_before_responding(session)  # the audit row outlives the response
+    return SessionRecordingResponse(
+        playback_url=view.playback_url,
+        external_url=view.external_url,
+        name=view.resource.name if view.resource else None,
+        mime_type=view.resource.mime_type if view.resource else None,
+        size=view.resource.size if view.resource else None,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/recording/stream",
+    summary="Play a class recording",
+    response_class=Response,
+)
+async def stream_session_recording(
+    session_id: uuid.UUID,
+    request: Request,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
+) -> Response:
+    """The bytes, served inline and seekable, never as a download and never as
+    a URL that works without this check.
+
+    Re-authorised on every request, so a student removed from the batch loses
+    the recording mid-scrub rather than at the end of a token's life.
+    """
+    _, resource = await SessionService(session).resolve_recording_stream(
+        session_id, actor=actor
+    )
+    return await stream_for_playback(
+        request,
+        resource.path or "",
+        filename=resource.name,
+        mime_type=resource.mime_type,
+    )
+
+
+@router.put(
+    "/sessions/{session_id}/recording",
+    response_model=SessionResponse,
+    summary="Publish a recording to the class",
+)
+async def attach_session_recording(
+    session_id: uuid.UUID,
+    payload: SessionRecordingAttachRequest,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.UPDATE)))],
+) -> SessionResponse:
+    """Links a file already in the library, rather than taking a second upload.
+
+    The uploader needs EDIT on that file: attaching makes it playable by the
+    whole batch, so the bar is "this is yours to publish", not "you happen to
+    have been shown it".
+    """
+    service = SessionService(session)
+    row = await service.attach_recording(session_id, resource_public_id=payload.resource_id, actor=actor)
+    return _response(row, service=service, actor=actor)
+
+
+@router.delete(
+    "/sessions/{session_id}/recording",
+    response_model=SessionResponse,
+    summary="Withdraw the class recording",
+)
+async def detach_session_recording(
+    session_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.UPDATE)))],
+) -> SessionResponse:
+    """The file stays in the library -- taking a recording down is not a reason
+    to delete someone's upload."""
+    service = SessionService(session)
+    row = await service.detach_recording(session_id, actor=actor)
+    return _response(row, service=service, actor=actor)
+
+
 @router.get("/sessions/{session_id}", response_model=SessionResponse, summary="Get one session")
 async def get_session(
     session_id: uuid.UUID,
@@ -213,7 +384,7 @@ async def get_session(
     service = SessionService(session)
     row = await service.get(session_id, actor=actor)
     marked = await service.sessions.count_attendance(row.id)
-    return _response(row, attendance_recorded=marked > 0)
+    return _response(row, service=service, actor=actor, attendance_recorded=marked > 0)
 
 
 @router.patch(
@@ -229,7 +400,8 @@ async def update_session(
 ) -> SessionResponse:
     """Tutors hold `session.update`, so they can add notes and a recording
     link to their own sessions without being able to schedule new ones."""
-    return _response(await SessionService(session).update(session_id, payload, actor=actor))
+    service = SessionService(session)
+    return _response(await service.update(session_id, payload, actor=actor), service=service, actor=actor)
 
 
 @router.delete(

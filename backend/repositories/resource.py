@@ -17,7 +17,7 @@ from backend.models.resource import (
 )
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
-from backend.utils.enums import ResourceType
+from backend.utils.enums import ResourcePermissionLevel, ResourceType
 
 if TYPE_CHECKING:
     from backend.services.scope import Scope
@@ -253,6 +253,27 @@ class ResourcePermissionRepository(BaseRepository[ResourcePermission]):
             else stmt.where(ResourcePermission.folder_id == folder_id)
         )
         return (await self.session.execute(stmt)).scalars().first()
+
+    async def levels_for_resource(
+        self, resource_id: int, pairs: Sequence[tuple[str, int]]
+    ) -> list[ResourcePermissionLevel]:
+        """Every level granted on this resource through any of the caller's scopes.
+
+        Returns all of them rather than a maximum: the caller combines these with
+        the share and the role baseline, and doing the comparison in one place
+        keeps the ladder's semantics out of SQL.
+        """
+        if not pairs:
+            return []
+        clauses = [
+            (ResourcePermission.scope_type == scope_type)
+            & (ResourcePermission.scope_id == scope_id)
+            for scope_type, scope_id in pairs
+        ]
+        stmt = select(ResourcePermission.level).where(
+            ResourcePermission.resource_id == resource_id, or_(*clauses)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def resource_ids_for_scopes(
         self, pairs: Sequence[tuple[str, int]]

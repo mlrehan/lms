@@ -225,7 +225,7 @@ export default function BatchCalendar({
         }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-3 py-2">
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" aria-label="Previous" onClick={() => calendar.current?.getApi().prev()}>
             <ChevronLeft />
@@ -246,7 +246,7 @@ export default function BatchCalendar({
               Loading…
             </span>
           ) : null}
-          <div role="group" aria-label="View" className="inline-flex max-w-full overflow-x-auto rounded-lg border border-border p-0.5">
+          <div role="group" aria-label="View" className="inline-flex max-w-full overflow-x-auto rounded-lg border border-border-subtle p-0.5">
             {VIEWS.map((v) => (
               <Button key={v.type} variant={view === v.type ? "secondary" : "ghost"} size="sm" aria-pressed={view === v.type} onClick={() => changeView(v.type)}>
                 {v.label}
@@ -308,7 +308,7 @@ export default function BatchCalendar({
       </div>
 
       {data?.truncated ? (
-        <p role="alert" className="border-t border-border px-4 py-2 text-xs text-warning">
+        <p role="alert" className="border-t border-border-subtle px-4 py-2 text-xs text-warning">
           This period has more classes than can be drawn at once. Choose a batch to narrow it.
         </p>
       ) : null}

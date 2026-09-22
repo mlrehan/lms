@@ -85,7 +85,7 @@ export function GoogleChangeQueue() {
             {filter === "PENDING" ? "Nothing is waiting for a decision." : "No changes have been proposed from Google yet."}
           </p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border-subtle">
             {data?.items.map((change) => {
               const adding = change.kind === "ENROL_ADD";
               return (

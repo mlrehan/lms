@@ -25,7 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.resource_access import at_least, highest
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.core.logging import get_logger
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
@@ -377,6 +378,7 @@ class ResourceService:
     ) -> Resource:
         """Replace the file, keeping every earlier version (spec §10)."""
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.EDIT)
         data = await self._read_and_validate(upload)
 
         await self._store_new_version(
@@ -469,6 +471,7 @@ class ResourceService:
         self, public_id: uuid.UUID, payload: ResourceUpdateRequest, *, actor: User
     ) -> Resource:
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.EDIT)
         changes = payload.model_dump(exclude_unset=True)
 
         if "folder_id" in changes:
@@ -583,6 +586,7 @@ class ResourceService:
 
     async def soft_delete(self, public_id: uuid.UUID, *, actor: User) -> None:
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
         if resource.is_deleted:
             raise ConflictError("This resource is already deleted.")
 
@@ -604,6 +608,7 @@ class ResourceService:
         resource = await self.resources.get_by_public_id_full(public_id)
         if resource is None or not await self._resource_reachable(resource, actor):
             raise NotFoundError("Resource not found.")
+        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
         if not resource.is_deleted:
             raise ConflictError("This resource is not deleted.")
 
@@ -627,6 +632,7 @@ class ResourceService:
         resource = await self.resources.get_by_public_id_full(public_id)
         if resource is None or not await self._resource_reachable(resource, actor):
             raise NotFoundError("Resource not found.")
+        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
         if not resource.is_deleted:
             # Purge is the second half of a two-step delete on purpose: an
             # irreversible destroy reachable in one call is how files get
@@ -667,6 +673,7 @@ class ResourceService:
         the file.
         """
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.DOWNLOAD)
 
         key = resource.path
         if version is not None:
@@ -688,6 +695,48 @@ class ResourceService:
             details={"version": version},
         )
         return resource, key, self.storage.presigned_url(key)
+
+    #: Types the console will render in place. Everything else is offered as a
+    #: download instead, because previewing it means handing the browser bytes a
+    #: stranger uploaded and asking it to interpret them.
+    #:
+    #: `image/svg+xml` and `text/html` are deliberately **absent**. An SVG is a
+    #: document that can carry script, and both execute in this origin if served
+    #: inline -- which would turn "preview the file a tutor shared" into session
+    #: theft. They are downloadable, just not rendered.
+    PREVIEWABLE_TYPES: frozenset[str] = frozenset({
+        "application/pdf",
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp",
+        "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm",
+        "video/mp4", "video/webm", "video/ogg", "video/quicktime",
+        "text/plain", "text/markdown", "text/csv",
+    })
+
+    @classmethod
+    def is_previewable(cls, mime_type: str | None) -> bool:
+        return (mime_type or "").split(";")[0].strip().lower() in cls.PREVIEWABLE_TYPES
+
+    async def resolve_preview(
+        self, public_id: uuid.UUID, *, actor: User
+    ) -> tuple[Resource, str]:
+        """Authorise a read-in-place and return ``(resource, storage_key)``.
+
+        Requires only VIEW -- that is the whole point of the level existing.
+        Returns the key rather than a presigned URL even on R2: a presigned URL
+        is a bare link to the object, and handing one to a viewer who may not
+        download defeats the distinction this method is enforcing.
+        """
+        resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.VIEW)
+
+        if not resource.path:
+            raise NotFoundError("This resource has no file.")
+        if not self.is_previewable(resource.mime_type):
+            raise ValidationError(
+                "This file type cannot be shown in the browser.",
+                details={"mime_type": resource.mime_type},
+            )
+        return resource, resource.path
 
     async def resolve_share_link(self, token: str) -> tuple[Resource, str]:
         """Unauthenticated access via a share token.
@@ -733,7 +782,9 @@ class ResourceService:
         resource_id = None
         folder_id = None
         if resource_public_id is not None:
-            resource_id = (await self.get(resource_public_id, actor=actor)).id
+            resource = await self.get(resource_public_id, actor=actor)
+            await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
+            resource_id = resource.id
         elif folder_public_id is not None:
             folder_id = (await self.get_folder(folder_public_id, actor=actor)).id
         else:
@@ -807,6 +858,7 @@ class ResourceService:
         self, public_id: uuid.UUID, user_public_ids: Sequence[uuid.UUID], *, actor: User
     ) -> list[SharedResource]:
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
 
         stmt = select(User).where(User.public_id.in_(list(user_public_ids)))
         users = list((await self.session.execute(stmt)).scalars().unique().all())
@@ -867,6 +919,7 @@ class ResourceService:
     ) -> Resource:
         """Issue or revoke a public, unauthenticated download link."""
         resource = await self.get(public_id, actor=actor)
+        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
 
         # 256 bits: the token is the only thing standing between the file and
         # anyone on the internet, so it has to be unguessable rather than
@@ -886,6 +939,82 @@ class ResourceService:
         return resource
 
     # -- visibility ----------------------------------------------------------
+
+    async def effective_level(
+        self, resource: Resource, actor: User
+    ) -> ResourcePermissionLevel | None:
+        """What `actor` may do with `resource`. `None` means no access at all.
+
+        Three routes, and the most capable of them wins:
+
+        1. **Unrestricted** (Super Admin) -- MANAGE, always.
+        2. **Owning the space.** A file inside a course or batch the caller
+           already administers takes its level from their *global* resource
+           permissions: `resource.delete` -> MANAGE, `resource.update` -> EDIT,
+           otherwise VIEW. This is what makes a tutor able to manage their own
+           course's materials without a grant being written for every file.
+        3. **An explicit grant or share** on this one file. Foreign content is
+           governed only by what was actually granted, so holding
+           `resource.delete` globally does not let staff delete a file that was
+           shared with them read-only -- the old behaviour, and the reason the
+           level column existed but changed nothing.
+        """
+        if ScopeResolver.is_unrestricted(actor):
+            return ResourcePermissionLevel.MANAGE
+
+        from backend.api.deps import resolve_permissions
+        from backend.core.permissions import Action, Module, perm
+
+        held = resolve_permissions(actor)
+        if perm(Module.RESOURCE, Action.READ) not in held:
+            return None
+
+        # -- route 2: the caller administers the space the file sits in
+        owned: ResourcePermissionLevel | None = None
+        course_scope = await self.scopes.visible_course_ids(actor)
+        batch_scope = await self.scopes.visible_batch_ids(actor)
+        in_own_space = (
+            resource.course_id is not None and course_scope.allows(resource.course_id)
+        ) or (resource.batch_id is not None and batch_scope.allows(resource.batch_id))
+        if in_own_space:
+            if perm(Module.RESOURCE, Action.DELETE) in held:
+                owned = ResourcePermissionLevel.MANAGE
+            elif perm(Module.RESOURCE, Action.UPDATE) in held:
+                owned = ResourcePermissionLevel.EDIT
+            else:
+                owned = ResourcePermissionLevel.VIEW
+
+        # -- route 3: an explicit grant against one of the caller's scopes
+        pairs: list[tuple[str, int]] = [(ResourceScopeType.USER.value, actor.id)]
+        pairs += [(ResourceScopeType.COURSE.value, cid) for cid in course_scope.ids]
+        pairs += [(ResourceScopeType.BATCH.value, bid) for bid in batch_scope.ids]
+        session_scope = await self.scopes.visible_session_ids(actor)
+        pairs += [(ResourceScopeType.SESSION.value, sid) for sid in session_scope.ids]
+        granted = await self.permissions.levels_for_resource(resource.id, pairs)
+
+        # -- route 3b: a direct person-to-person share
+        share = await self.shares.existing(resource_id=resource.id, user_id=actor.id)
+        share_level = share.level if share is not None else None
+
+        return highest(owned, share_level, *granted)
+
+    async def require_level(
+        self, resource: Resource, actor: User, level: ResourcePermissionLevel
+    ) -> None:
+        """Refuse unless the caller reaches `level` on this file.
+
+        `AuthorizationError`, not `NotFoundError`: by the time this runs the
+        caller has already been shown the file exists -- they listed it, or they
+        opened it. Pretending it vanished when they press Download would be
+        confusing rather than protective. Reachability, which *is* the secret,
+        is still answered with a 404 by `get()`.
+        """
+        actual = await self.effective_level(resource, actor)
+        if not at_least(actual, level):
+            raise AuthorizationError(
+                f"You have {actual.value.lower() if actual else 'no'} access to this file; "
+                f"{level.value.lower()} is required."
+            )
 
     async def _explicitly_granted_resource_ids(self, actor: User) -> set[int]:
         """Resources reachable by grant or share rather than by course/batch."""

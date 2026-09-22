@@ -82,7 +82,13 @@ class SessionBrief(APIModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     classroom: str | None = None
-    meeting_link: str | None = None
+    # No `meeting_link`. This panel is drawn for every role including students,
+    # and a link here would have been the third payload carrying it past the
+    # join window. The dashboard shows whether the door is open; the door is
+    # opened by POST /sessions/{id}/join.
+    join_opens_at: datetime | None = None
+    join_closes_at: datetime | None = None
+    can_join_now: bool = False
 
 
 class AssignmentBrief(APIModel):

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Eye, Plus, Search } from "lucide-react";
+import { BookOpen, Eye, Plus, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api/client";
 import type {
@@ -19,7 +19,7 @@ import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog";
 import { Input, NativeSelect } from "@/components/ui/form";
-import { ErrorState, LoadingState } from "@/components/ui/states";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { LaitSyncControls } from "@/components/domain/lait-sync";
 import { CourseForm } from "@/components/domain/course-form";
@@ -105,16 +105,6 @@ export default function CoursesPage() {
         <span className="tabular-nums">{course.duration_hours ?? "—"}</span>
       ),
     },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      cell: (course) => (
-        <Button variant="secondary" onClick={() => setViewId(course.public_id)} aria-label={`View details of ${course.title}`}>
-          <Eye /> View details
-        </Button>
-      ),
-    },
   ];
 
   // Filtering by a person reveals who teaches and studies what, so it is offered
@@ -145,7 +135,7 @@ export default function CoursesPage() {
       />
 
       <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle p-3">
           <div className="relative min-w-56 flex-1">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -246,10 +236,39 @@ export default function CoursesPage() {
         ) : (
           <>
             <DataTable
+              caption="Courses"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(course) => course.public_id}
-              emptyMessage="No courses match these filters."
+              /*
+               * A column of identical buttons is noise in a list this long, and it
+               * competes with the data for the eye. The row itself opens the course;
+               * the menu carries the same action for the keyboard and for touch,
+               * where there is no hover to reveal anything.
+               */
+              onRowClick={(course) => setViewId(course.public_id)}
+              rowActions={(course) => [
+                {
+                  label: "View details",
+                  icon: <Eye className="size-4" />,
+                  onSelect: () => setViewId(course.public_id),
+                },
+              ]}
+              emptyState={
+                <EmptyState
+                  icon={<BookOpen />}
+                  title={
+                    search || status || level || categoryId
+                      ? "No courses match these filters"
+                      : "No courses yet"
+                  }
+                  description={
+                    search || status || level || categoryId
+                      ? "Try a different search, or clear the filters."
+                      : "Create one, or sync the catalogue from LAIT."
+                  }
+                />
+              }
             />
             <Pagination
               total={data?.total ?? 0}

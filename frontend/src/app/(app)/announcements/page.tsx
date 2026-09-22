@@ -330,7 +330,7 @@ export default function AnnouncementsPage() {
           <EmptyState icon={<Megaphone className="size-5" />} title="Nothing announced" />
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(data?.items ?? []).map((announcement) => (
                 <li key={announcement.public_id} className="space-y-1.5 px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">

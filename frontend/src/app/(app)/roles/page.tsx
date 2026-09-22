@@ -181,7 +181,7 @@ function RoleCard({
                       className={`cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors ${
                         checked
                           ? "border-primary bg-accent text-accent-foreground"
-                          : "border-border text-muted-foreground hover:border-border-strong"
+                          : "border-border-subtle text-muted-foreground hover:border-border-strong"
                       } ${canEdit ? "" : "cursor-not-allowed opacity-70"}`}
                     >
                       <input
@@ -272,7 +272,7 @@ export default function RolesPage() {
       />
 
       {!permissions.has("permission.read") ? (
-        <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
           Editing a role&rsquo;s permissions needs <code className="font-mono text-xs">permission.read</code>{" "}
           as well, so the catalog can be listed. Roles are shown read-only.
         </p>

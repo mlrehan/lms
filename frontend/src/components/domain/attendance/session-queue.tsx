@@ -88,7 +88,7 @@ export function SessionQueue({
 
   return (
     <div>
-      <ul className="divide-y divide-border" aria-label="Sessions">
+      <ul className="divide-y divide-border-subtle" aria-label="Sessions">
         {items.map((item) => {
           const selected = item.session_id === selectedId;
           return (

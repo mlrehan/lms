@@ -12,7 +12,37 @@ from backend.schemas.base import APIModel, RequestModel
 from backend.utils.enums import Platforms
 
 
-class SessionSummary(APIModel):
+_LINK_NOTE = (
+    "Only populated for callers who may edit the session (tutors and "
+    "administrators). Everyone else joins through POST /sessions/{id}/join, "
+    "which is what makes the join window enforceable rather than cosmetic."
+)
+
+
+class JoinFields(APIModel):
+    """What any caller may know about joining, without being given the link."""
+
+    join_opens_at: datetime | None = Field(
+        default=None, description="Thirty minutes before the start."
+    )
+    join_closes_at: datetime | None = Field(default=None, description="The session's end.")
+    can_join_now: bool = Field(
+        default=False,
+        description=(
+            "True when this caller could join at this moment. The API re-checks "
+            "on join; this only decides whether the button is live."
+        ),
+    )
+    has_recording: bool = Field(
+        default=False, description="True when a recording exists to play back."
+    )
+
+
+class SessionSummary(JoinFields):
+    """The timetable row. Carries the join *state* but never the link: this is
+    the list a student actually looks at, so it is the list where a link would
+    have done the most damage."""
+
     public_id: uuid.UUID
     session_start_time: datetime | None = None
     session_end_time: datetime | None = None
@@ -21,14 +51,17 @@ class SessionSummary(APIModel):
     classroom: str | None = None
 
 
-class SessionResponse(SessionSummary):
+class SessionResponse(SessionSummary, JoinFields):
     batch_id: uuid.UUID
     batch_code: str | None = None
     course_title: str | None = None
     tutor_id: uuid.UUID
     tutor_username: str | None = None
-    meeting_link: str | None = None
-    recording_link: str | None = None
+    meeting_link: str | None = Field(default=None, description=_LINK_NOTE)
+    recording_link: str | None = Field(default=None, description=_LINK_NOTE)
+    can_manage: bool = Field(
+        default=False, description="True when this caller may edit the session."
+    )
     tutor_notes: str | None = None
     student_notes: str | None = None
     attendance_recorded: bool = Field(
@@ -88,7 +121,8 @@ class CalendarSession(APIModel):
     session_end_time: datetime = Field(description="Start plus duration (an hour if neither is stored) when no end was saved.")
     platform: Platforms
     classroom: str | None = None
-    meeting_link: str | None = None
+    meeting_link: str | None = Field(default=None, description=_LINK_NOTE)
+    can_join_now: bool = False
     origin: str | None = None
 
 
@@ -131,7 +165,7 @@ class OverviewBatch(APIModel):
     is_active: bool
 
 
-class SessionOverview(APIModel):
+class SessionOverview(JoinFields):
     public_id: uuid.UUID
     number: int
     total: int
@@ -140,8 +174,9 @@ class SessionOverview(APIModel):
     duration_minutes: int | None = None
     platform: Platforms
     classroom: str | None = None
-    meeting_link: str | None = None
-    recording_link: str | None = None
+    meeting_link: str | None = Field(default=None, description=_LINK_NOTE)
+    recording_link: str | None = Field(default=None, description=_LINK_NOTE)
+    can_manage: bool = False
     student_notes: str | None = None
     tutor_notes: str | None = None
     origin: str | None = None
@@ -153,3 +188,57 @@ class SessionOverview(APIModel):
     roster_is_partial: bool = Field(description="True when the caller sees only their own people, not the whole batch.")
     attendance_counts: dict[str, int]
     can_see_contacts: bool
+
+
+class SessionJoinResponse(APIModel):
+    """One admission to one class.
+
+    Returned by a POST rather than a GET on purpose: handing out a meeting link
+    is an act that is recorded, not a property of the session that a cache or a
+    prefetch may repeat on the caller's behalf.
+    """
+
+    meeting_link: str
+    platform: Platforms
+    classroom: str | None = None
+    session_start_time: datetime
+    session_end_time: datetime | None = None
+    join_opens_at: datetime
+    join_closes_at: datetime
+    joined_outside_window: bool = Field(
+        description=(
+            "True when the window was shut and the caller's session.override "
+            "opened it. Shown back to them, and audited."
+        )
+    )
+
+
+class SessionRecordingResponse(APIModel):
+    """Where to play a recording, never where to download one."""
+
+    playback_url: str | None = Field(
+        default=None,
+        description=(
+            "Relative to the API root (the same base every other call uses), "
+            "so a browser that reaches this API through a proxy composes it the "
+            "same way it composes everything else. Streams the recording after "
+            "re-checking permission on every request, including every seek. "
+            "Present only for recordings stored in the LMS."
+        ),
+    )
+    external_url: str | None = Field(
+        default=None,
+        description=(
+            "The provider's own link. Only ever given to callers who may edit "
+            "the session -- it is a link out of the LMS and past its checks."
+        ),
+    )
+    name: str | None = None
+    mime_type: str | None = None
+    size: int | None = None
+
+
+class SessionRecordingAttachRequest(RequestModel):
+    resource_id: uuid.UUID = Field(
+        description="A file already in the library. The caller needs EDIT on it."
+    )

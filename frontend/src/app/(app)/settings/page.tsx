@@ -82,7 +82,7 @@ export default function SettingsPage() {
         }
       />
 
-      <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground dark:text-warning">
+      <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
         <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
         <span>
           These are free-form strings. The API exposes no schema for them, so this screen cannot
@@ -117,7 +117,7 @@ export default function SettingsPage() {
           </CardBody>
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(data?.items ?? []).map((setting) => {
                 const edited = edits[setting.key];
                 const value = edited ?? setting.value ?? "";

@@ -1,6 +1,32 @@
 @import "tailwindcss";
 
 /*
+ * ============================================================================
+ * LMS Console — design foundation
+ * ============================================================================
+ *
+ * Three rules this file exists to enforce, because every component downstream
+ * inherits them:
+ *
+ * 1. SURFACE ARCHITECTURE, NOT SHADOWS. Depth comes from stacked neutral
+ *    planes separated by hairline borders, not from soft grey blur. A shadow
+ *    here is a hint that something floats *above* the plane it sits on
+ *    (menus, dialogs, toasts) and is tinted with the neutral's own hue --
+ *    a pure-black shadow over a blue-grey surface is what reads as muddy.
+ *
+ * 2. THREE TEXT WEIGHTS, THREE TEXT TONES. Primary / secondary / metadata,
+ *    and 400 / 500 / 600 with 750 reserved for hero numerals. Uniform
+ *    weight is the single strongest tell of an unconsidered interface.
+ *
+ * 3. TOKENS, NEVER RAW VALUES. Components address `--color-surface`, never
+ *    `slate-900`. Re-pointing a token here restyles the whole console; a
+ *    hard-coded hex in a component is a thing that drifts.
+ *
+ * The neutral ramp is Tailwind's slate: a blue-cast grey. The cast is
+ * deliberate -- a truly neutral grey next to a blue accent reads as dirty.
+ */
+
+/*
  * next-themes writes `class="dark"` on <html>, so the dark variant keys off
  * an ancestor class rather than the media query. Both are defined: the class
  * is what a deliberate choice sets, and `defaultTheme="system"` resolves to
@@ -9,15 +35,27 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
+  /* -- surfaces ---------------------------------------------------------- */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
+  --color-surface-raised: var(--surface-raised);
+  --color-overlay: var(--overlay);
+
+  /* -- borders ----------------------------------------------------------- */
   --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
   --color-border-strong: var(--border-strong);
+
+  /* -- text -------------------------------------------------------------- */
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+
+  /* -- accent and status ------------------------------------------------- */
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
@@ -30,58 +68,160 @@
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-ring: var(--ring);
-  --radius-card: 0.75rem;
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /*
+   * Radii are deliberately tighter than Tailwind's defaults. A 12px radius on
+   * a 32px-tall control is the pill-shaped "friendly app" look; enterprise
+   * density needs corners that read as machined, and the eye reads 6px on a
+   * control and 10px on its container as a considered pair.
+   */
+  --radius-xs: 0.1875rem; /* 3px  — chips, dots, tags        */
+  --radius-sm: 0.3125rem; /* 5px  — inputs, small buttons    */
+  --radius-md: 0.375rem;  /* 6px  — buttons, menu items      */
+  --radius-lg: 0.5rem;    /* 8px  — panels, popovers         */
+  --radius-xl: 0.625rem;  /* 10px — cards                    */
+  --radius-2xl: 0.875rem; /* 14px — dialogs, sheets          */
+  --radius-card: 0.625rem; /* retained: every existing `rounded-card` */
+
+  /*
+   * Elevation. Tinted with the neutral's hue and kept tight -- large blurry
+   * shadows are what make an interface look like a mockup. `overlay` is the
+   * only genuinely large one, because a dialog really does float.
+   */
+  --shadow-xs: var(--elevation-xs);
+  --shadow-sm: var(--elevation-sm);
+  --shadow-md: var(--elevation-md);
+  --shadow-lg: var(--elevation-lg);
+  --shadow-overlay: var(--elevation-overlay);
+
+  /* -- type -------------------------------------------------------------- */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  /* 11px, for timestamps and table metadata. Below this, text stops being
+     readable and starts being texture. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  /*
+   * Negative tracking on large text only. Display type set at default
+   * tracking looks loose and amateur at 24px+; body text set tight becomes
+   * harder to read. The scale encodes that, so no call site has to remember.
+   */
+  --tracking-tighter: -0.032em;
+  --tracking-tight: -0.018em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.055em; /* uppercase eyebrow labels */
+
+  /* -- motion ------------------------------------------------------------ */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 :root {
-  --background: oklch(0.985 0.002 250);
-  --foreground: oklch(0.21 0.02 260);
-  --surface: oklch(1 0 0);
-  --surface-muted: oklch(0.972 0.004 255);
-  --border: oklch(0.915 0.006 255);
-  --border-strong: oklch(0.85 0.01 255);
-  --muted: oklch(0.955 0.005 255);
-  --muted-foreground: oklch(0.52 0.018 258);
-  --primary: oklch(0.52 0.17 262);
-  --primary-foreground: oklch(0.99 0.002 250);
-  --accent: oklch(0.955 0.02 262);
-  --accent-foreground: oklch(0.34 0.11 262);
-  --danger: oklch(0.58 0.21 25);
-  --danger-foreground: oklch(0.99 0.005 25);
-  --warning: oklch(0.72 0.16 72);
-  --warning-foreground: oklch(0.26 0.06 72);
-  --success: oklch(0.6 0.13 155);
-  --success-foreground: oklch(0.99 0.01 155);
-  --info: oklch(0.62 0.12 235);
-  --info-foreground: oklch(0.99 0.005 235);
-  --ring: oklch(0.62 0.15 262);
+  /* Canvas is slate-50, not white: the white cards then read as raised
+     planes rather than as holes cut in the page. */
+  --background: #f8fafc;
+  --foreground: #0f172a; /* slate-900 — never pure black */
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9; /* slate-100 */
+  --surface-raised: #ffffff;
+  --overlay: #ffffff;
+
+  --border: #e2e8f0;        /* slate-200 */
+  --border-subtle: #e2e8f099; /* slate-200 @ 60% — hairline dividers */
+  --border-strong: #cbd5e1; /* slate-300 — inputs, anything interactive */
+
+  --muted: #f1f5f9;
+  --muted-foreground: #475569; /* slate-600 — labels, secondary copy */
+  --subtle-foreground: #94a3b8; /* slate-400 — timestamps, metadata */
+
+  /* A cooler, deeper indigo than the stock indigo-600 everything ships
+     with. Dark enough for white text at AAA, with headroom left above it
+     for the hover state. */
+  --primary: #4b41d1;
+  --primary-hover: #3f36b8;
+  --primary-foreground: #ffffff;
+  --accent: #eef2ff;
+  --accent-foreground: #3730a3;
+
+  --danger: #dc2626;
+  --danger-foreground: #ffffff;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --success: #047857;
+  --success-foreground: #ffffff;
+  --info: #0369a1;
+  --info-foreground: #ffffff;
+
+  --ring: #6366f1;
+
+  --elevation-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --elevation-sm: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.05);
+  --elevation-md: 0 2px 4px -1px rgb(15 23 42 / 0.05), 0 4px 10px -2px rgb(15 23 42 / 0.07);
+  --elevation-lg: 0 4px 8px -2px rgb(15 23 42 / 0.06), 0 12px 28px -6px rgb(15 23 42 / 0.1);
+  --elevation-overlay: 0 2px 6px -1px rgb(15 23 42 / 0.06), 0 18px 44px -10px rgb(15 23 42 / 0.18);
+
+  /* Sticky chrome sits on translucency, so content scrolling beneath it
+     stays legible as motion rather than disappearing under a solid bar. */
+  --glass: rgb(248 250 252 / 0.72);
+  --glass-border: rgb(226 232 240 / 0.7);
+
   color-scheme: light;
 }
 
 .dark {
-  --background: oklch(0.185 0.012 262);
-  --foreground: oklch(0.95 0.005 250);
-  --surface: oklch(0.225 0.014 262);
-  --surface-muted: oklch(0.255 0.015 262);
-  --border: oklch(0.31 0.016 262);
-  --border-strong: oklch(0.39 0.02 262);
-  --muted: oklch(0.27 0.015 262);
-  --muted-foreground: oklch(0.7 0.017 258);
-  --primary: oklch(0.68 0.15 262);
-  --primary-foreground: oklch(0.16 0.02 262);
-  --accent: oklch(0.31 0.045 262);
-  --accent-foreground: oklch(0.88 0.05 262);
-  --danger: oklch(0.65 0.19 25);
-  --danger-foreground: oklch(0.15 0.03 25);
-  --warning: oklch(0.78 0.14 72);
-  --warning-foreground: oklch(0.2 0.05 72);
-  --success: oklch(0.7 0.13 155);
-  --success-foreground: oklch(0.16 0.03 155);
-  --info: oklch(0.7 0.11 235);
-  --info-foreground: oklch(0.16 0.02 235);
-  --ring: oklch(0.65 0.14 262);
+  /* slate-950 canvas with slate-900 surfaces: two planes that are clearly
+     distinct without either being black, which crushes on OLED and loses
+     every border drawn on it. */
+  --background: #020617;
+  --foreground: #f1f5f9; /* slate-100 — never pure white */
+  --surface: #0f172a;    /* slate-900 */
+  --surface-muted: #1e293b; /* slate-800 */
+  --surface-raised: #131f38;
+  --overlay: #16223d;
+
+  --border: #1e293b;          /* slate-800 */
+  --border-subtle: #1e293b99; /* slate-800 @ 60% */
+  --border-strong: #334155;   /* slate-700 */
+
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8; /* slate-400 */
+  --subtle-foreground: #64748b; /* slate-500 */
+
+  /* Lifted and desaturated for dark: the light-mode indigo on a near-black
+     canvas vibrates and fails contrast for text sitting on it. */
+  --primary: #8b85f5;
+  --primary-hover: #a5a0f8;
+  --primary-foreground: #0b1020;
+  --accent: #1e1b4b;
+  --accent-foreground: #c7d2fe;
+
+  --danger: #f87171;
+  --danger-foreground: #1b0708;
+  --warning: #fbbf24;
+  --warning-foreground: #1c1203;
+  --success: #34d399;
+  --success-foreground: #04150f;
+  --info: #38bdf8;
+  --info-foreground: #04131d;
+
+  --ring: #818cf8;
+
+  /* On a dark canvas a shadow reads as almost nothing, so elevation is
+     carried by the surface step and the border. These stay only to keep
+     overlays from merging into what is behind them. */
+  --elevation-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --elevation-sm: 0 1px 2px 0 rgb(0 0 0 / 0.35), 0 1px 3px 0 rgb(0 0 0 / 0.3);
+  --elevation-md: 0 2px 6px -1px rgb(0 0 0 / 0.4), 0 6px 14px -3px rgb(0 0 0 / 0.35);
+  --elevation-lg: 0 6px 16px -4px rgb(0 0 0 / 0.45), 0 16px 36px -8px rgb(0 0 0 / 0.5);
+  --elevation-overlay: 0 4px 10px -2px rgb(0 0 0 / 0.5), 0 24px 56px -12px rgb(0 0 0 / 0.65);
+
+  --glass: rgb(2 6 23 / 0.72);
+  --glass-border: rgb(30 41 59 / 0.7);
+
   color-scheme: dark;
 }
 
@@ -97,21 +237,54 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
-    font-family: var(--font-sans);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /*
+     * The concrete stack, not `var(--font-sans)`.
+     *
+     * `@theme inline` substitutes a token's value into the utilities that use
+     * it and deliberately does *not* emit the custom property, so
+     * `var(--font-sans)` here resolves to nothing, the declaration is invalid
+     * at computed-value time, and the browser silently falls back to
+     * Preflight's system stack. That is a failure with no error anywhere --
+     * the page simply renders in the wrong typeface.
+     */
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    /* Inter's disambiguation set: single-storey a stays off, but the
+       straight-sided l and the slashed zero matter in a console full of
+       identifiers and reference codes. */
+    font-feature-settings: "cv05", "cv08", "ss03";
+    letter-spacing: var(--tracking-normal);
+  }
+
+  /*
+   * Headings are the console's typographic voice: tight tracking, weight
+   * stepped down as size steps up. A 24px heading at 700 is shouting; at
+   * 600 with -0.018em it reads as engineered.
+   */
+  h1, h2, h3, h4 {
+    font-family: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: var(--tracking-tight);
+    font-weight: 600;
+  }
+
+  /* Numerals must not reflow as values change -- a column of figures that
+     shifts width on every poll is what makes a dashboard feel unstable. */
+  table, .tabular {
+    font-variant-numeric: tabular-nums;
   }
 
   /*
    * A visible focus ring is not decoration: keyboard operation of an admin
    * console is how a screen reader user, and anyone without a mouse, works.
+   * Two-tone so it stays visible on both light and dark surfaces.
    */
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+    border-radius: var(--radius-sm);
   }
 
   ::selection {
-    background: color-mix(in oklab, var(--primary) 25%, transparent);
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 }
 
@@ -119,6 +292,33 @@
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
+  }
+
+  /* Sticky chrome: translucent plane + hairline, so the content beneath
+     registers as scrolling past rather than vanishing. */
+  .glass {
+    background-color: var(--glass);
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    border-color: var(--glass-border);
+  }
+
+  /* The eyebrow label above a figure or a section title. */
+  .eyebrow {
+    font-size: var(--text-2xs);
+    line-height: 1rem;
+    font-weight: 600;
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--subtle-foreground);
+  }
+
+  /* Hero numerals only. 750 is the one place the console goes above 600. */
+  .numeral {
+    font-family: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 750;
+    letter-spacing: var(--tracking-tighter);
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -130,22 +330,33 @@
 @keyframes lms-fade-in {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.98) translateY(-2px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: scale(1) translateY(0);
   }
 }
 
 @keyframes lms-fade-out {
   from {
     opacity: 1;
-    transform: scale(1);
+    transform: scale(1) translateY(0);
   }
   to {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.98) translateY(-2px);
+  }
+}
+
+/* Skeletons sweep rather than pulse: a pulse reads as a warning indicator,
+   a sweep reads as work in progress. */
+@keyframes lms-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
   }
 }
 
@@ -165,7 +376,7 @@
   --fc-page-bg-color: var(--surface);
   --fc-neutral-bg-color: var(--surface-muted);
   --fc-neutral-text-color: var(--muted-foreground);
-  --fc-today-bg-color: color-mix(in oklch, var(--primary) 8%, transparent);
+  --fc-today-bg-color: color-mix(in oklch, var(--primary) 7%, transparent);
   --fc-now-indicator-color: var(--primary);
   --fc-event-border-color: transparent;
   --fc-list-event-hover-bg-color: var(--surface-muted);
@@ -174,25 +385,26 @@
   font-size: 0.8125rem;
   color: var(--foreground);
 }
-.fc .fc-event { cursor: pointer; border-radius: 4px; }
+.fc .fc-event { cursor: pointer; border-radius: var(--radius-xs); }
 .fc .fc-event-main { padding: 1px 3px; }
-.fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number, .fc .fc-list-day-text, .fc .fc-list-day-side-text, .fc .fc-multimonth-title { color: var(--foreground); text-decoration: none; }
+.fc .fc-col-header-cell-cushion { font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; font-size: 0.6875rem; color: var(--subtle-foreground); }
+.fc .fc-daygrid-day-number, .fc .fc-list-day-text, .fc .fc-list-day-side-text, .fc .fc-multimonth-title { color: var(--foreground); text-decoration: none; }
 .fc .fc-more-link { color: var(--primary); font-weight: 500; }
-.fc .fc-timegrid-slot-label-cushion, .fc .fc-timegrid-axis-cushion { color: var(--muted-foreground); }
+.fc .fc-timegrid-slot-label-cushion, .fc .fc-timegrid-axis-cushion { color: var(--subtle-foreground); }
 .fc .fc-list-event-title a { color: inherit; text-decoration: none; }
-.fc .fc-highlight { background: color-mix(in oklch, var(--primary) 18%, transparent); }
-.fc-theme-standard .fc-scrollgrid { border-radius: 0.5rem; overflow: hidden; }
+.fc .fc-highlight { background: color-mix(in oklch, var(--primary) 16%, transparent); }
+.fc-theme-standard .fc-scrollgrid { border-radius: var(--radius-lg); overflow: hidden; }
 
 /* Message bodies (the editor and the reader share this). Only the formatting the server keeps is styled. */
-.mail-body { line-height: 1.55; word-break: break-word; }
+.mail-body { line-height: 1.6; word-break: break-word; }
 .mail-body p { margin: 0 0 0.6em; }
 .mail-body p:last-child { margin-bottom: 0; }
 .mail-body ul { list-style: disc; padding-left: 1.4em; margin: 0 0 0.6em; }
 .mail-body ol { list-style: decimal; padding-left: 1.4em; margin: 0 0 0.6em; }
 .mail-body li > p { margin: 0; }
-.mail-body blockquote { margin: 0.4em 0; padding-left: 0.9em; border-left: 3px solid var(--border-strong); color: var(--muted-foreground); }
-.mail-body a { color: var(--primary); text-decoration: underline; }
-.mail-body h1, .mail-body h2, .mail-body h3 { font-weight: 600; margin: 0.6em 0 0.3em; }
-.mail-body pre { background: var(--surface-muted); padding: 0.6em 0.8em; border-radius: 6px; overflow-x: auto; }
-.mail-body code { font-family: var(--font-mono, monospace); font-size: 0.9em; }
+.mail-body blockquote { margin: 0.4em 0; padding-left: 0.9em; border-left: 2px solid var(--border-strong); color: var(--muted-foreground); }
+.mail-body a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.mail-body h1, .mail-body h2, .mail-body h3 { font-weight: 600; letter-spacing: var(--tracking-tight); margin: 0.6em 0 0.3em; }
+.mail-body pre { background: var(--surface-muted); padding: 0.6em 0.8em; border-radius: var(--radius-md); overflow-x: auto; }
+.mail-body code { font-family: var(--font-jetbrains-mono), ui-monospace, monospace; font-size: 0.9em; }
 .ProseMirror:focus { outline: none; }

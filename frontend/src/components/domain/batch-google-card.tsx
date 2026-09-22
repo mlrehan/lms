@@ -38,7 +38,7 @@ export function BatchGoogleCard({ batchId }: { batchId: string }) {
   const b = batch.data;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border-subtle bg-surface px-4 py-3 text-sm">
       <span className="inline-flex items-center gap-2 font-medium">
         <CalendarDays className="size-4 text-primary" aria-hidden /> Google Calendar
       </span>

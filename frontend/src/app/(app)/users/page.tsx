@@ -106,7 +106,7 @@ export default function UsersPage() {
       />
 
       <Card>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle p-3">
           <div className="relative min-w-56 flex-1">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"

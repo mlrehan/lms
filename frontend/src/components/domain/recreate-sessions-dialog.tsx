@@ -222,7 +222,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
   return (
     <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
       <DialogContent size="xl" className="flex max-h-[calc(100dvh-1rem)] flex-col gap-0 overflow-hidden p-0">
-        <div className="border-b border-border px-5 py-4">
+        <div className="border-b border-border-subtle px-5 py-4">
           <DialogHeader title={`Re-create sessions · ${batchCode}`} description="Review the proposed sessions, adjust anything, then create them. Nothing is saved until you do." />
         </div>
 
@@ -266,7 +266,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
             </div>
           ) : null}
 
-          <section aria-label="Schedule settings" className="space-y-3 rounded-lg border border-border p-3">
+          <section aria-label="Schedule settings" className="space-y-3 rounded-lg border border-border-subtle bg-surface-muted/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">Schedule</h3>
               {plan?.settings.source ? <Badge tone="neutral">From {plan.settings.source}</Badge> : null}
@@ -297,7 +297,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
                           type="button"
                           aria-pressed={on}
                           onClick={() => setSettings({ ...settings, weekdays: on ? settings.weekdays.filter((d) => d !== index) : [...settings.weekdays, index].sort() })}
-                          className={cn("h-8 min-w-11 rounded-md border px-2 text-xs font-medium transition-colors", on ? "border-primary bg-primary text-primary-foreground" : "border-border-strong hover:bg-muted")}
+                          className={cn("h-8 min-w-11 rounded-md border px-2 text-xs font-medium transition-all duration-200 ease-out", on ? "border-primary bg-primary text-primary-foreground shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.14)]" : "border-border-strong text-muted-foreground hover:border-slate-400/70 hover:bg-muted hover:text-foreground")}
                         >
                           {label}
                         </button>
@@ -354,23 +354,23 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
                 <InlineSpinner />
               </div>
             ) : rows.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No sessions proposed. Adjust the schedule above and regenerate, or add one by hand.</p>
+              <p className="rounded-lg border border-dashed border-border-strong p-8 text-center text-xs text-muted-foreground">No sessions proposed. Adjust the schedule above and regenerate, or add one by hand.</p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-border">
+              <div className="overflow-x-auto rounded-lg border border-border-subtle">
                 <table className="w-full min-w-[46rem] border-collapse text-[13px]">
                   <thead>
-                    <tr className="bg-surface-muted text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                      <th className="px-2 py-1.5 font-semibold">#</th>
-                      <th className="px-2 py-1.5 font-semibold">Starts</th>
-                      <th className="px-2 py-1.5 font-semibold">Ends</th>
-                      <th className="px-2 py-1.5 font-semibold">Tutor</th>
-                      <th className="px-2 py-1.5 font-semibold">Method</th>
+                    <tr className="bg-surface-muted text-left">
+                      <th className="eyebrow px-2 py-1.5 text-left">#</th>
+                      <th className="eyebrow px-2 py-1.5 text-left">Starts</th>
+                      <th className="eyebrow px-2 py-1.5 text-left">Ends</th>
+                      <th className="eyebrow px-2 py-1.5 text-left">Tutor</th>
+                      <th className="eyebrow px-2 py-1.5 text-left">Method</th>
                       <th className="px-2 py-1.5" />
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((row, index) => (
-                      <tr key={row.key} className="border-t border-border/70">
+                      <tr key={row.key} className="border-t border-border-subtle/70">
                         <td className="px-2 py-1 tabular-nums text-muted-foreground">{index + 1}</td>
                         <td className="px-2 py-1">
                           <Input aria-label={`Session ${index + 1} start`} type="datetime-local" className="h-8 text-[13px]" value={toLocalInputValue(row.startUtc, timeZone)} onChange={(e) => setStart(row, e.target.value)} />
@@ -410,7 +410,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
           </section>
         </div>
 
-        <div className="border-t border-border px-5 py-3">
+        <div className="border-t border-border-subtle px-5 py-3">
           <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
             Cancel

@@ -73,7 +73,7 @@ function AttendanceWorkspace() {
         <TabsPanel value="take">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <Card className={cn("flex min-h-[28rem] flex-col overflow-hidden lg:max-h-[calc(100dvh-14rem)]", sessionId && "hidden lg:flex")}>
-              <div className="space-y-2 border-b border-border p-3">
+              <div className="space-y-2 border-b border-border-subtle p-3">
                 <div className="grid grid-cols-2 gap-2">
                   <NativeSelect className="h-8 text-[13px]" aria-label="Batch" value={batchId} onChange={(event) => setBatchId(event.target.value)}>
                     <option value="">All batches</option>
@@ -98,7 +98,7 @@ function AttendanceWorkspace() {
                       type="button"
                       aria-pressed={state === s.value}
                       onClick={() => setState(s.value)}
-                      className={cn("flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors", state === s.value ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted")}
+                      className={cn("flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors", state === s.value ? "border-primary bg-primary/10 text-primary" : "border-border-subtle hover:bg-muted")}
                     >
                       {s.label}
                     </button>
@@ -114,7 +114,7 @@ function AttendanceWorkspace() {
               {sessionId ? (
                 <AttendanceSheetPanel key={sessionId} sessionId={sessionId} onBack={() => setSessionId(null)} />
               ) : (
-                <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-border-subtle p-8 text-center text-sm text-muted-foreground">
                   Choose a session on the left to take its attendance.
                 </div>
               )}

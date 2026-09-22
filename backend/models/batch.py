@@ -106,10 +106,21 @@ class BatchSession(Base, PublicIdMixin):
 
     tutor_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     student_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The provider's own URL (Zoom, Meet). Reachable by anyone holding the
+    # string, so it is never returned to a caller who cannot edit the session.
     recording_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # A recording uploaded *into* the LMS. Playback streams through the API,
+    # permission checked per request, with no link that works outside it.
+    recording_resource_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("resources.id", ondelete="SET NULL"), nullable=True
+    )
 
     batch: Mapped[Batch] = relationship(Batch, back_populates="sessions", lazy="selectin")
     tutor: Mapped["User"] = relationship("User", back_populates="sessions", lazy="selectin")
+    # Deliberately no `recording` relationship. `Resource` eager-loads six
+    # relationships of its own, so a `selectin` here would pull all of them for
+    # every session on a 3000-row calendar window to answer a question almost no
+    # caller asks. The one place that needs the row loads it by id.
 
     attendances: Mapped[list["Attendance"]] = relationship(
         "Attendance",

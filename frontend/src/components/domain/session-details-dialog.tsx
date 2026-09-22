@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, ExternalLink, Link2, MapPin, Users } from "lucide-react";
+import { CalendarDays, ExternalLink, Film, Link2, MapPin, Users } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
 import type { CalendarSession, OverviewPerson, OverviewRosterEntry, SessionOverview } from "@/lib/api/types";
 import { useApiMutation } from "@/lib/api/hooks";
@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/
 import { ErrorState } from "@/components/ui/states";
 import { formatTime } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
+import { ClassRecording } from "@/components/domain/sessions/class-recording";
 
 const ATTENDANCE_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
   PRESENT: "success",
@@ -142,7 +144,7 @@ export function SessionDetailsDialog({
               />
               <div className="space-y-5">
                 <Section icon={<CalendarDays className="size-3.5" aria-hidden />} title="Session">
-                  <dl className="divide-y divide-border rounded-lg border border-border px-3">
+                  <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-3">
                     <Row label="Course">
                       {data ? (
                         <>
@@ -172,34 +174,40 @@ export function SessionDetailsDialog({
                 </Section>
 
                 <Section icon={<MapPin className="size-3.5" aria-hidden />} title="Where">
-                  <dl className="divide-y divide-border rounded-lg border border-border px-3">
+                  <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-3">
                     <Row label="Platform">
                       {humanise(session.platform)}
                       {session.classroom ? ` · ${session.classroom}` : ""}
                     </Row>
-                    {session.meeting_link ? (
-                      <Row label="Join">
-                        <a href={session.meeting_link} target="_blank" rel="noopener noreferrer" className="break-all text-primary underline">
-                          {session.meeting_link}
-                        </a>
-                      </Row>
-                    ) : null}
-                    {data?.recording_link ? (
-                      <Row label="Recording">
-                        <a href={data.recording_link} target="_blank" rel="noopener noreferrer" className="break-all text-primary underline">
-                          {data.recording_link}
-                        </a>
-                      </Row>
-                    ) : null}
+                    {/* The raw link is only in `data` for staff; everyone else
+                        gets the button, which asks the API for it inside the
+                        join window and nowhere else. */}
+                    <Row label="Join">
+                      <JoinClassButton
+                        sessionId={session.public_id}
+                        canJoinNow={data?.can_join_now ?? false}
+                        opensAt={data?.join_opens_at}
+                        closesAt={data?.join_closes_at}
+                        size="xs"
+                      />
+                    </Row>
                     <Row label="Calendar">
                       {data?.in_google ? <Badge tone="success">In Google Calendar</Badge> : <Badge tone="neutral">Not in Google Calendar yet</Badge>}
                     </Row>
                   </dl>
                 </Section>
 
+                {/* Full width, not a Row: a 6.5rem label column beside a video
+                    leaves the player squeezed into a third of the dialog. */}
+                {data?.has_recording ? (
+                  <Section icon={<Film className="size-3.5" aria-hidden />} title="Recording">
+                    <ClassRecording sessionId={session.public_id} />
+                  </Section>
+                ) : null}
+
                 {data?.student_notes || data?.tutor_notes ? (
                   <Section icon={<Link2 className="size-3.5" aria-hidden />} title="Notes">
-                    <dl className="divide-y divide-border rounded-lg border border-border px-3">
+                    <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-3">
                       {data.student_notes ? <Row label="For students">{data.student_notes}</Row> : null}
                       {data.tutor_notes ? <Row label="Tutor notes">{data.tutor_notes}</Row> : null}
                     </dl>
@@ -225,7 +233,7 @@ export function SessionDetailsDialog({
                       {data.roster.length === 0 ? (
                         <p className="text-sm text-muted-foreground">Nobody is enrolled.</p>
                       ) : (
-                        <ul className="divide-y divide-border rounded-lg border border-border px-3">
+                        <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-3">
                           {data.roster.map((entry) => (
                             <RosterRow key={entry.student.public_id} entry={entry} />
                           ))}

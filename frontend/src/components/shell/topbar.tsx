@@ -35,11 +35,29 @@ import { TimeZoneMenu } from "@/components/shell/timezone-menu";
 import { UserAvatar } from "@/components/domain/user-avatar";
 import { cn } from "@/lib/utils";
 
+/**
+ * The count on a topbar icon.
+ *
+ * Positioned against the 36px button, not the 16px icon it sits over. Anchored to
+ * the icon it was the same size as the thing it was annotating and covered about
+ * three quarters of it -- a red disc where the mail glyph should be. Against the
+ * button there is room for it to clip the icon's top-right corner and no more,
+ * which is what a badge is supposed to do.
+ *
+ * Ringed in the canvas colour so it reads as sitting on top of the icon rather
+ * than being punched through it.
+ */
 function UnreadDot({ count }: { count: number }): ReactNode {
   if (count <= 0) return null;
   return (
-    <span className="absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-4 text-danger-foreground">
-      {count > 99 ? "99+" : count}
+    <span
+      className={cn(
+        "pointer-events-none absolute right-0.5 top-0.5 flex h-[15px] min-w-[15px] items-center justify-center",
+        "rounded-full bg-danger px-[3px] text-[9px] font-semibold leading-none text-danger-foreground",
+        "ring-2 ring-background",
+      )}
+    >
+      {count > 9 ? "9+" : count}
     </span>
   );
 }
@@ -111,7 +129,11 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
   );
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-surface/95 px-3 backdrop-blur sm:px-4">
+    // `glass` rather than a near-opaque fill: at 95% the bar is effectively
+    // solid and the blur is decorative. At 72% with saturation lifted, content
+    // scrolling underneath stays legible as movement, which is the whole point
+    // of a translucent bar.
+    <header className="glass sticky top-0 z-30 flex h-14 items-center gap-2 border-b px-3 sm:px-4">
       <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={onOpenNav}>
         <Menu />
       </Button>
@@ -124,26 +146,22 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
         {permissions.has("message.read") ? (
           <Link
             href="/messages"
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "relative")}
             aria-label={`Messages${unreadMessages ? `, ${unreadMessages} unread` : ""}`}
           >
-            <span className="relative inline-flex">
-              <Mail />
-              <UnreadDot count={unreadMessages} />
-            </span>
+            <Mail />
+            <UnreadDot count={unreadMessages} />
           </Link>
         ) : null}
 
         {permissions.has("notification.read") ? (
           <Link
             href="/notifications"
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "relative")}
             aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ""}`}
           >
-            <span className="relative inline-flex">
-              <Bell />
-              <UnreadDot count={unreadNotifications} />
-            </span>
+            <Bell />
+            <UnreadDot count={unreadNotifications} />
           </Link>
         ) : null}
 
@@ -155,11 +173,11 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
             render={
               <button
                 type="button"
-                className="ml-1 flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-muted"
+                className="ml-1 flex items-center gap-2 rounded-md px-1.5 py-1 transition-all duration-200 ease-out hover:bg-muted data-[popup-open]:bg-muted"
                 aria-label="Account menu"
               >
                 <UserAvatar name={user?.full_name ?? user?.username} src={user?.profile_picture} size="sm" />
-                <span className="hidden max-w-32 truncate text-sm font-medium sm:inline">
+                <span className="hidden max-w-32 truncate text-[13px] font-medium sm:inline">
                   {user?.full_name || user?.username}
                 </span>
               </button>
@@ -167,9 +185,9 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
           />
           <DropdownMenuContent className="min-w-56">
             <div className="px-2.5 py-2">
-              <p className="truncate text-sm font-medium">{user?.full_name || user?.username}</p>
+              <p className="truncate text-[13px] font-semibold tracking-tight">{user?.full_name || user?.username}</p>
               {user?.email ? (
-                <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+                <p className="truncate text-2xs text-subtle-foreground">{user.email}</p>
               ) : null}
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {roles.map((role) => (

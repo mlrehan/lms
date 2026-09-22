@@ -97,6 +97,18 @@ export function segment(value: string | number): string {
 
 const BASE = "/api/backend";
 
+/**
+ * Turn an API-relative path from a response body into one the browser can use.
+ *
+ * Needed wherever the *browser itself* fetches -- a `<video src>`, an `<img>` --
+ * rather than `api.get`, which prefixes the base itself. Those elements send
+ * cookies on a same-origin URL, which is how a permission-checked stream stays
+ * permission-checked.
+ */
+export function apiPath(path: string): string {
+  return `${BASE}${path}`;
+}
+
 async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers();
   let body: BodyInit | undefined;

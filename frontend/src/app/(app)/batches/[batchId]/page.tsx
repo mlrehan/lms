@@ -47,27 +47,33 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatCalendarDate, formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { durationLabel, shortMethod } from "@/lib/format/batch";
 import { RecreateSessionsDialog } from "@/components/domain/recreate-sessions-dialog";
 import { SessionQueue } from "@/components/domain/attendance/session-queue";
 import { AttendanceSheetPanel } from "@/components/domain/attendance/sheet-panel";
 
 /** The batch's timetable facts in one glance: the reason a batch page is the workspace, not one tab among several. */
 function ScheduleCard({ batch }: { batch: BatchResponse }) {
-  const facts: [string, string | null | undefined][] = [
+  const facts: [string, string | null | undefined, string?][] = [
     ["Days", batch.training_days],
-    ["Time", batch.training_start_time && batch.training_end_time ? `${batch.training_start_time} - ${batch.training_end_time}${batch.schedule_timezone ? ` (${batch.schedule_timezone})` : ""}` : null],
-    ["Class length", batch.class_duration_minutes ? `${Math.floor(batch.class_duration_minutes / 60)}h${batch.class_duration_minutes % 60 ? ` ${batch.class_duration_minutes % 60}m` : ""}` : null],
-    ["Method", batch.training_method],
+    ["Time", batch.training_start_time && batch.training_end_time ? `${batch.training_start_time} – ${batch.training_end_time}` : null, batch.schedule_timezone ?? undefined],
+    ["Class length", durationLabel(batch.class_duration_minutes) || null],
+    ["Method", shortMethod(batch.training_method) || null],
     ["Fee", batch.batch_fee == null ? null : `£${batch.batch_fee.toLocaleString("en-GB")}`],
     ["Tutor", batch.tutor_name],
   ];
   return (
     <Card>
       <CardBody className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
-        {facts.map(([k, v]) => (
+        {facts.map(([k, v, note]) => (
           <div key={k} className="min-w-0">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</p>
-            <p className="truncate text-sm font-medium" title={v ?? undefined}>{v || "—"}</p>
+            <p className="eyebrow">{k}</p>
+            <p className="truncate text-[13px] font-medium" title={[v, note].filter(Boolean).join(" · ") || undefined}>
+              {v || <span className="text-subtle-foreground">—</span>}
+            </p>
+            {note && v ? (
+              <p className="truncate text-2xs text-subtle-foreground" title={note}>{note}</p>
+            ) : null}
           </div>
         ))}
       </CardBody>
@@ -87,7 +93,7 @@ function BatchAttendanceTab({ batchId }: { batchId: string }) {
         {sessionId ? (
           <AttendanceSheetPanel key={sessionId} sessionId={sessionId} onBack={() => setSessionId(null)} />
         ) : (
-          <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+          <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border-subtle p-8 text-center text-sm text-muted-foreground">
             Choose a session to take or review its attendance.
           </div>
         )}

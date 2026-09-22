@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   ChevronRight,
   Copy,
+
   Download,
   Folder,
   FolderPlus,
@@ -39,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { FilePreview } from "@/components/domain/resources/file-preview";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormGrid, Input, NativeSelect } from "@/components/ui/form";
 import { UserPicker } from "@/components/domain/user-picker";
@@ -180,6 +182,7 @@ function ResourceDrawer({
   const timeZone = useDisplayTimeZone();
   const versionInput = useRef<HTMLInputElement>(null);
   const [changeNote, setChangeNote] = useState("");
+  const [rename, setRename] = useState<string | null>(null);
   const [shareWith, setShareWith] = useState<string | null>(null);
   const [grant, setGrant] = useState({ scope_type: "COURSE", scope_public_id: "", level: "VIEW" });
 
@@ -246,6 +249,14 @@ function ResourceDrawer({
     onSuccess: () => setGrant({ ...grant, scope_public_id: "" }),
   });
 
+  const renameResource = useApiMutation<ResourceResponse, string>({
+    mutationFn: (name) =>
+      api.patch<ResourceResponse>(`/resources/${segment(resourceId!)}`, { body: { name } }),
+    success: "Renamed.",
+    invalidate: [["resources"]],
+    onSuccess: () => setRename(null),
+  });
+
   const removeGrant = useApiMutation<void, number>({
     mutationFn: (permissionId) =>
       api.delete<void>(`/resource-permissions/${segment(permissionId)}`),
@@ -254,6 +265,21 @@ function ResourceDrawer({
   });
 
   const data = resource.data;
+
+  /*
+   * What this caller may do with *this* file, answered by the server.
+   *
+   * `permissions.has("resource.update")` is a different question -- it asks
+   * whether the role can edit resources *in general*, which is how a tutor ended
+   * up being offered Delete on a file that had merely been shared with them. The
+   * level is per-file and is what the API actually enforces, so it is what the
+   * buttons follow.
+   */
+  const rank = { VIEW: 0, DOWNLOAD: 1, EDIT: 2, MANAGE: 3 } as const;
+  const level = data?.my_level ? rank[data.my_level as keyof typeof rank] : -1;
+  const canDownload = level >= rank.DOWNLOAD;
+  const canEdit = level >= rank.EDIT;
+  const canManage = level >= rank.MANAGE;
 
   return (
     <Dialog open={resourceId !== null} onOpenChange={(open) => (open ? null : onClose())}>
@@ -280,23 +306,48 @@ function ResourceDrawer({
             />
 
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    void downloadFile(
-                      `/resources/${segment(data.public_id)}/download`,
-                      data.name ?? "resource",
-                    ).catch((caught) =>
-                      toast.error(caught instanceof Error ? caught.message : "Download failed."),
-                    )
-                  }
-                >
-                  <Download /> Download
-                </Button>
-                {permissions.has("resource.update") ? (
-                  <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm">
+              {/*
+                The file itself, first. Preview needs only VIEW, so this renders
+                for everyone who can open the dialog at all -- including the
+                read-only audiences who have no Download button below.
+              */}
+              <FilePreview
+                resourceId={data.public_id}
+                name={data.name}
+                mimeType={data.mime_type}
+                canPreview={data.can_preview ?? false}
+              />
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/*
+                  Gated on the server's own answer rather than on the caller's
+                  global role. The server is still the authority -- this only
+                  stops the console offering a button that would come back 403,
+                  which is how a read-only viewer learns their level by being
+                  refused rather than by being told.
+                */}
+                {canDownload ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      void downloadFile(
+                        `/resources/${segment(data.public_id)}/download`,
+                        data.name ?? "resource",
+                      ).catch((caught) =>
+                        toast.error(caught instanceof Error ? caught.message : "Download failed."),
+                      )
+                    }
+                  >
+                    <Download /> Download
+                  </Button>
+                ) : (
+                  <Badge tone="neutral" dot>
+                    View only — you cannot download this file
+                  </Badge>
+                )}
+                {permissions.has("resource.update") && canManage ? (
+                  <label className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-1.5 text-sm">
                     <Switch
                       checked={data.has_share_link ?? false}
                       disabled={setShareLink.isPending}
@@ -308,11 +359,42 @@ function ResourceDrawer({
               </div>
 
               {data.has_share_link ? (
-                <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-foreground dark:text-warning">
+                <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
                   A public link is active: anyone holding it can download this file without signing
                   in. The token itself is shown only when the link is created; turn the switch off to
                   revoke it.
                 </p>
+              ) : null}
+
+              {canEdit ? (
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium">Name</p>
+                  <form
+                    method="post"
+                    className="flex flex-wrap items-center gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const next = (rename ?? data.name ?? "").trim();
+                      if (next && next !== data.name) renameResource.mutate(next);
+                    }}
+                  >
+                    <Input
+                      aria-label="File name"
+                      className="min-w-56 flex-1"
+                      value={rename ?? data.name ?? ""}
+                      onChange={(event) => setRename(event.target.value)}
+                    />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      size="sm"
+                      loading={renameResource.isPending}
+                      disabled={!((rename ?? "").trim()) || rename === data.name}
+                    >
+                      Rename
+                    </Button>
+                  </form>
+                </div>
               ) : null}
 
               {(data.versions ?? []).length > 0 ? (
@@ -320,7 +402,7 @@ function ResourceDrawer({
                   <p className="flex items-center gap-2 text-sm font-medium">
                     <History className="size-4 text-muted-foreground" aria-hidden /> Versions
                   </p>
-                  <ul className="divide-y divide-border rounded-lg border border-border">
+                  <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
                     {(data.versions ?? []).map((version) => (
                       <li
                         key={version.version_number}
@@ -365,8 +447,8 @@ function ResourceDrawer({
                 </div>
               ) : null}
 
-              {permissions.has("resource.update") ? (
-                <div className="space-y-2 rounded-lg border border-border p-3">
+              {permissions.has("resource.update") && canEdit ? (
+                <div className="space-y-2 rounded-lg border border-border-subtle p-3">
                   <p className="text-sm font-medium">Upload a new version</p>
                   <input
                     ref={versionInput}
@@ -387,8 +469,8 @@ function ResourceDrawer({
                 </div>
               ) : null}
 
-              {permissions.has("resource.update") ? (
-                <div className="space-y-2 rounded-lg border border-border p-3">
+              {permissions.has("resource.update") && canEdit ? (
+                <div className="space-y-2 rounded-lg border border-border-subtle p-3">
                   <p className="flex items-center gap-2 text-sm font-medium">
                     <Share2 className="size-4 text-muted-foreground" aria-hidden /> Share with a
                     person
@@ -405,15 +487,14 @@ function ResourceDrawer({
                       Share
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    The API has no endpoint that lists who a resource is already shared with, so this
-                    panel can add a share but not show existing ones.
+                  <p className="text-2xs leading-relaxed text-subtle-foreground">
+                    Adds one person at a time. Who already has access is not listed here yet.
                   </p>
                 </div>
               ) : null}
 
-              {permissions.has("resource.update") ? (
-                <div className="space-y-2 rounded-lg border border-border p-3">
+              {permissions.has("resource.update") && canEdit ? (
+                <div className="space-y-2 rounded-lg border border-border-subtle p-3">
                   <p className="text-sm font-medium">Scoped access</p>
                   <p className="text-xs text-muted-foreground">
                     Grants cascade Course &rarr; Batch &rarr; Session &rarr; Individual. Everyone in
@@ -463,7 +544,7 @@ function ResourceDrawer({
                   </div>
 
                   {(grants.data ?? []).length > 0 ? (
-                    <ul className="divide-y divide-border rounded-lg border border-border">
+                    <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
                       {(grants.data ?? []).map((row) => (
                         <li
                           key={row.id}
@@ -517,6 +598,11 @@ function ResourcesContent() {
   const [selected, setSelected] = useState<string | null>(params.get("resource"));
   const [deleting, setDeleting] = useState<ResourceSummary | null>(null);
   const [purging, setPurging] = useState<ResourceSummary | null>(null);
+  // Drive's own move model: pick the file, walk to the destination, drop it.
+  // The folders API lists children of one parent, so a tree picker would need a
+  // new endpoint -- and navigating to where the file should go is the gesture
+  // people already know from every file manager.
+  const [moving, setMoving] = useState<ResourceSummary | null>(null);
 
   const folders = useQuery({
     queryKey: ["folders", folderId],
@@ -568,6 +654,14 @@ function ResourcesContent() {
     mutationFn: (id) => api.post<ResourceResponse>(`/resources/${segment(id)}/restore`),
     success: "Restored.",
     invalidate: [["resources"]],
+  });
+
+  const move = useApiMutation<ResourceResponse, { id: string; folder: string | null }>({
+    mutationFn: ({ id, folder }) =>
+      api.patch<ResourceResponse>(`/resources/${segment(id)}`, { body: { folder_id: folder } }),
+    success: "Moved.",
+    invalidate: [["resources"], ["folders"]],
+    onSuccess: () => setMoving(null),
   });
 
   const copy = useApiMutation<ResourceResponse, string>({
@@ -656,6 +750,12 @@ function ResourcesContent() {
               <Copy />
             </Button>
           ) : null}
+          {/*
+            The list gates on the role only. A row does not carry `my_level` --
+            resolving one per row is a query per row -- so the precise per-file
+            check lives in the detail dialog, and the API refuses anything the
+            role-level gate lets through here.
+          */}
           {permissions.has("resource.delete") ? (
             includeDeleted ? (
               <>
@@ -713,6 +813,25 @@ function ResourcesContent() {
         }
       />
 
+      {moving ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-accent px-3 py-2">
+          <span className="min-w-0 flex-1 text-xs text-accent-foreground">
+            Moving <span className="font-semibold">{moving.name ?? "file"}</span> — open the folder
+            it should go to, then confirm.
+          </span>
+          <Button
+            size="sm"
+            loading={move.isPending}
+            onClick={() => move.mutate({ id: moving.public_id, folder: folderId })}
+          >
+            Move to {trail[trail.length - 1]?.name ?? "Library"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setMoving(null)}>
+            Cancel
+          </Button>
+        </div>
+      ) : null}
+
       <nav aria-label="Folder path">
         <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
           {trail.map((entry, index) => (
@@ -737,7 +856,7 @@ function ResourcesContent() {
               key={folder.public_id}
               type="button"
               onClick={() => openFolder(folder)}
-              className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2.5 text-left text-sm transition-colors hover:border-border-strong"
+              className="flex items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-left text-sm transition-colors hover:border-border-strong"
             >
               <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="truncate font-medium">{folder.name}</span>
@@ -747,7 +866,7 @@ function ResourcesContent() {
       ) : null}
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+        <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Search" className="min-w-56 flex-1">
             {({ id }) => (
               <Input

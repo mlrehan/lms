@@ -179,7 +179,7 @@ export default function DiscussionsPage() {
           <EmptyState icon={<MessagesSquare className="size-5" />} title="No discussions yet" />
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(data?.items ?? []).map((discussion) => (
                 <li key={discussion.public_id} className="px-4 py-3">
                   <Link

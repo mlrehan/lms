@@ -73,18 +73,18 @@ export function GlobalSearch(): ReactNode {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-9 w-full max-w-xs items-center gap-2 rounded-lg border border-border bg-surface-muted px-3 text-sm text-muted-foreground transition-colors hover:border-border-strong"
+        className="flex h-9 w-full max-w-xs items-center gap-2 rounded-lg border border-border-subtle bg-surface-muted px-3 text-sm text-muted-foreground transition-colors hover:border-border-strong"
       >
         <Search className="size-4" aria-hidden />
         <span className="flex-1 text-left">Search</span>
-        <kbd className="hidden rounded border border-border bg-surface px-1 font-mono text-[10px] sm:inline">
+        <kbd className="hidden rounded border border-border-subtle bg-surface px-1 font-mono text-[10px] sm:inline">
           Ctrl K
         </kbd>
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="lg" className="p-0">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
             <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <Input
               autoFocus
@@ -145,7 +145,7 @@ export function GlobalSearch(): ReactNode {
               allowed to look" -- two very different answers to the same query.
             */}
             {data?.skipped && data.skipped.length > 0 ? (
-              <p className="flex flex-wrap items-center gap-1 border-t border-border px-3 pt-2 text-xs text-muted-foreground">
+              <p className="flex flex-wrap items-center gap-1 border-t border-border-subtle px-3 pt-2 text-xs text-muted-foreground">
                 Not searched:
                 {data.skipped.map((type) => (
                   <Badge key={type} tone="neutral">

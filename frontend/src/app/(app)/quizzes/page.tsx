@@ -243,7 +243,7 @@ export default function QuizzesPage() {
       />
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+        <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Course" className="w-72">
             {({ id }) => (
               <NativeSelect

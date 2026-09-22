@@ -132,14 +132,28 @@ class SessionOverviewService:
                 select(func.count()).select_from(Enrollments).where(Enrollments.batch_id == row.batch_id, Enrollments.status.in_(_ROSTER_STATUSES))
             )).scalar_one())
 
+        sessions = SessionService(self.session)
+        manage = sessions.can_manage(actor)
+        join = sessions.join_state(row, actor=actor)
+
         return {
             "public_id": row.public_id,
             "number": number, "total": total,
             "session_start_time": row.session_start_time,
             "session_end_time": row.session_end_time,
             "duration_minutes": row.duration_minutes,
-            "platform": row.platform, "classroom": row.classroom, "meeting_link": row.meeting_link,
-            "recording_link": row.recording_link, "student_notes": row.student_notes,
+            "platform": row.platform, "classroom": row.classroom,
+            # Withheld from anyone who cannot edit the session -- see
+            # `SessionService._response`. A roster panel that quietly carried
+            # the link would defeat the join window it draws the countdown for.
+            "meeting_link": row.meeting_link if manage else None,
+            "recording_link": row.recording_link if manage else None,
+            "can_manage": manage,
+            "join_opens_at": join.opens_at,
+            "join_closes_at": join.closes_at,
+            "can_join_now": join.can_join_now,
+            "has_recording": bool(row.recording_resource_id) or (manage and bool(row.recording_link)),
+            "student_notes": row.student_notes,
             "tutor_notes": row.tutor_notes if staff else None,
             "origin": row.origin, "in_google": bool(row.google_event_id),
             "course": {"public_id": course.public_id, "title": course.title, "code": course.code, "level": course.level.value if hasattr(course.level, "value") else str(course.level)},

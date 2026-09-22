@@ -196,7 +196,7 @@ export function CreateUserDialog({
             title="Account created"
             description="Pass these details on through a channel you trust. The password is shown only now: the console does not keep it and cannot show it again."
           />
-          <dl className="space-y-3 rounded-lg border border-border bg-surface-muted p-4 text-sm">
+          <dl className="space-y-3 rounded-lg border border-border-subtle bg-surface-muted p-4 text-sm">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">Username</dt>
               <dd className="flex items-center gap-1 font-mono">
@@ -344,7 +344,7 @@ export function CreateUserDialog({
                       key={role.name}
                       className={cn(
                         "flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-sm transition-colors focus-within:ring-2 focus-within:ring-primary/40",
-                        checked ? "border-primary bg-accent" : "border-border hover:border-border-strong",
+                        checked ? "border-primary bg-accent" : "border-border-subtle hover:border-border-strong",
                       )}
                     >
                       <input
@@ -422,7 +422,7 @@ export function CreateUserDialog({
               )}
             </Field>
 
-            <label className="flex items-start justify-between gap-4 rounded-lg border border-border p-3 text-sm">
+            <label className="flex items-start justify-between gap-4 rounded-lg border border-border-subtle p-3 text-sm">
               <span>
                 <span className="font-medium">Allow this person to sign in</span>
                 <span className="block text-xs text-muted-foreground">

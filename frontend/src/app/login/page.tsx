@@ -147,7 +147,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div className="rounded-card border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-2xl border border-border-subtle bg-surface p-6 shadow-lg">
           <Suspense fallback={<div className="h-64" />}>
             <LoginForm />
           </Suspense>

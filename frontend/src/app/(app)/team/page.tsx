@@ -134,7 +134,7 @@ export default function TeamPage() {
           </StatGrid>
 
           <Card>
-            <div className="flex flex-wrap items-center gap-3 border-b border-border p-3">
+            <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle p-3">
               <Input className="max-w-xs" value={term} onChange={(event) => setTerm(event.target.value)} placeholder="Search by name" aria-label="Search people" />
               <label className={cn("flex cursor-pointer items-center gap-2 text-sm", onlyAttention && "font-medium")}>
                 <input type="checkbox" checked={onlyAttention} onChange={(event) => setOnlyAttention(event.target.checked)} className="size-4 accent-[var(--primary)]" />

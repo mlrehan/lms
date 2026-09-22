@@ -146,7 +146,7 @@ export default function AccountPage() {
             </div>
           }
         />
-        <div className="divide-y divide-border">
+        <div className="divide-y divide-border-subtle">
           <ReadOnlyRow label="Username" value={<span className="font-mono text-xs">{user.username}</span>} />
           <ReadOnlyRow label="Last sign-in" value={formatDateTime(user.last_login, { timeZone })} />
           <ReadOnlyRow label="Account created" value={formatDateTime(user.created_at, { timeZone })} />

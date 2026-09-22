@@ -439,7 +439,7 @@ export function CourseForm({
           <div
             className={
               mode === "edit"
-                ? "sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface/95 px-4 py-3 shadow-lg backdrop-blur"
+                ? "sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-surface/85 px-4 py-3 shadow-lg backdrop-blur-md"
                 : "flex items-center justify-end gap-2 pt-2"
             }
             role="region"

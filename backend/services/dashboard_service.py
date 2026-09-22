@@ -48,6 +48,7 @@ from backend.schemas.reporting import (
 )
 from backend.services.metrics import attendance_rate
 from backend.services.scope import ScopeResolver
+from backend.services.session_service import SessionService
 from backend.utils.enums import AttendanceStatus
 
 _ATTENDANCE_READ = perm(Module.ATTENDANCE, Action.READ)
@@ -194,6 +195,7 @@ class DashboardService:
                 batch_ids=None if batch_scope.unrestricted else sorted(batch_scope.ids),
                 tutor_id=None,
                 now=now,
+                actor=actor,
             )
 
         return StudentPanel(
@@ -231,7 +233,7 @@ class DashboardService:
                 course_ids=course_ids
             ),
             upcoming_sessions=await self._sessions(
-                batch_ids=batch_ids, tutor_id=None, now=now
+                batch_ids=batch_ids, tutor_id=None, now=now, actor=actor
             ),
         )
 
@@ -253,6 +255,7 @@ class DashboardService:
                 batch_ids=None if batch_scope.unrestricted else sorted(batch_scope.ids),
                 tutor_id=None,
                 now=now,
+                actor=actor,
             ),
         )
 
@@ -273,23 +276,31 @@ class DashboardService:
     # -- helpers -------------------------------------------------------------
 
     async def _sessions(
-        self, *, batch_ids: list[int] | None, tutor_id: int | None, now: datetime
+        self, *, batch_ids: list[int] | None, tutor_id: int | None, now: datetime, actor: User
     ) -> list[SessionBrief]:
         rows = await self.reports.upcoming_sessions(
             batch_ids=batch_ids, tutor_id=tutor_id, now=now, limit=_UPCOMING
         )
-        return [
-            SessionBrief(
-                public_id=s.public_id,
-                batch_code=b.batch_code,
-                course_title=c.title,
-                starts_at=s.session_start_time,
-                ends_at=s.session_end_time,
-                classroom=s.classroom,
-                meeting_link=s.meeting_link,
+        # One service decides joinability everywhere, so the dashboard's button
+        # and the session page's button can never disagree about the same class.
+        sessions = SessionService(self.session)
+        briefs = []
+        for s, b, c in rows:
+            state = sessions.join_state(s, actor=actor)
+            briefs.append(
+                SessionBrief(
+                    public_id=s.public_id,
+                    batch_code=b.batch_code,
+                    course_title=c.title,
+                    starts_at=s.session_start_time,
+                    ends_at=s.session_end_time,
+                    classroom=s.classroom,
+                    join_opens_at=state.opens_at,
+                    join_closes_at=state.closes_at,
+                    can_join_now=state.can_join_now,
+                )
             )
-            for s, b, c in rows
-        ]
+        return briefs
 
 
 def _rate(counts: dict[AttendanceStatus, int]) -> float | None:

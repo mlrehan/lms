@@ -177,7 +177,7 @@ function SyncHistoryDialog({ open, onOpenChange, runsPath }: { open: boolean; on
         ) : (
           <ul className="space-y-3">
             {data?.items.map((run) => (
-              <li key={run.public_id} className="rounded-lg border border-border p-3 text-sm">
+              <li key={run.public_id} className="rounded-lg border border-border-subtle p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={tone(run.status)}>{run.status}</Badge>
                   <span className="font-medium">

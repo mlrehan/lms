@@ -127,7 +127,7 @@ export default function TeamMemberPage({ params }: { params: Promise<{ userId: s
           {(data.recent_attendance ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">No attendance has been recorded yet.</p>
           ) : (
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(data.recent_attendance ?? []).map((r) => (
                 <li key={`${r.session_start}-${r.batch_code}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                   <span>

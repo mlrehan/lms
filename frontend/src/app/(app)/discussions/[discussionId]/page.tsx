@@ -181,7 +181,7 @@ export default function DiscussionDetailPage({
           </CardBody>
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(replies.data?.items ?? []).map((item) => {
                 const mine = item.author?.public_id === user?.public_id;
                 return (
@@ -252,7 +252,7 @@ export default function DiscussionDetailPage({
         )}
 
         {canReply ? (
-          <CardBody className="border-t border-border">
+          <CardBody className="border-t border-border-subtle">
             <Field label="Your reply">
               {({ id }) => (
                 <Textarea
@@ -274,7 +274,7 @@ export default function DiscussionDetailPage({
             </FormActions>
           </CardBody>
         ) : data.is_locked ? (
-          <CardBody className="border-t border-border">
+          <CardBody className="border-t border-border-subtle">
             <p className="text-sm text-muted-foreground">
               This discussion is locked. It stays readable, but takes no new replies.
             </p>

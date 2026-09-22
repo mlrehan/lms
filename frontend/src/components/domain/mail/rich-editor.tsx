@@ -55,7 +55,7 @@ export function RichEditor({
   }, [editor, disabled]);
 
   return (
-    <div className={cn("overflow-hidden rounded-lg border border-border bg-surface focus-within:ring-2 focus-within:ring-primary", className)}>
+    <div className={cn("overflow-hidden rounded-lg border border-border-subtle bg-surface focus-within:ring-2 focus-within:ring-primary", className)}>
       <Toolbar editor={editor} />
       <EditorContent editor={editor} />
     </div>
@@ -77,7 +77,7 @@ function Toolbar({ editor }: { editor: Editor | null }) {
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
   }, [editor]);
 
-  if (!editor) return <div className="h-9 border-b border-border" />;
+  if (!editor) return <div className="h-9 border-b border-border-subtle" />;
 
   const tool = (label: string, icon: React.ReactNode, active: boolean, run: () => void, disabled = false) => (
     <Button
@@ -99,7 +99,7 @@ function Toolbar({ editor }: { editor: Editor | null }) {
   );
 
   return (
-    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 border-b border-border bg-surface-muted px-1.5 py-1">
+    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 border-b border-border-subtle bg-surface-muted px-1.5 py-1">
       {tool("Undo", <Undo2 />, false, () => editor.chain().focus().undo().run(), !editor.can().undo())}
       {tool("Redo", <Redo2 />, false, () => editor.chain().focus().redo().run(), !editor.can().redo())}
       <span className="mx-1 h-5 w-px bg-border" aria-hidden />

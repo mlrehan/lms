@@ -54,6 +54,30 @@ class LocalStorage(StorageBackend):
 
         return _iter()
 
+    async def open_range(self, key: str, start: int, end: int) -> AsyncIterator[bytes]:
+        path = self._path(key)
+        if not path.is_file():
+            raise NotFoundError("File not found.")
+
+        async def _iter() -> AsyncIterator[bytes]:
+            remaining = end - start + 1
+            with path.open("rb") as handle:
+                await asyncio.to_thread(handle.seek, start)
+                while remaining > 0:
+                    chunk = await asyncio.to_thread(handle.read, min(_CHUNK, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return _iter()
+
+    async def size(self, key: str) -> int:
+        path = self._path(key)
+        if not path.is_file():
+            raise NotFoundError("File not found.")
+        return (await asyncio.to_thread(path.stat)).st_size
+
     async def delete(self, key: str) -> None:
         path = self._path(key)
         # Missing is success: delete is called during cleanup paths where a

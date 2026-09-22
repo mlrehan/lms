@@ -251,7 +251,7 @@ export function ComposeDialog({ seed, onClose }: { seed: ComposeSeed; onClose: (
           void uploadFiles(event.dataTransfer.files);
         }}
       >
-        <div className="flex items-center justify-between border-b border-border bg-surface-muted px-4 py-2.5">
+        <div className="flex items-center justify-between border-b border-border-subtle bg-surface-muted px-4 py-2.5">
           <h2 className="text-sm font-semibold">{title}</h2>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground" role="status">
@@ -288,7 +288,7 @@ export function ComposeDialog({ seed, onClose }: { seed: ComposeSeed; onClose: (
           {showCc ? <RecipientField label="Cc" value={cc} onChange={touched(setCc)} exclude={[...to, ...bcc]} /> : null}
           {showBcc ? <RecipientField label="Bcc" value={bcc} onChange={touched(setBcc)} exclude={[...to, ...cc]} /> : null}
 
-          <div className="border-b border-border px-3">
+          <div className="border-b border-border-subtle px-3">
             <input
               value={subject}
               onChange={(event) => touched(setSubject)(event.target.value)}
@@ -306,7 +306,7 @@ export function ComposeDialog({ seed, onClose }: { seed: ComposeSeed; onClose: (
           {attachments.length > 0 || uploading > 0 ? (
             <ul className="flex flex-wrap gap-2 px-3 pb-3">
               {attachments.map((a) => (
-                <li key={a.public_id} className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border bg-surface-muted px-2.5 py-1.5 text-xs">
+                <li key={a.public_id} className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border-subtle bg-surface-muted px-2.5 py-1.5 text-xs">
                   <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="truncate">{a.filename}</span>
                   <span className="shrink-0 text-muted-foreground">{bytes(a.size)}</span>
@@ -326,7 +326,7 @@ export function ComposeDialog({ seed, onClose }: { seed: ComposeSeed; onClose: (
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle px-3 py-2.5">
           <div className="flex items-center gap-2">
             <Button type="button" onClick={() => void send()} disabled={!canSend} loading={sending}>
               <Send /> Send

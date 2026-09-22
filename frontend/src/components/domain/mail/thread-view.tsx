@@ -32,7 +32,7 @@ function Attachment({ a }: { a: MailAttachmentInfo }) {
       // Same-origin through the console's proxy, which adds the sign-in; always downloaded, never rendered.
       href={`/api/backend/messages/attachments/${segment(a.public_id)}/download`}
       download={a.filename}
-      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border bg-surface-muted px-2.5 py-1.5 text-xs hover:bg-muted"
+      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border-subtle bg-surface-muted px-2.5 py-1.5 text-xs hover:bg-muted"
     >
       <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span className="truncate">{a.filename}</span>
@@ -85,7 +85,7 @@ function MessageCard({
   const when = message.sent_at ? formatDateTime(message.sent_at, { timeZone }) : "";
 
   return (
-    <article className={cn("rounded-lg border border-border bg-surface", !message.is_read && "border-primary/50")}>
+    <article className={cn("rounded-lg border border-border-subtle bg-surface", !message.is_read && "border-primary/50")}>
       <header className="flex cursor-pointer items-start gap-3 p-3" onClick={onToggle}>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary" aria-hidden>
           {initials(message.sender.name)}
@@ -146,7 +146,7 @@ function MessageCard({
       </header>
 
       {expanded ? (
-        <div className="space-y-3 border-t border-border px-3 pb-3 pt-3 sm:pl-15">
+        <div className="space-y-3 border-t border-border-subtle px-3 pb-3 pt-3 sm:pl-15">
           {/* Server-sanitised: only formatting tags and http/https/mailto links survive (services/mail_html.py). */}
           <div className="mail-body text-sm" dangerouslySetInnerHTML={{ __html: message.body_html }} />
           {(message.attachments ?? []).length > 0 ? (

@@ -173,7 +173,7 @@ function AcademicYears() {
       )}
 
       {canWrite ? (
-        <CardBody className="border-t border-border">
+        <CardBody className="border-t border-border-subtle">
           <FormGrid columns={3}>
             <Field label="Label" hint="e.g. 2025-2026">
               {({ id }) => (
@@ -357,7 +357,7 @@ function Semesters() {
       )}
 
       {canWrite ? (
-        <CardBody className="border-t border-border">
+        <CardBody className="border-t border-border-subtle">
           <FormGrid>
             <Field label="Academic year" required>
               {({ id }) => (
@@ -543,7 +543,7 @@ function Departments() {
       )}
 
       {canWrite ? (
-        <CardBody className="border-t border-border">
+        <CardBody className="border-t border-border-subtle">
           <FormGrid columns={3}>
             <Field label="Name">
               {({ id }) => (
@@ -709,7 +709,7 @@ function Categories() {
       )}
 
       {canWrite ? (
-        <CardBody className="border-t border-border">
+        <CardBody className="border-t border-border-subtle">
           <FormGrid>
             <Field label="Name">
               {({ id }) => (
@@ -852,7 +852,7 @@ function Tags() {
       )}
 
       {canWrite ? (
-        <CardBody className="flex items-end gap-2 border-t border-border">
+        <CardBody className="flex items-end gap-2 border-t border-border-subtle">
           <Field label="New tag" className="max-w-xs flex-1">
             {({ id }) => (
               <Input id={id} value={name} onChange={(event) => setName(event.target.value)} />

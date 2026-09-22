@@ -119,7 +119,7 @@ export function GoogleCalendarPanel() {
           }
         />
         <CardBody className="space-y-4">
-          <dl className="divide-y divide-border rounded-lg border border-border px-4">
+          <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-4">
             <Row label="Account">
               {data.connected ? (
                 <span>
@@ -190,7 +190,7 @@ export function GoogleCalendarPanel() {
         <Card>
           <CardHeader title="Managing the schedule from Google Calendar" description="Open a batch's calendar in Google (the batch page has a link). Changes are read on the next sync." />
           <CardBody>
-            <dl className="divide-y divide-border rounded-lg border border-border px-4 text-sm">
+            <dl className="divide-y divide-border-subtle rounded-lg border border-border-subtle px-4 text-sm">
               <Row label="Add a session">
                 Create an event in the batch calendar. Add the tutor as a guest, and put the place in Location: <em>Zoom Video Conferencing</em> or the classroom address. It becomes a session, and the
                 event is renamed to the standard <em>Course (batch code)</em> form. If it cannot be added, the reason is written at the top of the event.

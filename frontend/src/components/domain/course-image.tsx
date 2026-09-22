@@ -48,7 +48,7 @@ export function CourseThumb({
   return (
     <span
       className={cn(
-        "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-accent text-accent-foreground",
+        "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border-subtle bg-accent text-accent-foreground",
         SIZES[size],
         className,
       )}

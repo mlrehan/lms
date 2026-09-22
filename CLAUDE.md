@@ -2092,3 +2092,381 @@ reaches an unrelated student.
 - Tutors hold only `exam.read`, so Examinations is read-only for them.
 
 **Two behaviours that look like bugs and are not:** attendance "To do" means *takeable now* (not finalized and starting within the hour), so future classes correctly appear only under "All"; and Transcripts is gated on `grade.read`, not a transcript permission.
+
+## Design system overhaul — enterprise visual layer
+
+A three-phase rewrite of the visual foundation. The architecture was already
+right (semantic tokens everywhere, no hard-coded hexes in components), so the
+work was re-pointing the tokens and re-skinning the primitives; the DNA then
+changed across every screen at once.
+
+**Tokens (`globals.css`).** Slate neutral ramp — canvas `#f8fafc` / `#020617`,
+surfaces stepping up to white / slate-900. Depth is a *surface step plus a
+hairline*, never blur; shadows are tinted with the neutral's own hue, because a
+pure-black shadow over a blue-grey surface is most of what reads as muddy. Dark
+mode drops them almost entirely — on a near-black canvas a shadow does nothing.
+Radii are deliberately tighter than stock (3/5/6/8/10/14px): a 12px radius on a
+32px control is the friendly-consumer look. Type is **Inter** (UI) / **Inter
+Tight** (headings, hero numerals) / **JetBrains Mono** (identifiers). Negative
+tracking is baked into the scale so no call site has to remember it, and weight
+is disciplined: 400 body, 500 interactive, 600 section titles, **750 only for
+hero numerals** (`.numeral`).
+
+**Primitives.** Hover shifts colour, never geometry — a button that grows
+shoves its neighbours in a toolbar. Solid buttons carry a 1px inner top
+highlight, which is the difference between a coloured rectangle and something
+lit from above. Badges are tinted fill + inset ring; without the ring a pale
+tone floats edgeless on white and reads as a rendering artefact. One focus
+treatment everywhere: accent border + 3px halo, a ring rather than an offset
+outline, because an outline on a 36px input collides with its neighbour in a
+dense form. Skeletons sweep rather than pulse — half a screen pulsing reads as
+an outage.
+
+**Structure.** The rail sits on the canvas and the *selected* item is the only
+thing on it rendered as a raised surface — a chip pulled out of the nav rather
+than a coloured pill painted on it. Previously the sidebar was white against a
+grey content area, which inverted the depth order. Top bar is real glass (72% +
+blur, not 95% which is opaque with a decorative blur). Tables got glass sticky
+headers, eyebrow column labels, and **row actions that reveal on hover or
+keyboard focus** and stay put on touch. `SectionHeader` gives long pages a
+hairline to scan along.
+
+### Three defects found by building on top of it
+
+1. **The console had never rendered in its intended typeface.** `@theme inline`
+   substitutes a token's value into the utilities that use it and deliberately
+   does *not* emit the custom property, so `body { font-family: var(--font-sans) }`
+   was invalid at computed-value time and fell back to Preflight's system stack.
+   Geist was downloaded on every page load and never applied. No error anywhere
+   — found by reading computed styles, not by looking at the page. Fixed by
+   moving the font variables to `<html>` and referencing the real stacks.
+2. **`Stat` rendered strings in the hero-numeral slot.** "Asia/Dhaka" at 28px /
+   750 with tracking tuned for digits. `isFigure` now steps text values down.
+3. **A column of identical row buttons.** Courses rendered a "View details"
+   button on every row; the row itself was not clickable and there was no
+   keyboard path. The row now opens the course and the contextual menu carries
+   the same action for keyboard and touch.
+
+**Swept globally:** 133 bare `border-border` / `divide-border` across 53 files
+converted to the 60% hairline.
+
+**Verified:** `tsc` clean, `eslint` 0 errors, `next build` 36 pages, **93/93**
+frontend tests, and light + dark driven in a browser with computed styles
+checked rather than eyeballed.
+
+**Known gap:** clickable table rows are a mouse convenience only — no
+`tabIndex` is added, deliberately, to avoid 25 tab stops per page. Every such
+row carries its actions in the keyboard-reachable menu instead.
+
+### Visual sweep — every screen walked
+
+Five defects the page-by-page pass found, all fixed:
+
+1. **A vertical scrollbar on every tab strip in the console.** `overflow-x-auto`
+   sets only one axis, and CSS computes the other to `auto`; the selected tab's
+   `-mb-px` then made the content one pixel taller than the box. The result was
+   arrow glyphs at the right of every tab row and 15px of stolen width. Fixed
+   with an explicit `overflow-y-hidden`.
+2. **Twenty tables fell back to a line of grey text when empty.** The designed
+   `EmptyState` is now `DataTable`'s default rather than an opt-in, so no screen
+   can look unfinished by omission. `EmptyState`'s `title` widened to `ReactNode`
+   to carry a table's existing message.
+3. **The access-denied screen looked like a page that failed to load** — an
+   unframed message floating at the top of a blank canvas. On a console with
+   narrow roles that is a large share of the navigation, so it is now a centred
+   card with a way back to the dashboard.
+4. **Two internal engineering notes were rendered to end users**, one naming an
+   endpoint and citing `docs/BACKEND-GAPS.md` on the timetable, one describing a
+   missing API on the resource share panel. Rewritten from the reader's side.
+5. **The method string was shortened in the table and not on the batch page**, so
+   one batch read `Online · Zoom` in the list and `Online Training using ...`
+   truncated on its own screen. `lib/format/batch.ts` now holds `shortMethod` and
+   `durationLabel` for both, and the schedule card demotes the timezone to a
+   second line instead of truncating the name mid-word.
+
+**Scope of the sweep, stated honestly:** driven as a Tutor, so the admin screens
+(academic, audit, ops, organizations, permissions, reports, roles, security,
+guardians, integrations) showed the denied state rather than their own content —
+that state was verified, their layouts were not. The login screen was not checked,
+as reaching it means ending the signed-in session.
+
+### Admin-screen sweep (Super Admin)
+
+The eleven screens a Tutor could not reach. Four more defects, two of them
+console-wide:
+
+1. **No tab in the console had a selected state.** `TabsTab` styled on
+   `data-[selected]`, but Base UI marks the active tab with `data-active` — there
+   is no `data-selected` attribute, so the selector matched nothing and every tab
+   strip rendered a transparent underline at weight 500. Verified from computed
+   style, not by eye. Now keyed on **`aria-selected`**, the accessibility contract
+   rather than an implementation detail, so a library rename cannot silently
+   break it again. *(Pre-existing — the committed version had the same selector.)*
+2. **`Switch` collapsed to a 16px mark wherever it was not already a flex child.**
+   Base UI's switch root computes to `display: inline`, and width/height do not
+   apply to a non-replaced inline box, so `h-5 w-9` were ignored. It looked
+   correct on the notification preferences (a flex row blockifies its children)
+   and rendered as a stray vertical bar in the Guardians table. Fixed with an
+   explicit `inline-flex`. *(Pre-existing.)*
+3. **Four warning banners were invisible in light mode** — white text on a pale
+   amber tint. This one **was mine**: the token rewrite redefined
+   `--warning-foreground` as white, which is right for ink on a *solid* warning
+   fill and wrong on `bg-warning/10`. All four now use `text-warning`, legible on
+   the tint in both themes.
+4. **The reports bar chart rendered three slabs the width of the panel**, on
+   dashed gridlines. Constrained with `maxBarSize` and `barCategoryGap`, grid
+   changed to a solid hairline, axes moved to the metadata tone. A magnitude
+   chart is read along the tops of the bars; their width carries no information.
+
+**One self-inflicted regression, caught and fixed in the same pass:** a `//`
+comment placed in JSX child position rendered as literal text on the reports
+page. `tsc` passes on it — it is valid JSX text — so only looking at the page
+caught it.
+
+**Two things that looked like defects and were not**, both confirmed rather than
+assumed: the Timetable's Starts/Ends columns (I misread a downscaled screenshot;
+the DOM shows `16:00 → 18:00` matching the API), and tab clicks appearing not to
+register (a programmatic click switches correctly — the synthetic mouse click was
+a tooling artifact of the emulated viewport).
+
+## Files, part 1 — the permission ladder that was never read
+
+Items 2 and 3 of the files/media brief. The audit that preceded it is the useful
+part: **most of the data model already existed and was well designed** —
+`resource_folders` (self-referential tree), `resources` + `resource_versions`,
+`resource_permissions` with scope `COURSE→BATCH→SESSION→USER`, `shared_resources`,
+and a storage abstraction with local + R2 including presigned URLs. Folder CRUD,
+move, rename, copy, soft-delete/restore/purge, grant/revoke and share were all
+already built.
+
+**What was missing was enforcement.** `ResourcePermissionLevel` —
+`VIEW / DOWNLOAD / EDIT / MANAGE` — was written by `grant_permission` and read by
+*nothing*. Access was a single reachability boolean, so:
+
+* a student granted **VIEW could call `/download` and receive the bytes**;
+* a tutor holding `resource.delete` globally could delete a file that had been
+  shared with them read-only, because the global permission and reachability were
+  the only things consulted.
+
+Same decorative-field shape as `token_budget_per_month`, `provider_credentials`,
+`message_received` and `resources.batch_id` before it.
+
+**`backend/core/resource_access.py`** is the missing half: the levels are a
+*ladder*, not a set (MANAGE ⊃ EDIT ⊃ DOWNLOAD ⊃ VIEW), kept pure so the ordering
+is unit-testable without a database and every call site asks in the same words.
+
+**`ResourceService.effective_level()`** resolves three routes, most capable wins:
+1. unrestricted → MANAGE;
+2. **owning the space** — a file in a course/batch the caller administers takes
+   its level from their *global* resource permissions (`resource.delete` → MANAGE,
+   `resource.update` → EDIT, else VIEW), so a tutor manages their own materials
+   without a grant per file;
+3. **an explicit grant or share** on that one file — and this is the fix: foreign
+   content is governed *only* by what was granted, so global `resource.delete` no
+   longer overrides a read-only share.
+
+Enforced at **8 doors**: download (DOWNLOAD), update/upload-version (EDIT),
+soft-delete/restore/purge/share/share-link (MANAGE).
+
+**`shared_resources` gained a `level`** (migration `d8b1f4e07a23`). It had no way
+to say *how* a file was shared, so a recipient's rights came entirely from their
+role. Existing rows backfill to **DOWNLOAD, not VIEW** — that is what they
+effectively had, and silently tightening access on files people already hold
+would break working links. Tightening is the owner's decision, per share.
+
+**Preview (`GET /resources/{id}/preview`)** needs only VIEW, which is the whole
+point of the level existing — a file can be read without being kept. Two
+deliberate decisions:
+* **Never redirected to a presigned URL, even on R2.** A presigned URL *is* a
+  download link; issuing one here would hand the viewer exactly what the level
+  was withholding. The bytes always stream through the server.
+* **A type allowlist, and `image/svg+xml` and `text/html` are not on it.** An SVG
+  is a document that can carry script; served inline it executes in this origin
+  and steals the session. They remain downloadable, just not rendered. Backed by
+  `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and
+  `Content-Disposition: inline` — the allowlist is the first line, the headers the
+  second, because one list edited carelessly should not become stored XSS.
+
+`my_level` and `can_preview` ride on `ResourceResponse` so the console can hide
+actions it would be refused. The list endpoint deliberately does **not** carry
+them: resolving a level per row is a query per row.
+
+**Mutation-tested:** removing the download guard fails the viewer test; letting
+the role baseline apply to foreign files fails the no-access test. 12 unit + 7
+integration tests.
+
+**Not done in this pass, and stated rather than implied:** the Drive-like folder
+navigation UI (breadcrumbs, move, grid view) and the preview *viewer* component —
+the backend is ready for both. Live HTTP verification was not possible: restarting
+the backend ended the browser session and signing in is the user's to do.
+
+### Files, part 2 — the viewer and the Drive verbs
+
+`components/domain/resources/file-preview.tsx` renders a file in place from
+`/preview` (VIEW) rather than `/download` (DOWNLOAD) — the two endpoints existing
+separately is the whole point, and this is what makes a read-only audience able to
+*read*.
+
+Four render paths, chosen by the server's `can_preview` and `mime_type`: PDF in an
+iframe (the browser's own viewer is itself sandboxed), images, `<video>`/`<audio>`
+with `controlsList="nodownload"`, and **text fetched and printed into a `<pre>`**.
+That last one is deliberate: an `<iframe>` would ask the browser to *interpret* the
+bytes, and the one thing a file must never do is decide how it is rendered.
+Printing it as React text means a file full of markup shows its markup — which is
+also the plain-text view the brief asked for. Text is capped at 200k characters,
+because nobody reads past the first screen of a preview and a multi-megabyte log
+pasted into the DOM freezes the tab.
+
+`controlsList="nodownload"` is a courtesy, not a control — the network tab is still
+right there. That is the honest limit of protecting playback without DRM, and it is
+the same ceiling items 5 and 6 will hit.
+
+**Actions now follow the per-file level, not the role.**
+`permissions.has("resource.update")` asks whether the role may edit resources *in
+general*, which is how a tutor was offered Delete on a file merely shared with
+them. The dialog derives `canDownload` / `canEdit` / `canManage` from the server's
+`my_level` and hides what would 403; a viewer sees "View only — you cannot download
+this file" instead of a button that fails. The **list** deliberately keeps the role
+gate: a row carries no `my_level`, because resolving one per row is a query per row.
+
+**One inconsistency the lint error exposed:** `canManage` was unused, which
+surfaced that `grant_permission` was gated only on the route's global
+`resource.update` while `share` already required MANAGE. Handing someone access to
+a file is at least as consequential as sharing it, so it now requires MANAGE too.
+
+**Move uses Drive's own model** — pick the file, walk to the destination, confirm —
+because `/folders` lists children of one parent and a tree picker would need a new
+endpoint. Rename is a field in the detail dialog. Both ride the existing
+`PATCH /resources/{id}`.
+
+**Verified live as Super Admin**, not only by test: a text file and a PNG uploaded,
+previewed and byte-checked (`<b>not bold</b>` renders as literal text, unicode
+intact, PNG magic bytes correct, `inline` + `nosniff` + `sandbox` headers present);
+a file moved root → folder and renamed, both 200; every test artefact purged after.
+
+**A hostile SVG is refused at upload**, before it ever reaches the preview layer —
+the storage MIME allowlist rejects `image/svg+xml` with a 422. The preview
+allowlist is the second line, not the only one.
+
+**Still not built:** drag-and-drop move, folder rename/delete UI, a grid view, and
+Office-document rendering (no browser renders `.docx` natively — it needs either
+server-side conversion or an external viewer, and that is a decision, not an
+oversight).
+
+## Live class join and protected recording playback
+
+Items 4 and 5 of the six-subsystem brief. The organising finding, and the reason
+this was not a frontend task: **the meeting link and the recording link were in
+every session payload, to every role.** A Join button greyed out until thirty
+minutes before start enforces nothing while the URL it would open is sitting in
+the network response, and "authorised users should not be given a direct
+external recording link" was false by construction.
+
+**New:** `backend/core/live_class.py`, `backend/api/streaming.py`,
+`session.override` in the permission catalogue, `open_range`/`size` on the
+storage port and both adapters, migration `e5c71a4d9b02` adding
+`batch_sessions.recording_resource_id`, five routes, and two frontend components
+(`join-class-button.tsx`, `class-recording.tsx`).
+
+**The link is withheld in five payloads, not hidden in one page.**
+`SessionResponse`, `SessionSummary`, `SessionOverview` and `CalendarSession` now
+populate `meeting_link`/`recording_link` only for callers holding
+`session.update` — the people who *set* them — and everyone else receives
+`join_opens_at` / `join_closes_at` / `can_join_now` / `has_recording` instead.
+`SessionBrief`, the dashboard's row, lost `meeting_link` outright: it is drawn
+for students, and there was nothing for it to be used for that the join endpoint
+does not do better.
+
+**Seven decisions worth not re-litigating:**
+
+1. **`join` is a POST, not a GET.** Handing out a meeting link is an act that is
+   recorded, not a property of the session. A GET invites a prefetch or a cache
+   to perform it on the caller's behalf, and the audit row would then describe
+   something nobody did.
+2. **`join_state()` and `join()` are the same rule, twice.** One renders the
+   button, one opens the door. Two implementations drift, and the drift is
+   always visible to the user as a button that refuses or a hidden one that
+   would have worked.
+3. **A window with no end still closes.** Two hours, because a class with no
+   recorded length must stop being joinable at some point, and an end recorded
+   *before* its start is bad data rather than licence to leave the room open
+   forever.
+4. **"No meeting link yet" is a 409, not a 403.** The caller is entitled to
+   join; the tutor has not recorded a link. Reporting that as a permission
+   failure sends a student to an administrator about a scheduling omission.
+5. **A recording is an ordinary `resources` row.** It inherits the permission
+   ladder, versioning and soft-delete built in the previous pass rather than
+   growing a parallel set, and `ON DELETE SET NULL` means deleting the file does
+   not delete the record that the class happened.
+6. **Publishing a recording needs EDIT on the file, not sight of it.**
+   Attaching makes it playable by a whole batch, so the bar is "this is yours to
+   publish" — otherwise a tutor could expose any document they had been sent.
+7. **The playback audit is per playback, not per byte range.** A player issues a
+   request per seek; a viewer scrubbing through an hour would otherwise write
+   dozens of identical rows. The *permission check* still runs on every one of
+   those requests.
+
+**Range support is the difference between a video and a download.** A player
+that asks for bytes forty minutes in and is handed the whole file with a 200
+restarts from zero on every scrub. `stream_for_playback` answers 206 with a
+correct `Content-Range`, understands `bytes=-N` (how an MP4's trailing index is
+read before playback can start at all), answers 416 **with the real length** so
+a player can correct itself, and caps one answer at 8 MiB so `bytes=0-` on a
+two-hour recording cannot pin a worker to one viewer.
+
+**Two things the design deliberately does not claim.** This is not DRM —
+anything a browser renders can be captured, and `controlsList="nodownload"` only
+hides the player's own save button. What it buys is that the obvious routes
+(copy the link, share the URL, open it signed out) all lead back through the
+permission check rather than around it. And the *external* provider URL is still
+a URL: it is withheld from everyone who cannot edit the session, which is the
+most that can be done about a link Zoom minted.
+
+**A performance defect I introduced and removed before it shipped:** the first
+version gave `BatchSession` a `recording` relationship with `lazy="selectin"`.
+`Resource` eager-loads six relationships of its own, so a 3000-row calendar
+window would have pulled all of them per session to answer a question almost no
+caller asks. The relationship is gone; `recording()` loads the row by id.
+Separately, `join_state` is called per row, so the actor's flattened permissions
+are resolved once per service instance rather than re-walked per session.
+
+**Mutation-tested, seven guards, each failing exactly the matching test and
+passing on restore:** moving the window to 45 minutes, deleting the
+negative-window guard, removing the window gate from `join()`, making everyone
+count as staff, dropping the soft-delete filter on the recording, returning
+`external_url` to everyone, and dropping the EDIT requirement on publishing.
+
+**`session.override` must be seeded.** Re-run the identity bootstrap after
+upgrading, or the override silently does not exist:
+`bootstrap_identity` reported `permissions_created: 1, roles_regranted: 2` here.
+
+**Driven live against a running server, not only through fakes.** 34 checks over
+a real socket -- `scripts/_live_check_drive.py`, fed by `_live_check_setup.py`,
+which builds and destroys its own `livechk` accounts so nothing borrows a real
+one. Proven: a student's session payload carries no link while `can_join_now` is
+true; a class six hours away is a 409 naming both times; an outsider is 404 and
+never 403; `session.override` opens a shut door and the ticket says so while the
+same account's in-window join does not; a seek returns 206 with
+`bytes 100-199/4096` and **byte-exact** content. The audit trail then showed
+`outside_window: true` on exactly one row, and one `RECORDING_VIEW` per playback
+rather than one per Range request.
+
+Two things that check found which nothing else would have:
+- **The server on :8000 was serving stale code** -- its OpenAPI had none of the
+  three new paths. A dev API here has no `--reload`, so "the tests pass" and
+  "the running system does this" are different claims; restart with
+  `python -m backend.main`, which is also the only entrypoint that sets the
+  Windows selector event-loop policy before uvicorn creates a loop.
+- **`users.can_login` defaults to false**, so a seeded account cannot sign in
+  whatever its password. Correct, and the reason is in the column comment, but
+  it means any fixture that logs in over HTTP must opt itself in.
+
+**Not verified through the browser.** The Chrome extension was not connected for
+this session, and signing in as the operator is not something to work around, so
+the console side is proven by `tsc --noEmit`, `eslint` (0 errors) and
+`npm run build` only. Clicking the Join button and scrubbing the player in a
+real browser is the obvious next check and is deliberately not claimed as done.
+
+**Status:** full backend suite green (~808 tests, exit 0), plus 49 new ones --
+11 for the window, 16 for `Range` parsing, 17 join/recording integration against
+live Postgres, 5 end-to-end streaming. `npm run build` compiles 25 routes.

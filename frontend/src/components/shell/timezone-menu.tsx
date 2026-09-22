@@ -146,7 +146,7 @@ export function TimeZoneMenu(): ReactNode {
           <button
             type="button"
             aria-label={`Display time zone: ${active}. Change`}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-2 text-sm transition-colors hover:bg-muted"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-2 text-sm transition-colors hover:bg-muted"
           />
         }
       >
@@ -160,11 +160,11 @@ export function TimeZoneMenu(): ReactNode {
         <Popover.Positioner align="end" sideOffset={6} className="z-50 outline-none">
           <Popover.Popup
             className={cn(
-              "w-[min(22rem,calc(100vw-1.5rem))] origin-(--transform-origin) rounded-lg border border-border bg-surface shadow-lg outline-none",
+              "w-[min(22rem,calc(100vw-1.5rem))] origin-(--transform-origin) rounded-lg border border-border-subtle bg-overlay shadow-overlay outline-none",
               "data-[open]:animate-[lms-fade-in_120ms_ease-out] data-[closed]:animate-[lms-fade-out_100ms_ease-in]",
             )}
           >
-            <div className="space-y-1 border-b border-border px-3 py-2.5">
+            <div className="space-y-1 border-b border-border-subtle px-3 py-2.5">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display time zone</p>
               <p className="text-sm font-medium">{describeTimeZone(active, now ?? undefined)}</p>
               <p className="text-xs text-muted-foreground tabular-nums">{now ? formatDateTime(now, { timeZone: active }) : " "}</p>
@@ -179,7 +179,7 @@ export function TimeZoneMenu(): ReactNode {
               ) : null}
             </div>
 
-            <div className="relative border-b border-border p-2">
+            <div className="relative border-b border-border-subtle p-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
               <input
                 ref={searchRef}
@@ -188,7 +188,7 @@ export function TimeZoneMenu(): ReactNode {
                 onKeyDown={onSearchKey}
                 placeholder="Search city, region or offset (e.g. Dhaka, +6)"
                 aria-label="Search time zones"
-                className="h-9 w-full rounded-md border border-border bg-surface pl-8 pr-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="h-9 w-full rounded-md border border-border-subtle bg-surface pl-8 pr-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
               />
             </div>
 
@@ -215,7 +215,7 @@ export function TimeZoneMenu(): ReactNode {
               )}
             </ul>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle px-3 py-2">
               {timeZoneOverride ? (
                 <Button variant="ghost" size="sm" onClick={() => { setTimeZoneOverride(null); setOpen(false); }}>
                   Back to {accountTimeZone ? "my profile" : "browser"}

@@ -102,7 +102,7 @@ function OneTimeSecret({
             </Button>
           </div>
           {note ? (
-            <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-foreground dark:text-warning">
+            <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
               {note}
             </p>
@@ -171,7 +171,7 @@ function Deliveries({ webhook }: { webhook: WebhookEndpointResponse }) {
   ];
 
   return (
-    <div className="border-t border-border">
+    <div className="border-t border-border-subtle">
       <div className="flex items-center gap-2 p-3">
         <NativeSelect
           className="w-44"
@@ -312,7 +312,7 @@ function Webhooks() {
           </CardBody>
         ) : (
           <>
-            <ul className="divide-y divide-border">
+            <ul className="divide-y divide-border-subtle">
               {(data?.items ?? []).map((webhook) => (
                 <li key={webhook.public_id}>
                   <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
@@ -450,7 +450,7 @@ function Webhooks() {
                       className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                         checked
                           ? "border-primary bg-accent text-accent-foreground"
-                          : "border-border text-muted-foreground hover:border-border-strong"
+                          : "border-border-subtle text-muted-foreground hover:border-border-strong"
                       }`}
                     >
                       <input

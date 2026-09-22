@@ -4,7 +4,7 @@ import Link from "next/link";
 import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, ExternalLink, Save, Trash2 } from "lucide-react";
+import { ClipboardCheck, Save, Trash2 } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
 import type {
   AttendanceResponse,
@@ -19,6 +19,8 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
+import { ClassRecording } from "@/components/domain/sessions/class-recording";
 import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -162,7 +164,7 @@ function Register({ session }: { session: SessionSessionResponse }) {
           </div>
         ) : null}
 
-        <ul className="divide-y divide-border rounded-lg border border-border">
+        <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
           {current.map((row) => (
             <li key={row.studentId} className="flex flex-wrap items-center gap-3 px-3 py-2">
               <Link
@@ -179,7 +181,7 @@ function Register({ session }: { session: SessionSessionResponse }) {
                       "cursor-pointer rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                       row.status === status
                         ? STATUS_TONE[status]
-                        : "border-border text-muted-foreground hover:border-border-strong",
+                        : "border-border-subtle text-muted-foreground hover:border-border-strong",
                       !canMark && "cursor-not-allowed opacity-70",
                     )}
                   >
@@ -209,7 +211,7 @@ function Register({ session }: { session: SessionSessionResponse }) {
       </CardBody>
 
       {canMark ? (
-        <div className="border-t border-border px-4 py-3">
+        <div className="border-t border-border-subtle px-4 py-3">
           <FormActions>
             <Button variant="ghost" disabled={!dirty} onClick={() => setRows(null)}>
               Reset
@@ -327,16 +329,16 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
         }
         actions={
           <div className="flex items-center gap-2">
-            {data.meeting_link ? (
-              <a
-                href={data.meeting_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-              >
-                Join <ExternalLink className="size-3.5" />
-              </a>
-            ) : null}
+            {/* The link itself is not in this payload unless the caller may
+                edit the session: the button asks the API for it, which is what
+                makes the 30-minute window a rule rather than a greyed-out
+                control. */}
+            <JoinClassButton
+              sessionId={sessionId}
+              canJoinNow={data.can_join_now ?? false}
+              opensAt={data.join_opens_at}
+              closesAt={data.join_closes_at}
+            />
             {permissions.has("session.update") && !editing ? (
               <Button variant="secondary" size="sm" onClick={beginEdit}>
                 Edit session
@@ -472,19 +474,10 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               <p className="text-xs text-muted-foreground">Duration</p>
               <p>{data.duration_minutes ? `${data.duration_minutes} minutes` : "—"}</p>
             </div>
-            {data.recording_link ? (
-              <div className="sm:col-span-2">
-                <p className="text-xs text-muted-foreground">Recording</p>
-                <a
-                  href={data.recording_link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="break-all text-primary hover:underline"
-                >
-                  {data.recording_link}
-                </a>
-              </div>
-            ) : null}
+            <div className="sm:col-span-2">
+              <p className="mb-1.5 text-xs text-muted-foreground">Recording</p>
+              <ClassRecording sessionId={sessionId} canManage={permissions.has("session.update")} />
+            </div>
             {data.tutor_notes ? (
               <div className="sm:col-span-2">
                 <p className="text-xs text-muted-foreground">Tutor notes</p>

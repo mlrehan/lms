@@ -116,7 +116,7 @@ export default function MessagesPage() {
       <Card className="overflow-hidden">
         <div className="grid min-h-[32rem] md:grid-cols-[11.5rem_minmax(0,21rem)_minmax(0,1fr)]">
           {/* Folders: a column on wide screens, a row of tabs on narrow ones. */}
-          <nav aria-label="Mail folders" className={cn("flex gap-1 overflow-x-auto border-b border-border p-2 md:flex-col md:border-b-0 md:border-r", threadId && "hidden md:flex")}>
+          <nav aria-label="Mail folders" className={cn("flex gap-1 overflow-x-auto border-b border-border-subtle p-2 md:flex-col md:border-b-0 md:border-r", threadId && "hidden md:flex")}>
             {FOLDERS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -133,15 +133,15 @@ export default function MessagesPage() {
           </nav>
 
           {/* The list. On a phone it gives way to the open conversation. */}
-          <section aria-label="Messages" className={cn("flex min-w-0 flex-col border-border md:border-r", threadId && "hidden md:flex")}>
-            <div className="relative border-b border-border p-2">
+          <section aria-label="Messages" className={cn("flex min-w-0 flex-col border-border-subtle md:border-r", threadId && "hidden md:flex")}>
+            <div className="relative border-b border-border-subtle p-2">
               <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
               <input
                 value={term}
                 onChange={(event) => setTerm(event.target.value)}
                 placeholder="Search subject, text or sender"
                 aria-label="Search messages"
-                className="h-9 w-full rounded-md border border-border bg-surface pl-8 pr-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="h-9 w-full rounded-md border border-border-subtle bg-surface pl-8 pr-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
               />
             </div>
             {list.isPending ? (
@@ -153,7 +153,7 @@ export default function MessagesPage() {
             ) : items.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{q ? "Nothing matches your search." : folder === "inbox" ? "Your inbox is empty." : `Nothing in ${folder}.`}</p>
             ) : (
-              <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
+              <ul className="min-h-0 flex-1 divide-y divide-border-subtle overflow-y-auto">
                 {items.map((item) => {
                   const selected = !item.is_draft && item.thread_id === threadId;
                   const who = folder === "sent" || folder === "drafts" ? `To: ${item.recipients_summary || "—"}` : item.is_mine ? `Me → ${item.recipients_summary}` : item.sender.name;
@@ -190,7 +190,7 @@ export default function MessagesPage() {
               </ul>
             )}
             {total > PAGE_SIZE ? (
-              <div className="flex items-center justify-between border-t border-border px-3 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between border-t border-border-subtle px-3 py-2 text-xs text-muted-foreground">
                 <span>
                   {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
                 </span>

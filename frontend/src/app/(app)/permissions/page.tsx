@@ -102,7 +102,7 @@ export default function PermissionsPage() {
                     title={humanise(module)}
                     actions={<Badge tone="neutral">{items.length}</Badge>}
                   />
-                  <ul className="divide-y divide-border">
+                  <ul className="divide-y divide-border-subtle">
                     {items.map((permission) => (
                       <li key={permission.name} className="px-4 py-2">
                         <p className="font-mono text-xs font-medium">{permission.name}</p>
@@ -127,12 +127,14 @@ export default function PermissionsPage() {
             ) : (
               <Card>
                 <div className="overflow-x-auto scrollbar-thin">
-                  <table className="w-full border-collapse text-sm">
+                  <table className="w-full border-collapse text-[13px]">
                     <thead>
-                      <tr className="border-b border-border">
+                      <tr className="border-b border-border-subtle">
                         <th
                           scope="col"
-                          className="sticky left-0 z-10 bg-surface px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                          // The frozen column needs its own right-hand rule: without one it
+                          // has no edge, and the cells scrolling under it look like they belong to it.
+                          className="eyebrow sticky left-0 z-10 border-r border-border-subtle bg-surface px-4 py-2 text-left"
                         >
                           Permission
                         </th>
@@ -140,7 +142,7 @@ export default function PermissionsPage() {
                           <th
                             key={role.name}
                             scope="col"
-                            className="whitespace-nowrap px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                            className="eyebrow whitespace-nowrap px-3 py-2 text-center"
                           >
                             {role.name}
                           </th>
@@ -149,10 +151,13 @@ export default function PermissionsPage() {
                     </thead>
                     <tbody>
                       {matrix.map((permission) => (
-                        <tr key={permission.name} className="border-b border-border/70 last:border-0">
+                        <tr
+                          key={permission.name}
+                          className="group border-b border-border-subtle transition-colors duration-200 ease-out last:border-0 hover:bg-surface-muted/60"
+                        >
                           <th
                             scope="row"
-                            className="sticky left-0 z-10 bg-surface px-4 py-1.5 text-left font-mono text-xs font-normal"
+                            className="sticky left-0 z-10 border-r border-border-subtle bg-surface px-4 py-1.5 text-left font-mono text-2xs font-normal text-muted-foreground transition-colors duration-200 group-hover:bg-surface-muted/60 group-hover:text-foreground"
                           >
                             {permission.name}
                           </th>
@@ -161,9 +166,12 @@ export default function PermissionsPage() {
                               {(role.permissions ?? []).includes(permission.name) ? (
                                 <Check className="mx-auto size-4 text-success" aria-label="granted" />
                               ) : (
-                                <span className="text-muted-foreground/40" aria-label="not granted">
-                                  ·
-                                </span>
+                                // A hairline dash, not a mid-grey dot: the eye should land on
+                                // the grants, and the gaps should read as texture.
+                                <span
+                                  className="mx-auto block h-px w-2 bg-border-strong"
+                                  aria-label="not granted"
+                                />
                               )}
                             </td>
                           ))}

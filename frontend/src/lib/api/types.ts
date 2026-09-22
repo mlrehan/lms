@@ -424,7 +424,9 @@ export interface CalendarSession {
   session_end_time: string;
   platform: Platforms;
   classroom?: string | null;
+  /** Only populated for callers who may edit the session (tutors and administrators). Everyone else joins through POST /sessions/{id}/join, which is what makes the join window enforceable rather than cosmetic. */
   meeting_link?: string | null;
+  can_join_now?: boolean;
   origin?: string | null;
 }
 
@@ -2133,6 +2135,10 @@ export interface ResourceResponse {
   versions?: ResourceVersionResponse[];
   /** True when a public share token has been issued. */
   has_share_link?: boolean;
+  /** Caller's effective level: VIEW < DOWNLOAD < EDIT < MANAGE. */
+  my_level?: ResourcePermissionLevel | null;
+  /** True when this type can be rendered in the browser. */
+  can_preview?: boolean;
 }
 
 /**
@@ -2306,7 +2312,9 @@ export interface SessionBrief {
   starts_at?: string | null;
   ends_at?: string | null;
   classroom?: string | null;
-  meeting_link?: string | null;
+  join_opens_at?: string | null;
+  join_closes_at?: string | null;
+  can_join_now?: boolean;
 }
 
 export interface SessionCreateRequest {
@@ -2321,7 +2329,34 @@ export interface SessionCreateRequest {
   tutor_notes?: string | null;
 }
 
+/**
+ * One admission to one class.
+ *
+ * Returned by a POST rather than a GET on purpose: handing out a meeting link
+ * is an act that is recorded, not a property of the session that a cache or a
+ * prefetch may repeat on the caller's behalf.
+ */
+export interface SessionJoinResponse {
+  meeting_link: string;
+  platform: Platforms;
+  classroom?: string | null;
+  session_start_time: string;
+  session_end_time?: string | null;
+  join_opens_at: string;
+  join_closes_at: string;
+  /** True when the window was shut and the caller's session.override opened it. Shown back to them, and audited. */
+  joined_outside_window: boolean;
+}
+
 export interface SessionOverview {
+  /** Thirty minutes before the start. */
+  join_opens_at?: string | null;
+  /** The session's end. */
+  join_closes_at?: string | null;
+  /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
+  can_join_now?: boolean;
+  /** True when a recording exists to play back. */
+  has_recording?: boolean;
   public_id: string;
   number: number;
   total: number;
@@ -2330,8 +2365,11 @@ export interface SessionOverview {
   duration_minutes?: number | null;
   platform: Platforms;
   classroom?: string | null;
+  /** Only populated for callers who may edit the session (tutors and administrators). Everyone else joins through POST /sessions/{id}/join, which is what makes the join window enforceable rather than cosmetic. */
   meeting_link?: string | null;
+  /** Only populated for callers who may edit the session (tutors and administrators). Everyone else joins through POST /sessions/{id}/join, which is what makes the join window enforceable rather than cosmetic. */
   recording_link?: string | null;
+  can_manage?: boolean;
   student_notes?: string | null;
   tutor_notes?: string | null;
   origin?: string | null;
@@ -2346,7 +2384,33 @@ export interface SessionOverview {
   can_see_contacts: boolean;
 }
 
+export interface SessionRecordingAttachRequest {
+  /** A file already in the library. The caller needs EDIT on it. */
+  resource_id: string;
+}
+
+/**
+ * Where to play a recording, never where to download one.
+ */
+export interface SessionRecordingResponse {
+  /** Relative to the API root (the same base every other call uses), so a browser that reaches this API through a proxy composes it the same way it composes everything else. Streams the recording after re-checking permission on every request, including every seek. Present only for recordings stored in the LMS. */
+  playback_url?: string | null;
+  /** The provider's own link. Only ever given to callers who may edit the session -- it is a link out of the LMS and past its checks. */
+  external_url?: string | null;
+  name?: string | null;
+  mime_type?: string | null;
+  size?: number | null;
+}
+
 export interface SessionSessionResponse {
+  /** Thirty minutes before the start. */
+  join_opens_at?: string | null;
+  /** The session's end. */
+  join_closes_at?: string | null;
+  /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
+  can_join_now?: boolean;
+  /** True when a recording exists to play back. */
+  has_recording?: boolean;
   public_id: string;
   session_start_time?: string | null;
   session_end_time?: string | null;
@@ -2358,15 +2422,32 @@ export interface SessionSessionResponse {
   course_title?: string | null;
   tutor_id: string;
   tutor_username?: string | null;
+  /** Only populated for callers who may edit the session (tutors and administrators). Everyone else joins through POST /sessions/{id}/join, which is what makes the join window enforceable rather than cosmetic. */
   meeting_link?: string | null;
+  /** Only populated for callers who may edit the session (tutors and administrators). Everyone else joins through POST /sessions/{id}/join, which is what makes the join window enforceable rather than cosmetic. */
   recording_link?: string | null;
+  /** True when this caller may edit the session. */
+  can_manage?: boolean;
   tutor_notes?: string | null;
   student_notes?: string | null;
   /** True once a register has been marked for this session. */
   attendance_recorded?: boolean;
 }
 
+/**
+ * The timetable row. Carries the join *state* but never the link: this is
+ * the list a student actually looks at, so it is the list where a link would
+ * have done the most damage.
+ */
 export interface SessionSummary {
+  /** Thirty minutes before the start. */
+  join_opens_at?: string | null;
+  /** The session's end. */
+  join_closes_at?: string | null;
+  /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
+  can_join_now?: boolean;
+  /** True when a recording exists to play back. */
+  has_recording?: boolean;
   public_id: string;
   session_start_time?: string | null;
   session_end_time?: string | null;

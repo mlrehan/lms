@@ -17,9 +17,10 @@ import {
 import { api, type ApiError } from "@/lib/api/client";
 import type { AssignmentBrief, DashboardResponse, SessionBrief } from "@/lib/api/types";
 import { PageHeader } from "@/components/page-header";
-import { Badge, Card, CardHeader } from "@/components/ui/primitives";
+import { Badge, Card, CardHeader, SectionHeader } from "@/components/ui/primitives";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
+import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
@@ -31,41 +32,46 @@ function percent(value: number | null | undefined): string | null {
 function UpcomingSessions({ sessions }: { sessions: SessionBrief[] }) {
   const timeZone = useDisplayTimeZone();
   if (sessions.length === 0) {
-    return <p className="px-4 py-6 text-center text-sm text-muted-foreground">Nothing scheduled.</p>;
+    return (
+      <p className="px-4 py-8 text-center text-xs text-subtle-foreground">
+        No classes scheduled.
+      </p>
+    );
   }
   return (
-    <ul className="divide-y divide-border">
+    <ul className="divide-y divide-border-subtle">
       {sessions.map((session) => (
-        <li key={session.public_id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <li
+          key={session.public_id}
+          className="flex items-center justify-between gap-3 px-4 py-2 transition-colors duration-200 ease-out hover:bg-surface-muted/60"
+        >
           <div className="min-w-0">
             <Link
               href={`/sessions?session=${session.public_id}`}
-              className="block truncate text-sm font-medium hover:underline"
+              className="block truncate text-[13px] font-medium decoration-border-strong underline-offset-2 hover:underline"
             >
               {session.course_title}
             </Link>
-            <p className="truncate text-xs text-muted-foreground">
+            <p className="truncate text-2xs text-subtle-foreground">
               {session.batch_code}
               {session.classroom ? ` · ${session.classroom}` : ""}
             </p>
           </div>
           <div className="shrink-0 text-right">
-            <p className="text-xs font-medium tabular-nums">
+            <p className="text-2xs font-medium tabular-nums text-muted-foreground">
               {formatDateTime(session.starts_at, { timeZone })}
             </p>
-            {session.meeting_link ? (
-              <a
-                href={session.meeting_link}
-                target="_blank"
-                // `noopener` is what stops the opened page reaching back
-                // through `window.opener`; `noreferrer` keeps the console URL
-                // out of a third party's logs.
-                rel="noopener noreferrer"
-                className="text-xs text-primary hover:underline"
-              >
-                Join
-              </a>
-            ) : null}
+            {/* `SessionBrief` deliberately carries no meeting link: this panel
+                is drawn for students too, and the join window is enforced by
+                the API rather than by what a dashboard chooses to render. */}
+            <JoinClassButton
+              sessionId={session.public_id}
+              canJoinNow={session.can_join_now ?? false}
+              opensAt={session.join_opens_at}
+              closesAt={session.join_closes_at}
+              size="xs"
+              className="justify-end"
+            />
           </div>
         </li>
       ))}
@@ -77,24 +83,29 @@ function Deadlines({ items }: { items: AssignmentBrief[] }) {
   const timeZone = useDisplayTimeZone();
   const locale = useDisplayLocale();
   if (items.length === 0) {
-    return <p className="px-4 py-6 text-center text-sm text-muted-foreground">Nothing due.</p>;
+    return (
+      <p className="px-4 py-8 text-center text-xs text-subtle-foreground">Nothing due.</p>
+    );
   }
   return (
-    <ul className="divide-y divide-border">
+    <ul className="divide-y divide-border-subtle">
       {items.map((item) => (
-        <li key={item.public_id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <li
+          key={item.public_id}
+          className="flex items-center justify-between gap-3 px-4 py-2 transition-colors duration-200 ease-out hover:bg-surface-muted/60"
+        >
           <div className="min-w-0">
             <Link
               href={`/assignments/${item.public_id}`}
-              className="block truncate text-sm font-medium hover:underline"
+              className="block truncate text-[13px] font-medium decoration-border-strong underline-offset-2 hover:underline"
             >
               {item.title}
             </Link>
-            <p className="truncate text-xs text-muted-foreground">{item.course_title}</p>
+            <p className="truncate text-2xs text-subtle-foreground">{item.course_title}</p>
           </div>
           <div className="shrink-0 text-right">
             {item.is_overdue ? <Badge tone="danger">Overdue</Badge> : null}
-            <p className="text-xs text-muted-foreground" title={formatDateTime(item.due_date, { timeZone })}>
+            <p className="mt-0.5 text-2xs tabular-nums text-subtle-foreground" title={formatDateTime(item.due_date, { timeZone })}>
               {formatRelative(item.due_date, locale)}
             </p>
           </div>
@@ -131,7 +142,7 @@ export default function DashboardPage() {
       ) : error ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
       ) : !data ? null : (
-        <div className="space-y-6">
+        <div className="space-y-7">
           <StatGrid>
             <Stat
               label="Unread messages"
@@ -154,10 +165,8 @@ export default function DashboardPage() {
           </StatGrid>
 
           {data.student ? (
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Your studies
-              </h2>
+            <section className="space-y-3.5">
+              <SectionHeader title="Your studies" />
               <StatGrid>
                 <Stat label="Enrolled batches" value={data.student.enrolled_batches} icon={GraduationCap} />
                 <Stat label="Active courses" value={data.student.active_courses} icon={BookOpen} />
@@ -200,10 +209,8 @@ export default function DashboardPage() {
           ) : null}
 
           {data.teaching ? (
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Your teaching
-              </h2>
+            <section className="space-y-3.5">
+              <SectionHeader title="Your teaching" />
               <StatGrid>
                 <Stat label="Batches" value={data.teaching.batches_taught} icon={GraduationCap} />
                 <Stat label="Students" value={data.teaching.students_taught} icon={Users} />
@@ -232,10 +239,8 @@ export default function DashboardPage() {
           ) : null}
 
           {data.care ? (
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                People in your care
-              </h2>
+            <section className="space-y-3.5">
+              <SectionHeader title="People in your care" />
               <StatGrid>
                 <Stat label="People" value={data.care.people} icon={Users} />
                 <Stat
@@ -259,10 +264,8 @@ export default function DashboardPage() {
           ) : null}
 
           {data.institution ? (
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Institution
-              </h2>
+            <section className="space-y-3.5">
+              <SectionHeader title="Institution" />
               <StatGrid>
                 <Stat
                   label="Active users"

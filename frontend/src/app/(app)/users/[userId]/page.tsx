@@ -79,7 +79,7 @@ function RolesTab({ user }: { user: UserResponse }) {
               return (
                 <label
                   key={role.name}
-                  className="flex items-start gap-3 rounded-lg border border-border p-3"
+                  className="flex items-start gap-3 rounded-lg border border-border-subtle p-3"
                 >
                   <input
                     type="checkbox"
@@ -224,7 +224,7 @@ function SecurityTab({ user }: { user: UserResponse }) {
             </div>
           ) : null}
 
-          <div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-border-subtle p-3">
             <div className="space-y-1">
               <p className="text-sm font-medium">Allow this person to sign in</p>
               <p className="text-xs text-muted-foreground">

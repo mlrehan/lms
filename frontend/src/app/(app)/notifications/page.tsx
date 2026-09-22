@@ -76,7 +76,7 @@ function Feed() {
         <EmptyState icon={<Bell className="size-5" />} title="Nothing to catch up on" />
       ) : (
         <>
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border-subtle">
             {(data?.items ?? []).map((notification) => (
               <li
                 key={notification.public_id}
@@ -156,7 +156,7 @@ function Preferences() {
   return (
     <div className="space-y-4">
       {data.channels_note ? (
-        <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
           {data.channels_note}
         </p>
       ) : null}

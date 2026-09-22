@@ -160,7 +160,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
         <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-border text-left">
+              <tr className="border-b border-border-subtle text-left">
                 <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Candidate
                 </th>
@@ -181,7 +181,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
                 const passed =
                   numeric === null ? null : numeric >= Number(exam.passing_marks);
                 return (
-                  <tr key={row.studentId} className="border-b border-border/70 last:border-0">
+                  <tr key={row.studentId} className="border-b border-border-subtle/70 last:border-0">
                     <td className="px-3 py-2">
                       <Link href={`/users/${row.studentId}`} className="hover:underline">
                         {row.username}
@@ -231,7 +231,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
         </div>
       </CardBody>
       {canRecord ? (
-        <div className="border-t border-border px-4 py-3">
+        <div className="border-t border-border-subtle px-4 py-3">
           <FormActions>
             <Button variant="ghost" disabled={rows === null} onClick={() => setRows(null)}>
               Reset
@@ -303,7 +303,7 @@ function InvigilatorsTab({ exam }: { exam: ExamResponse }) {
                     className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                       checked
                         ? "border-primary bg-accent text-accent-foreground"
-                        : "border-border text-muted-foreground hover:border-border-strong"
+                        : "border-border-subtle text-muted-foreground hover:border-border-strong"
                     }`}
                   >
                     <input

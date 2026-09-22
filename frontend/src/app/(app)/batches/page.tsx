@@ -9,7 +9,7 @@ import { api } from "@/lib/api/client";
 import type { BatchSummary, PageBatchSummary } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Card } from "@/components/ui/primitives";
+import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination, type SortState } from "@/components/ui/data-table";
 import { TableToolbar } from "@/components/ui/table-toolbar";
 import { NativeSelect } from "@/components/ui/form";
@@ -21,6 +21,7 @@ import { RecreateSessionsDialog } from "@/components/domain/recreate-sessions-di
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatCalendarDate, formatDateTime } from "@/lib/format/datetime";
+import { durationLabel, shortMethod } from "@/lib/format/batch";
 
 
 // FullCalendar measures the DOM, so it is drawn on the client only.
@@ -28,18 +29,6 @@ const BatchCalendar = dynamic(() => import("@/components/domain/batch-calendar")
   ssr: false,
   loading: () => <LoadingState />,
 });
-
-/** "Classroom Training" -> "Classroom", so the column stays narrow. */
-function shortMethod(method: string | null | undefined): string {
-  return (method ?? "").replace(/\s*training\s*$/i, "").trim();
-}
-
-function duration(minutes: number | null | undefined): string {
-  if (!minutes) return "";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h ? `${h}h` : ""}${m ? `${m}m` : ""}`;
-}
 
 export default function BatchesPage() {
   const router = useRouter();
@@ -89,23 +78,25 @@ export default function BatchesPage() {
       key: "tutor",
       header: "Tutor",
       hideBelow: "lg",
+      width: "11rem",
       truncate: true,
-      cell: (batch) => batch.tutor_name ?? <span className="text-muted-foreground">—</span>,
+      cell: (batch) => batch.tutor_name ?? <span className="text-subtle-foreground">—</span>,
       title: (batch) => batch.tutor_name ?? undefined,
     },
     {
       key: "schedule",
       header: "Schedule",
       hideBelow: "xl",
+      width: "12rem",
       truncate: true,
       cell: (batch) =>
         batch.training_days ? (
           <span>
             {batch.training_days}
-            {batch.class_duration_minutes ? <span className="text-muted-foreground"> · {duration(batch.class_duration_minutes)}</span> : null}
+            {batch.class_duration_minutes ? <span className="text-muted-foreground"> · {durationLabel(batch.class_duration_minutes)}</span> : null}
           </span>
         ) : (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-subtle-foreground">—</span>
         ),
       title: (batch) => batch.training_days ?? undefined,
     },
@@ -128,7 +119,17 @@ export default function BatchesPage() {
       header: "Method",
       sortable: true,
       hideBelow: "lg",
-      cell: (batch) => (batch.training_method ? <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{shortMethod(batch.training_method)}</span> : <span className="text-muted-foreground">—</span>),
+      width: "9.5rem",
+      truncate: true,
+      cell: (batch) =>
+        batch.training_method ? (
+          <Badge tone="neutral" className="max-w-full truncate whitespace-nowrap">
+            {shortMethod(batch.training_method)}
+          </Badge>
+        ) : (
+          <span className="text-subtle-foreground">—</span>
+        ),
+      title: (batch) => batch.training_method ?? undefined,
     },
     {
       key: "sessions",
@@ -160,7 +161,7 @@ export default function BatchesPage() {
       sortable: true,
       align: "right",
       hideBelow: "xl",
-      cell: (batch) => (batch.batch_fee == null ? <span className="text-muted-foreground">—</span> : `£${batch.batch_fee.toLocaleString("en-GB")}`),
+      cell: (batch) => (batch.batch_fee == null ? <span className="text-subtle-foreground">—</span> : `£${batch.batch_fee.toLocaleString("en-GB")}`),
     },
     {
       key: "state",

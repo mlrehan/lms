@@ -314,7 +314,7 @@ function TeachingTab({ course }: { course: CourseResponse }) {
                       className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                         checked
                           ? "border-primary bg-accent text-accent-foreground"
-                          : "border-border text-muted-foreground hover:border-border-strong"
+                          : "border-border-subtle text-muted-foreground hover:border-border-strong"
                       }`}
                     >
                       <input
@@ -382,7 +382,7 @@ function TeachingTab({ course }: { course: CourseResponse }) {
                       className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                         checked
                           ? "border-primary bg-accent text-accent-foreground"
-                          : "border-border text-muted-foreground hover:border-border-strong"
+                          : "border-border-subtle text-muted-foreground hover:border-border-strong"
                       }`}
                     >
                       <input

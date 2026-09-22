@@ -108,6 +108,16 @@ class ResourceResponse(ResourceSummary):
     has_share_link: bool = Field(
         default=False, description="True when a public share token has been issued."
     )
+    # What *this* caller may do with the file. Sent so the console can hide the
+    # actions it would be refused rather than offering buttons that 403 -- the
+    # server is still the authority, this is only what the UI renders.
+    my_level: ResourcePermissionLevel | None = Field(
+        default=None,
+        description="Caller's effective level: VIEW < DOWNLOAD < EDIT < MANAGE.",
+    )
+    can_preview: bool = Field(
+        default=False, description="True when this type can be rendered in the browser."
+    )
     # The stored key is deliberately never exposed -- it is an internal
     # storage path, and publishing it invites callers to construct their own
     # URLs against the bucket instead of going through the permission check.

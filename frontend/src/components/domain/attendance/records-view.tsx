@@ -108,7 +108,7 @@ export function AttendanceRecords() {
   return (
     <div className="space-y-5">
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+        <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Status" className="w-40">
             {({ id }) => (
               <NativeSelect

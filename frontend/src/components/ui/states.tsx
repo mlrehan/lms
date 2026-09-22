@@ -16,44 +16,72 @@ import { cn } from "@/lib/utils";
  * "Something went wrong" tells nobody what to do.
  */
 
+/*
+ * Rows are staggered in width. Uniform full-width bars read as a striped
+ * placeholder graphic; varied ones read as text that has not arrived, which
+ * is what is actually happening.
+ */
+const SKELETON_WIDTHS = ["w-full", "w-11/12", "w-full", "w-9/12", "w-10/12", "w-8/12"];
+
 export function LoadingState({ label = "Loading", rows = 4 }: { label?: string; rows?: number }) {
   return (
-    <div className="space-y-3 p-4" aria-busy aria-live="polite">
+    <div className="space-y-2.5 p-4" aria-busy aria-live="polite">
       <span className="sr-only">{label}</span>
       {Array.from({ length: rows }).map((_, index) => (
-        <Skeleton key={index} className="h-9 w-full" />
+        <Skeleton
+          key={index}
+          className={cn("h-8", SKELETON_WIDTHS[index % SKELETON_WIDTHS.length])}
+        />
       ))}
     </div>
   );
 }
 
 export function InlineSpinner({ className }: { className?: string }): ReactNode {
-  return <Loader2 className={cn("size-4 animate-spin text-muted-foreground", className)} />;
+  return <Loader2 className={cn("size-4 animate-spin text-subtle-foreground", className)} />;
 }
 
+/**
+ * An empty screen is an invitation to act, so it always has room for one.
+ *
+ * The icon sits in a bordered tile rather than a filled circle: the circle
+ * is the decorative default, while a tile that matches the console's own
+ * radius and hairline reads as part of the same system.
+ */
 export function EmptyState({
   title,
   description,
   action,
   icon,
 }: {
-  title: string;
+  // ReactNode, not string: a table's empty message may already carry emphasis or a
+  // filter value, and forcing it through `string` would strip that at the call site.
+  title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
   icon?: ReactNode;
 }): ReactNode {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
-      <div className="rounded-full bg-muted p-3 text-muted-foreground">
-        {icon ?? <Inbox className="size-5" />}
+    <div className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+      <div
+        className={cn(
+          "flex size-11 items-center justify-center rounded-xl",
+          "border border-border-subtle bg-surface-muted text-subtle-foreground shadow-xs",
+          "[&_svg]:size-5",
+        )}
+        aria-hidden
+      >
+        {icon ?? <Inbox />}
       </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-foreground">{title}</p>
+      <div className="space-y-1.5">
+        <p className="font-display text-sm font-semibold tracking-tight text-foreground">{title}</p>
         {description ? (
-          <p className="mx-auto max-w-md text-sm text-muted-foreground">{description}</p>
+          <p className="mx-auto max-w-sm text-xs leading-relaxed text-muted-foreground">
+            {description}
+          </p>
         ) : null}
       </div>
-      {action}
+      {action ? <div className="pt-0.5">{action}</div> : null}
     </div>
   );
 }
@@ -72,7 +100,7 @@ export function ErrorState({
   if (api?.isForbidden) {
     return (
       <EmptyState
-        icon={<Lock className="size-5" />}
+        icon={<Lock />}
         title="You do not have access to this"
         description={
           <>
@@ -85,22 +113,16 @@ export function ErrorState({
   }
 
   if (api?.isNotFound) {
-    return (
-      <EmptyState
-        icon={<Ban className="size-5" />}
-        title="Not found"
-        description={api.message}
-      />
-    );
+    return <EmptyState icon={<Ban />} title="Not found" description={api.message} />;
   }
 
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
   const icon = offline ? (
-    <WifiOff className="size-5" />
+    <WifiOff />
   ) : api && api.status >= 500 ? (
-    <ServerCrash className="size-5" />
+    <ServerCrash />
   ) : (
-    <AlertTriangle className="size-5" />
+    <AlertTriangle />
   );
 
   const message = offline
@@ -114,10 +136,12 @@ export function ErrorState({
       icon={icon}
       title={offline ? "No connection" : "Something went wrong"}
       description={
-        <span className="space-y-1">
+        <span className="space-y-1.5">
           <span className="block">{message}</span>
           {api?.code && api.code !== "UNKNOWN" ? (
-            <span className="block font-mono text-xs text-muted-foreground/80">{api.code}</span>
+            <span className="block font-mono text-2xs tracking-normal text-subtle-foreground">
+              {api.code}
+            </span>
           ) : null}
         </span>
       }
@@ -149,7 +173,7 @@ export function QueryBoundary<T>({
   error: unknown;
   data: T | undefined;
   onRetry?: () => void;
-  empty?: { title: string; description?: ReactNode; action?: ReactNode } | null;
+  empty?: { title: ReactNode; description?: ReactNode; action?: ReactNode } | null;
   children: (data: T) => ReactNode;
   loadingRows?: number;
 }): ReactNode {

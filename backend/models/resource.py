@@ -164,6 +164,16 @@ class SharedResource(Base):
     )
     shared_with_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     shared_by_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    # What the recipient may do with it. A share had no level at all, so every
+    # share was implicitly "whatever the recipient's global role allows" -- which
+    # is how a read-only audience ended up able to download and, for staff, edit.
+    # DOWNLOAD is the default because handing someone a file and forbidding them
+    # to keep it is the unusual case, not the common one; VIEW expresses that.
+    level: Mapped[ResourcePermissionLevel] = mapped_column(
+        SQLEnum(ResourcePermissionLevel, name="resource_permission_level", native_enum=False),
+        nullable=False,
+        server_default=text(f"'{ResourcePermissionLevel.DOWNLOAD.value}'"),
+    )
     created_at: Mapped[datetime] = utc_datetime_column(nullable=False)
 
     __table_args__ = (UniqueConstraint('resource_id', 'shared_with_user_id', name="uq_shared_resources_resource_user"),)

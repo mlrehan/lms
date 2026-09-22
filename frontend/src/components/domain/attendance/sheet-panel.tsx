@@ -238,7 +238,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
         </div>
       ) : null}
       {!canEdit ? (
-        <p role="status" className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+        <p role="status" className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
           You can see this register but not change it: only {view.meta.assigned_tutor.name}, or a Super Admin acting for them, can.
         </p>
       ) : null}
@@ -253,7 +253,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
               type="button"
               aria-pressed={filter === s.value}
               onClick={() => setFilter(filter === s.value ? null : s.value)}
-              className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors", filter === s.value ? s.on : "border-border hover:bg-muted")}
+              className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors", filter === s.value ? s.on : "border-border-subtle hover:bg-muted")}
             >
               {s.label}
               <span className="font-semibold tabular-nums">{counts[s.value]}</span>
@@ -263,7 +263,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
             type="button"
             aria-pressed={filter === "UNMARKED"}
             onClick={() => setFilter(filter === "UNMARKED" ? null : "UNMARKED")}
-            className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors", filter === "UNMARKED" ? "border-foreground bg-foreground text-surface" : "border-dashed border-border hover:bg-muted")}
+            className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors", filter === "UNMARKED" ? "border-foreground bg-foreground text-surface" : "border-dashed border-border-subtle hover:bg-muted")}
           >
             Unmarked <span className="font-semibold tabular-nums">{counts.UNMARKED}</span>
           </button>
@@ -310,7 +310,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
         {visibleRows.length === 0 ? (
           <p className="p-6 text-center text-sm text-muted-foreground">{view.roster.length === 0 ? "Nobody is enrolled in this batch." : "No students match."}</p>
         ) : (
-          <ul ref={listRef} className="divide-y divide-border" aria-label="Students">
+          <ul ref={listRef} className="divide-y divide-border-subtle" aria-label="Students">
             {visibleRows.map((row) => {
               const id = row.student.public_id;
               const mark = marks?.[id] ?? { status: null, remarks: "" };
@@ -370,7 +370,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
                       placeholder="Note (e.g. reason for absence)"
                       aria-label={`Note for ${row.student.name}`}
                       onChange={(event) => change(id, { remarks: event.target.value })}
-                      className="mt-1 h-7 w-full rounded-md border border-border bg-surface px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-70"
+                      className="mt-1 h-7 w-full rounded-md border border-border-subtle bg-surface px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-70"
                     />
                   ) : null}
                 </li>
@@ -397,7 +397,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
       </label>
 
       {canEdit ? (
-        <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t border-border bg-surface/95 px-1 py-2.5 backdrop-blur">
+        <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t border-border-subtle bg-surface/95 px-1 py-2.5 backdrop-blur">
           <Button onClick={() => void submit()} disabled={!canSubmit} loading={saving === "submit"}>
             <Check /> {submitLabel}
           </Button>
@@ -423,7 +423,7 @@ export function AttendanceSheetPanel({ sessionId, onBack }: { sessionId: string;
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-border">
+      <div className="rounded-lg border border-border-subtle">
         <button type="button" onClick={() => setShowHistory((v) => !v)} aria-expanded={showHistory} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted">
           <History className="size-4 text-muted-foreground" aria-hidden /> Record & audit trail
           <span className="ml-auto text-xs font-normal text-muted-foreground">{view.meta.finalized_at ? `Submitted ${formatDateTime(view.meta.finalized_at, { timeZone })}` : view.meta.started_at ? `Started ${formatDateTime(view.meta.started_at, { timeZone })}` : "Nothing recorded yet"}</span>
@@ -441,7 +441,7 @@ function AuditTrail({ sessionId, view, timeZone }: { sessionId: string; view: Sh
   });
   const m = view.meta;
   return (
-    <div className="space-y-3 border-t border-border px-3 py-3 text-xs">
+    <div className="space-y-3 border-t border-border-subtle px-3 py-3 text-xs">
       <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1">
         <dt className="text-muted-foreground">Assigned tutor</dt>
         <dd>{m.assigned_tutor.name}</dd>
@@ -478,7 +478,7 @@ function AuditTrail({ sessionId, view, timeZone }: { sessionId: string; view: Sh
       ) : (history.data?.events ?? []).length === 0 ? (
         <p className="text-muted-foreground">No events yet.</p>
       ) : (
-        <ol className="space-y-2 border-l border-border pl-3">
+        <ol className="space-y-2 border-l border-border-subtle pl-3">
           {history.data?.events.map((e, i) => (
             <li key={`${e.at}-${i}`}>
               <p>

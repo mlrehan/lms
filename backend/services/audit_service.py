@@ -56,6 +56,12 @@ class AuditAction:
     GOOGLE_SYNC = "GOOGLE_SYNC"
     GOOGLE_CONNECT = "GOOGLE_CONNECT"
     GOOGLE_DISCONNECT = "GOOGLE_DISCONNECT"
+    # Who entered which class, and whether the join window was open at the
+    # time. The link is handed out one request at a time precisely so that
+    # there is something to record; without this row the endpoint would be a
+    # permission check with no memory.
+    CLASS_JOIN = "CLASS_JOIN"
+    RECORDING_VIEW = "RECORDING_VIEW"
 
 
 def _build(

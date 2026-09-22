@@ -150,7 +150,7 @@ export function UserPicker({
             placeholder="Search by name, username or email"
             aria-label="Search people"
           />
-          <div className="mt-3 max-h-80 overflow-y-auto scrollbar-thin rounded-lg border border-border">
+          <div className="mt-3 max-h-80 overflow-y-auto scrollbar-thin rounded-lg border border-border-subtle">
             {isFetching && !data ? (
               <div className="flex justify-center p-6">
                 <InlineSpinner />

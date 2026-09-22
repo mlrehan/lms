@@ -33,7 +33,7 @@ from backend.schemas.resource import (
 )
 from backend.services.resource_service import ResourceService
 from backend.storage import get_storage
-from backend.utils.enums import ResourceType
+from backend.utils.enums import ResourcePermissionLevel, ResourceType
 
 router = APIRouter(tags=["Resources & files"])
 
@@ -57,7 +57,9 @@ def _folder_response(
     )
 
 
-def _resource_response(r: Resource) -> ResourceResponse:
+def _resource_response(
+    r: Resource, *, level: ResourcePermissionLevel | None = None
+) -> ResourceResponse:
     versions = sorted(r.versions or [], key=lambda v: v.version_number, reverse=True)
     return ResourceResponse(
         public_id=r.public_id,
@@ -87,6 +89,8 @@ def _resource_response(r: Resource) -> ResourceResponse:
             for v in versions
         ],
         has_share_link=bool(r.share_token),
+        my_level=level,
+        can_preview=ResourceService.is_previewable(r.mime_type),
     )
 
 
@@ -126,6 +130,37 @@ async def _stream(key: str, *, filename: str | None, mime_type: str | None) -> S
         stream,
         media_type=mime_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename*=UTF-8\'\'{safe}'},
+    )
+
+
+async def _stream_inline(key: str, *, filename: str | None, mime_type: str | None) -> StreamingResponse:
+    """Serve a stored object for display *in* the page rather than as a download.
+
+    Three headers carry the safety of this endpoint, and none of them is optional:
+
+    * ``Content-Disposition: inline`` is what makes the browser render it.
+    * ``X-Content-Type-Options: nosniff`` stops the browser second-guessing the
+      declared type -- without it a file labelled ``text/plain`` whose bytes look
+      like markup can still be sniffed into HTML and executed.
+    * ``Content-Security-Policy: sandbox`` drops the response into an opaque
+      origin with no scripts, so even a type that slips past the allowlist cannot
+      reach cookies or call the API.
+
+    The allowlist in `ResourceService.PREVIEWABLE_TYPES` is the first line;
+    these are the second, because one list being edited carelessly should not be
+    enough to turn an upload into stored XSS.
+    """
+    stream = await get_storage().open_stream(key)
+    safe = quote(filename or "file")
+    return StreamingResponse(
+        stream,
+        media_type=mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{safe}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; object-src 'self'",
+            "Cache-Control": "private, max-age=60",
+        },
     )
 
 
@@ -306,7 +341,11 @@ async def get_resource(
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
     ],
 ) -> ResourceResponse:
-    return _resource_response(await ResourceService(session).get(resource_id, actor=actor))
+    service = ResourceService(session)
+    resource = await service.get(resource_id, actor=actor)
+    return _resource_response(
+        resource, level=await service.effective_level(resource, actor)
+    )
 
 
 @router.post(
@@ -350,6 +389,26 @@ async def download_resource(
     if url:
         return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     return await _stream(key, filename=resource.name, mime_type=resource.mime_type)
+
+
+@router.get("/resources/{resource_id}/preview", summary="Show a resource in the browser")
+async def preview_resource(
+    resource_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
+    ],
+):
+    """Read a file in place, without the right to keep a copy.
+
+    Needs only VIEW, where `/download` needs DOWNLOAD -- the two are separate so
+    a file can be shown to someone who may not take it away. The bytes are always
+    streamed through this server, never redirected to a presigned URL: a presigned
+    URL *is* a download link, and issuing one here would hand the viewer exactly
+    what the level was withholding.
+    """
+    resource, key = await ResourceService(session).resolve_preview(resource_id, actor=actor)
+    return await _stream_inline(key, filename=resource.name, mime_type=resource.mime_type)
 
 
 @router.patch(

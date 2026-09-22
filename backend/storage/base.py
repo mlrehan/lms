@@ -78,6 +78,20 @@ class StorageBackend(Protocol):
 
     async def open_stream(self, key: str) -> AsyncIterator[bytes]: ...
 
+    async def open_range(self, key: str, start: int, end: int) -> AsyncIterator[bytes]:
+        """Bytes `start`..`end` inclusive, HTTP's own half-open-free convention.
+
+        Declared on the protocol rather than bolted onto one backend because a
+        video served without it cannot be seeked: the browser asks for a range,
+        gets the whole file with a 200, and every scrub restarts the download.
+        """
+        ...
+
+    async def size(self, key: str) -> int:
+        """Bytes on disk. A ranged response must state the total, and the
+        database's stored `size` is a denormalised copy that can be wrong."""
+        ...
+
     async def delete(self, key: str) -> None: ...
 
     async def exists(self, key: str) -> bool: ...

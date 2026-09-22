@@ -79,7 +79,7 @@ function GradeDialog({
               Student-authored text, rendered as text. Nothing in this console
               turns a submission into markup.
             */}
-            <p className="max-h-56 overflow-y-auto scrollbar-thin whitespace-pre-wrap break-words rounded-lg border border-border bg-surface-muted p-3 text-sm">
+            <p className="max-h-56 overflow-y-auto scrollbar-thin whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-surface-muted p-3 text-sm">
               {submission.content}
             </p>
           </div>

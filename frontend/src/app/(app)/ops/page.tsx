@@ -127,7 +127,7 @@ function Health() {
         {Object.entries(data?.checks ?? {}).map(([name, check]) => (
           <div
             key={name}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle px-3 py-2"
           >
             <span className="flex items-center gap-2 text-sm font-medium">
               {name === "database" ? (
@@ -245,7 +245,7 @@ function Metrics() {
       </StatGrid>
 
       {data?.scope ? (
-        <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
           {data.scope}
         </p>
       ) : null}
@@ -339,7 +339,7 @@ function DatabasePanel() {
         />
       </StatGrid>
 
-      <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
+      <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
         Diagnostic, not authoritative. The <code className="font-mono text-xs">pg_stat_*</code>{" "}
         counters reset on <code className="font-mono text-xs">pg_stat_reset()</code> and after a
         crash, so &ldquo;never used&rdquo; means &ldquo;not since they were last reset&rdquo;.
@@ -389,7 +389,7 @@ function DatabasePanel() {
             <p className="text-sm text-muted-foreground">None reported.</p>
           </CardBody>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border-subtle">
             {(data?.unused_indexes ?? []).map((index, position) => (
               <li
                 key={`${index.index ?? position}`}

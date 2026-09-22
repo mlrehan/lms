@@ -176,7 +176,7 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
       ) : data ? (
         <>
           {data.truncated ? (
-            <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground dark:text-warning">
+            <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
               This result hit the server&rsquo;s group cap and is incomplete. Narrow the filters to
               see the rest.
             </p>
@@ -191,31 +191,48 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
               <CardBody>
                 <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    {/*
+                      `barCategoryGap` keeps a visible surface gap between adjacent bars, and
+                      `maxBarSize` stops three groups rendering as three slabs the width of the
+                      panel. A magnitude chart is read along the tops of the bars; their width
+                      carries no information, so it should not dominate the panel.
+                    */}
+                    <BarChart
+                      data={chartData}
+                      margin={{ top: 8, right: 8, bottom: 8, left: 0 }}
+                      barCategoryGap="28%"
+                    >
+                      {/* Solid hairline, not a dashed rule: dashes are texture competing with
+                          the data, and the grid's job is to recede. */}
+                      <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
                       <XAxis
                         dataKey="label"
-                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                        tick={{ fontSize: 11, fill: "var(--subtle-foreground)" }}
                         tickLine={false}
-                        axisLine={{ stroke: "var(--border)" }}
+                        axisLine={{ stroke: "var(--border-subtle)" }}
                         interval="preserveStartEnd"
                       />
                       <YAxis
-                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                        tick={{ fontSize: 11, fill: "var(--subtle-foreground)" }}
                         tickLine={false}
                         axisLine={false}
-                        width={48}
+                        width={44}
+                        allowDecimals={false}
                       />
                       <RechartsTooltip
-                        cursor={{ fill: "var(--muted)" }}
+                        cursor={{ fill: "var(--muted)", radius: 4 }}
                         contentStyle={{
-                          background: "var(--surface)",
-                          border: "1px solid var(--border)",
+                          background: "var(--overlay)",
+                          border: "1px solid var(--border-subtle)",
                           borderRadius: 8,
+                          boxShadow: "var(--elevation-overlay)",
                           fontSize: 12,
+                          padding: "6px 10px",
                         }}
+                        labelStyle={{ color: "var(--foreground)", fontWeight: 600, marginBottom: 2 }}
+                        itemStyle={{ color: "var(--muted-foreground)" }}
                       />
-                      <Bar dataKey="value" fill={BAR_COLOR} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="value" fill={BAR_COLOR} radius={[4, 4, 0, 0]} maxBarSize={48} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -236,16 +253,16 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
               }
             />
             <div className="overflow-x-auto scrollbar-thin">
-              <table className="w-full border-collapse text-sm">
+              <table className="w-full border-collapse text-[13px]">
                 <thead>
-                  <tr className="border-b border-border text-left">
-                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b border-border-subtle text-left">
+                    <th className="eyebrow px-4 py-2 text-left">
                       {humanise(data.group_by)}
                     </th>
                     {data.columns.map((column) => (
                       <th
                         key={column}
-                        className="whitespace-nowrap px-4 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                        className="eyebrow whitespace-nowrap px-4 py-2 text-right"
                       >
                         {humanise(column)}
                       </th>
@@ -257,19 +274,22 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
                     <tr>
                       <td
                         colSpan={data.columns.length + 1}
-                        className="px-4 py-10 text-center text-sm text-muted-foreground"
+                        className="px-4 py-12 text-center text-xs text-subtle-foreground"
                       >
                         Nothing matches these filters.
                       </td>
                     </tr>
                   ) : (
                     data.rows.map((row) => (
-                      <tr key={row.key} className="border-b border-border/70 last:border-0">
-                        <th scope="row" className="px-4 py-2 text-left font-normal">
+                      <tr
+                        key={row.key}
+                        className="border-b border-border-subtle transition-colors duration-200 ease-out last:border-0 hover:bg-surface-muted/60"
+                      >
+                        <th scope="row" className="px-4 py-1.5 text-left font-medium">
                           {row.label}
                         </th>
                         {data.columns.map((column) => (
-                          <td key={column} className="px-4 py-2 text-right tabular-nums">
+                          <td key={column} className="px-4 py-1.5 text-right tabular-nums">
                             {/*
                               `null` is not zero: it means the metric is not
                               computable for this group, e.g. an attendance
