@@ -29,6 +29,8 @@ from backend.api.v1 import (
     integrations,
     messages,
     notifications,
+    push,
+    realtime,
     ops,
     organizations,
     quizzes,
@@ -67,6 +69,8 @@ router.include_router(guardians.router)
 router.include_router(team.router)
 router.include_router(messages.router)
 router.include_router(notifications.router)
+router.include_router(push.router)
+router.include_router(realtime.router)
 router.include_router(announcements.router)
 router.include_router(discussions.router)
 router.include_router(discussions.replies_router)

@@ -1014,6 +1014,93 @@ class MailSettings(BaseSettings):
 # =============================================================================
 # LOGGING
 # =============================================================================
+# =============================================================================
+# REALTIME
+# =============================================================================
+
+
+class RealtimeBackend(str, Enum):
+    """Where events are fanned out.
+
+    `memory` is correct for exactly one process and is refused in a deployed
+    environment -- see `backend/realtime/bus.py` for why that failure mode is
+    worse than no realtime at all.
+    """
+
+    MEMORY = "memory"
+    REDIS = "redis"
+
+
+class RealtimeSettings(BaseSettings):
+    model_config = _BASE_SETTINGS_CONFIG | SettingsConfigDict(env_prefix="REALTIME_")
+
+    enabled: bool = True
+    backend: RealtimeBackend = RealtimeBackend.MEMORY
+    redis_url: str = ""
+
+    # Long-lived connections die quietly: a proxy, a load balancer or a laptop
+    # lid closing severs them with nothing sent either way. A comment frame on
+    # this interval keeps the connection warm and, more usefully, is what makes
+    # a dead one detectable from the server side.
+    heartbeat_seconds: int = Field(default=25, ge=5, le=300)
+
+    # A cap on how long one stream may run before the client is asked to
+    # reconnect. Bounds the damage from a subscriber leak and gives rolling
+    # deploys a point at which connections naturally move to new workers.
+    max_stream_seconds: int = Field(default=60 * 30, ge=60)
+
+    # One person, several tabs, is ordinary. One person with two hundred open
+    # streams is a bug or an attack, and each one holds a task and a queue.
+    max_streams_per_user: int = Field(default=8, ge=1, le=64)
+
+
+# =============================================================================
+# WEB PUSH
+# =============================================================================
+
+
+class PushSettings(BaseSettings):
+    """Keys for notifying a browser that is not open.
+
+    VAPID is an identity, not a secret shared with the push service: the public
+    key is handed to the browser at subscribe time and the private key signs
+    each send, which is how Mozilla or Google can tell that the message really
+    came from this deployment. Generate a pair with:
+
+        python -m backend.cli.generate_vapid_keys
+
+    It prints `PUSH_VAPID_PUBLIC_KEY` / `PUSH_VAPID_PRIVATE_KEY` -- one
+    underscore, matching every other group here. Two would be silently ignored
+    and the feature would stay off with nothing saying why.
+
+    Unset keys mean the feature is off, and off is honest: a Subscribe button
+    that succeeds and then never delivers anything is worse than one that is
+    not offered.
+    """
+
+    model_config = _BASE_SETTINGS_CONFIG | SettingsConfigDict(env_prefix="PUSH_")
+
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+
+    # Required by the spec so a push service has somebody to contact about a
+    # misbehaving sender. `mailto:` or an https URL.
+    subject: str = "mailto:admin@example.com"
+
+    # How long a push service may hold an undelivered message for a device that
+    # is offline. A day-old "you have a new message" is noise, not news.
+    ttl_seconds: int = Field(default=60 * 60 * 12, ge=0, le=60 * 60 * 24 * 28)
+
+    # One person on a laptop, a phone and a tablet is ordinary; thirty stale
+    # subscriptions is a browser that keeps re-registering, and each one is a
+    # network call on every notification.
+    max_devices_per_user: int = Field(default=10, ge=1, le=50)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.vapid_public_key and self.vapid_private_key)
+
+
 class LoggingSettings(BaseSettings):
     model_config = (
         _BASE_SETTINGS_CONFIG
@@ -1101,6 +1188,8 @@ class Settings(BaseModel):
         default_factory=LoggingSettings,
     )
 
+    realtime: RealtimeSettings = Field(default_factory=RealtimeSettings)
+    push: PushSettings = Field(default_factory=PushSettings)
     google: GoogleSettings = Field(default_factory=GoogleSettings)
     locale: LocaleSettings = Field(default_factory=LocaleSettings)
     lait: LaitSettings = Field(

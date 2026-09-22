@@ -126,6 +126,17 @@ async def teardown(session) -> None:  # noqa: ANN001
     await session.execute(text("DELETE FROM enrollments WHERE batch_id IN (SELECT id FROM batches WHERE batch_code LIKE :c)"), p)
     await session.execute(text("DELETE FROM batches WHERE batch_code LIKE :c"), p)
     await session.execute(text("DELETE FROM courses WHERE code LIKE :t"), p)
+    # The realtime and push checks send real messages, which create real
+    # notifications and mail rows. Ordered child-first, because every one of
+    # these has a foreign key to `users`.
+    users = "(SELECT id FROM users WHERE username LIKE :u)"
+    await session.execute(text(f"DELETE FROM push_subscriptions WHERE user_id IN {users}"), p)
+    await session.execute(text(f"DELETE FROM notifications WHERE user_id IN {users}"), p)
+    await session.execute(text(f"DELETE FROM notification_preferences WHERE user_id IN {users}"), p)
+    await session.execute(text(f"DELETE FROM mail_recipients WHERE user_id IN {users}"), p)
+    await session.execute(text(f"DELETE FROM mail_recipients WHERE message_id IN (SELECT id FROM mail_messages WHERE sender_id IN {users})"), p)
+    await session.execute(text(f"DELETE FROM mail_attachments WHERE uploader_id IN {users}"), p)
+    await session.execute(text(f"DELETE FROM mail_messages WHERE sender_id IN {users}"), p)
     await session.execute(text("DELETE FROM tokens WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
     await session.execute(text("DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
     await session.execute(text("DELETE FROM users WHERE username LIKE :u"), p)

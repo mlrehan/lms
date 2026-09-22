@@ -1895,6 +1895,36 @@ export interface PublishResultsRequest {
   is_published: boolean;
 }
 
+export interface PushDeviceResponse {
+  public_id: string;
+  user_agent?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
+/**
+ * What a browser needs before it can subscribe at all.
+ */
+export interface PushKeyResponse {
+  /** False when this deployment has no VAPID keys configured. */
+  enabled: boolean;
+  /** The VAPID application server key, passed to pushManager.subscribe. Public by design -- it identifies this deployment to a push service and authorises nothing. */
+  public_key?: string | null;
+}
+
+/**
+ * Exactly what `PushSubscription.toJSON()` produces in the browser.
+ */
+export interface PushSubscribeRequest {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
+export interface PushUnsubscribeRequest {
+  endpoint: string;
+}
+
 export interface QuestionCreateRequest {
   question_text: string;
   question_type: QuestionType;

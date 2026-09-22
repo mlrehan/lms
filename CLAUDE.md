@@ -2470,3 +2470,140 @@ real browser is the obvious next check and is deliberately not claimed as done.
 **Status:** full backend suite green (~808 tests, exit 0), plus 49 new ones --
 11 for the window, 16 for `Range` parsing, 17 join/recording integration against
 live Postgres, 5 end-to-end streaming. `npm run build` compiles 25 routes.
+
+## Realtime messaging, notifications and Web Push
+
+Item 1 of the six-subsystem brief. Before this, an unread badge was a 60-second
+poll and an open messages screen never refreshed at all; `redis` had been a
+declared dependency since the start and was imported by nothing.
+
+**New:** `backend/core/events.py`, `backend/realtime/bus.py`,
+`backend/api/v1/realtime.py` (SSE), `backend/services/push_service.py`,
+`backend/api/v1/push.py`, `backend/models/push.py` + migration `f2a8d3b61c94`,
+`backend/cli/generate_vapid_keys.py`, `RealtimeSettings` and `PushSettings`,
+plus `frontend/src/lib/realtime.ts`, `frontend/src/lib/push.ts` and
+`frontend/public/sw.js`.
+
+**Three rules shape the whole layer, and each is the answer to a way it could
+go wrong:**
+
+1. **An event is a hint, never a payload.** It says "your unread count
+   changed", not what the message says. `core/privacy.py` decides per *reader*
+   whether a name or an email address is visible, and an event is composed once
+   by whoever performed the write -- so a payload assembled there would be
+   assembled for the wrong viewer and would sail straight past the masking. The
+   browser is told something changed and re-reads it through the ordinary
+   endpoint, where the rule still applies. Proven live: the `message.received`
+   frame carries `data: {}`.
+2. **Nothing is published until the transaction commits.** A notification is
+   staged inside the caller's transaction on purpose, so a tray cannot announce
+   a grade whose insert rolled back -- and a chime that beat the commit would
+   reintroduce that bug in the form people actually notice. Events are queued on
+   the session and promoted by SQLAlchemy's own `after_commit`; `after_rollback`
+   and `after_soft_rollback` discard them.
+3. **An event is addressed to one user, and the channel is derived from the
+   authenticated id.** There is no parameter anywhere that selects a channel,
+   which is the only reason a subscription needs no authorization check of its
+   own.
+
+**Six decisions worth not re-litigating:**
+
+1. **SSE, not WebSocket.** The traffic is one-directional. A WebSocket adds a
+   second protocol, a second auth path and a second thing for a proxy to get
+   wrong, in exchange for an upstream channel nothing needs. SSE is an ordinary
+   GET, so it inherits the console's BFF proxy and its cookie auth unchanged.
+2. **The SSE route authenticates by hand instead of using `CurrentUser`.**
+   FastAPI closes a `yield` dependency *after* the response body ends -- which
+   for a stream is half an hour later -- so `DBSession` would pin one pooled
+   connection per open tab. A handful of tabs would starve every other request
+   in the process. The caller is resolved in a session this route opens and
+   closes itself, and the stream then holds no database connection at all.
+3. **`Subscription.next_event(timeout)` rather than an async iterator.**
+   `asyncio.wait_for` around a generator's `__anext__` **finalises the
+   generator** on timeout, so an iterator-shaped API would end every connection
+   on its first idle heartbeat -- which is every connection, almost always.
+4. **`memory` is refused in a deployed environment.** With several workers an
+   in-memory fan-out reaches only the browsers connected to the worker that did
+   the write, so delivery appears to work and fails for most users,
+   intermittently, with nothing in the logs. `build_bus` raises rather than
+   leaving that as an inherited default. **The Redis adapter is written but has
+   not been run against a real Redis** -- none is available on this machine --
+   and that is stated rather than implied.
+5. **A message raises two events, and a notification preference silences only
+   one.** Switching off the *notification* for messages must not make the
+   **inbox badge** stale; those are different questions and tying them together
+   would make "don't notify me" quietly mean "show me a wrong number".
+6. **Push is sent unconditionally and the service worker decides whether to
+   show it.** Server-side presence is wrong often enough to matter -- a tab open
+   in a background window holds a live stream and is read by nobody -- and
+   across workers it would need a Redis key with a TTL whose every edge is a
+   notification somebody never gets. `clients.matchAll()` can see whether a
+   window is open **and focused**, which is the actual question, and only the
+   browser can answer it.
+
+**A push payload carries a title and nothing else.** It lands on a device that
+may be unlocked on a desk, and it is composed at write time -- before the reader,
+and therefore the privacy rules that apply to them, are known. Verified live:
+neither the message subject nor the sender's name appears anywhere in the
+encrypted body.
+
+**Web Push was proven without a browser**, by standing up a real HTTP server
+that plays the part of Mozilla's or Google's push endpoint and pointing a real
+subscription row at it. That makes the send a real network call through
+`pywebpush` with real P-256 key material, which is the only way to learn whether
+the key format `generate_vapid_keys` produces is one the library accepts. A
+mocked `webpush()` would only assert that I called my own wrapper.
+`tests/integration/test_web_push.py` asserts the VAPID `Authorization` header,
+`Content-Encoding: aes128gcm`, that the plaintext title is absent from the body,
+that a **410 deletes the subscription** and that a **503 does not** -- the second
+being what stops "forgotten" passing because every failure deletes.
+
+### Two defects found by running it rather than reading it
+
+1. **`generate_vapid_keys` printed environment variable names that do not
+   work.** It emitted `PUSH__VAPID_PUBLIC_KEY`; this project's settings use a
+   *single* underscore (`APP_NAME`, `STORAGE_MODE`, so `PUSH_VAPID_PUBLIC_KEY`).
+   Pasting its output into `.env` would leave `configured` false and push
+   silently off -- exactly the failure the `enabled: false` field on
+   `GET /push/key` exists to prevent, reintroduced by the tool that sets it up.
+   Found because the live check reported `enabled: False` after I exported the
+   names the generator told me to. `REALTIME__*` in the bus's refusal messages
+   was wrong the same way and is fixed.
+2. **The key format was verified against `py_vapid`, not assumed.** Before
+   wiring it in, the generated private key was loaded with `Vapid01.from_string`
+   and the derived public key compared byte-for-byte with the printed one (65
+   bytes, uncompressed point). A format that merely looks right is how a
+   "working" push config fails on its first real send.
+
+A third thing, caught by the React Compiler lint rather than at runtime:
+`usePushSubscription` set state synchronously inside an effect, which triggers
+cascading renders. Fixing it properly (detect-then-set, with the effect owning
+every write) also added the cancellation it was missing, so navigating away
+mid-check can no longer set state on an unmounted component.
+
+### Verified
+
+**Live, over a real socket** (`scripts/_live_check_realtime.py`,
+`_live_check_push.py`): a stream opens and announces itself; a sent message
+arrives as an event in **0.46s** direct and **0.31s through the console's BFF
+proxy** -- the number that proves the proxy is not buffering, which is the exact
+layer that once destroyed binary uploads by reading bodies as text; another
+user's stream stays silent while the addressee's fires; no token and a bad token
+are both 401. With VAPID configured, `POST /messages` put a **VAPID-signed,
+aes128gcm-encrypted push on the wire in 1.3s while the sender waited 0.36s**,
+and unsubscribing removed the device.
+
+**Mutation-tested, six guards:** publishing before the commit (3 tests fail),
+dropping the badge invalidation on a remote read, inventing a sender name in the
+message toast, treating any push failure as a dead device, and an unscoped
+`unregister` -- each fails exactly the matching test and passes when restored.
+
+**Status:** full backend suite green -- **824 tests**, exit 0 -- including 16 new ones (8 after-commit and bus, 8 Web Push), plus 10 new frontend tests for the hook. `npm run build`,
+`tsc --noEmit`, `eslint src` (0 errors) and `vitest` (103 tests) all pass.
+
+**Not verified through a browser.** The Chrome extension is not connected in
+this session and signing in is not something to work around, so the permission
+prompt, the service worker's focus check and the toast are proven by unit tests
+and by the protocol-level live checks, not by clicking. **The Redis bus and a
+real vendor push endpoint (Google/Mozilla) are likewise unexercised** -- both
+need infrastructure this machine does not have.

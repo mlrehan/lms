@@ -29,6 +29,7 @@ from .integration import CalendarFeed, WebhookDelivery, WebhookEndpoint
 from .user_sync import UserSyncRun
 from .google_connection import GoogleChangeRequest, GoogleConnection
 from .notification import Notification, Announcement
+from .push import PushSubscription
 from .shared_links import SharedLink, SharedLinkTarget
 
 __all__ = [
@@ -61,7 +62,8 @@ __all__ = [
     # Certificates & badges
     "Certificate", "CertificateIssued", "Badge", "UserBadge",
     # Notifications
-    "Notification", "Announcement",
+    "Notification",
+    "PushSubscription", "Announcement",
     # Shared links
     "SharedLink", "SharedLinkTarget",
 ]

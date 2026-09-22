@@ -37,6 +37,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import NotFoundError, ValidationError
+from backend.core.events import EventKind, RealtimeEvent, queue_event
 from backend.core.logging import get_logger
 from backend.core.notification_types import (
     ALL_TYPES,
@@ -99,6 +100,24 @@ class NotificationService:
             sent_at=_now(),
         )
         self.session.add(notification)
+
+        # Queued, not published: `queue_event` releases it only if this
+        # transaction commits. A notification is staged inside the caller's
+        # transaction precisely so a tray cannot announce something that rolled
+        # back, and a chime that beat the commit would undo that guarantee in
+        # the most visible way available.
+        #
+        # `title` and `type` travel with it because both were composed for this
+        # recipient by us; nothing here is another person's data, so no privacy
+        # rule is being routed around. Anything richer is re-read by the client.
+        queue_event(
+            self.session.sync_session,
+            RealtimeEvent(
+                kind=EventKind.NOTIFICATION_CREATED,
+                user_id=user_id,
+                data={"type": type_, "title": notification.title},
+            ),
+        )
         return notification
 
     async def notify(

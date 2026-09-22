@@ -28,6 +28,7 @@ import {
 import { Pagination } from "@/components/ui/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
+import { usePushSubscription } from "@/lib/push";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
@@ -127,6 +128,51 @@ function Feed() {
   );
 }
 
+function DevicePush() {
+  const { state, busy, subscribe, unsubscribe, error } = usePushSubscription();
+
+  // Each state is a different, separately-fixable problem. "Subscribe did
+  // nothing" is the least actionable message a person can be handed, so none
+  // of these collapse into one.
+  const explanation: Record<typeof state, string> = {
+    checking: "Checking whether this device can receive notifications…",
+    unsupported: "This browser does not support push notifications.",
+    insecure: "Push notifications need a secure (https) connection.",
+    disabled: "Push notifications are not configured on this server.",
+    denied:
+      "You blocked notifications for this site. Re-allow them in your browser’s site settings to turn them back on here.",
+    subscribed: "This device will receive notifications even when the LMS is closed.",
+    available: "Get notified on this device when the LMS is closed.",
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="This device"
+        description="Separate from the switches below, which decide what is worth telling you at all."
+      />
+      <CardBody className="space-y-3">
+        <p className="text-sm text-muted-foreground">{explanation[state]}</p>
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+
+        {state === "subscribed" ? (
+          <Button variant="secondary" size="sm" loading={busy} onClick={() => void unsubscribe()}>
+            Turn off on this device
+          </Button>
+        ) : null}
+        {state === "available" ? (
+          // Only ever from a click: an unprompted permission request is the
+          // pattern browsers penalise, and a dismissal can cost this origin
+          // the ability to ask again at all.
+          <Button size="sm" loading={busy} onClick={() => void subscribe()}>
+            Turn on for this device
+          </Button>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
 function Preferences() {
   const { permissions } = useSession();
   const canEdit = permissions.has("notification.update");
@@ -155,6 +201,8 @@ function Preferences() {
 
   return (
     <div className="space-y-4">
+      <DevicePush />
+
       {data.channels_note ? (
         <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">
           {data.channels_note}

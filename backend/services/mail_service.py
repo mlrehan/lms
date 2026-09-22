@@ -40,6 +40,7 @@ from backend.services.audit_service import AuditAction
 from backend.services.mail_audience import MAX_RECIPIENTS, MailAudience, display_name, role_label
 from backend.services.mail_html import clean_subject, sanitize_html, snippet, to_text
 from backend.core.notification_types import NotificationType
+from backend.core.events import EventKind, RealtimeEvent, queue_event
 from backend.services.notification_service import NotificationService
 from backend.storage import get_storage
 from backend.storage.base import build_key
@@ -68,6 +69,19 @@ def safe_filename(raw: str | None) -> str:
     name = os.path.basename((raw or "").replace("\\", "/"))
     name = re.sub(r"[\x00-\x1f\x7f‪-‮⁦-⁩]", "", name).strip(" .")
     return (name or "attachment")[:200]
+
+
+def _tell(session, user_ids, kind: str) -> None:  # noqa: ANN001
+    """Nudge each person's open tabs, once this transaction commits.
+
+    Separate from the notification emit below on purpose. A preference can
+    switch the *notification* off -- somebody who does not want a tray entry
+    for every message -- but their inbox still gained a message and the unread
+    badge on it must still be right. Tying the two together would make
+    "don't notify me" quietly mean "show me a stale count".
+    """
+    for user_id in dict.fromkeys(user_ids):
+        queue_event(session.sync_session, RealtimeEvent(kind=kind, user_id=user_id))
 
 
 class MailService:
@@ -170,6 +184,7 @@ class MailService:
             # `MESSAGE_RECEIVED` was in the catalogue and shown as a preference toggle that defaults to on, but
             # nothing ever raised it -- so the switch governed nothing. Bcc recipients are notified too: being
             # hidden from the other recipients is not a reason to be hidden from yourself.
+            _tell(self.session, [people[pid].id for pid in kinds], EventKind.MESSAGE_RECEIVED)
             await NotificationService(self.session).notify_many(
                 [people[pid].id for pid in kinds],
                 type_=NotificationType.MESSAGE_RECEIVED,
@@ -406,6 +421,9 @@ class MailService:
                 row.is_starred = starred
         if read is not None and row is not None:
             row.is_read, row.read_at = read, (_now() if read else None)
+            # Reading on a phone should clear the badge on the desktop. Same
+            # person, other tabs -- which is the only audience this event has.
+            _tell(self.session, [actor.id], EventKind.MESSAGE_UPDATED)
 
     async def remove(self, actor: User, public_id: uuid.UUID) -> None:
         message, row = await self._mine_or_received(actor, public_id)
@@ -424,4 +442,7 @@ class MailService:
         result = await self.session.execute(
             update(MailRecipient).where(MailRecipient.user_id == actor.id, MailRecipient.is_read.is_(False), MailRecipient.message_id.in_(sent_ids)).values(is_read=True, read_at=_now())
         )
-        return int(result.rowcount or 0)
+        changed = int(result.rowcount or 0)
+        if changed:
+            _tell(self.session, [actor.id], EventKind.MESSAGE_UPDATED)
+        return changed

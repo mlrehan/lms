@@ -20,6 +20,7 @@ import type { ReactNode } from "react";
 import { api } from "@/lib/api/client";
 import type { UnreadCountResponse } from "@/lib/api/types";
 import { useSession, useSignOut } from "@/lib/auth/session";
+import { useRealtime } from "@/lib/realtime";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -62,16 +63,21 @@ function UnreadDot({ count }: { count: number }): ReactNode {
   );
 }
 
-function useUnread(path: string, enabled: boolean): number {
+function useUnread(path: string, enabled: boolean, live: boolean): number {
   const { data } = useQuery({
     queryKey: ["unread", path],
     queryFn: () => api.get<UnreadCountResponse>(path),
     enabled,
-    // Polled rather than pushed: this backend has no realtime channel, and a
-    // badge that only updates on navigation is worse than one that lags a
-    // minute. Stated plainly rather than dressed up as live.
-    refetchInterval: 60_000,
+    // Pushed now -- `useRealtime` invalidates this key the moment something
+    // arrives. The poll stays as a backstop rather than the mechanism: a
+    // stream can be down (realtime disabled, a proxy that eats it, a
+    // reconnect in progress) and the badge must still be right eventually.
+    // Five minutes when the stream is up, one when it is not.
+    refetchInterval: live ? 300_000 : 60_000,
     staleTime: 30_000,
+    // A tab that comes back to the foreground may have missed events while
+    // the browser had the connection suspended.
+    refetchOnWindowFocus: true,
   });
   return data?.unread ?? 0;
 }
@@ -122,10 +128,17 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
   const { user, permissions, roles } = useSession();
   const signOut = useSignOut();
 
-  const unreadMessages = useUnread("/messages/unread-count", permissions.has("message.read"));
+  const canMessage = permissions.has("message.read");
+  const canBeNotified = permissions.has("notification.read");
+  // One connection for the whole app, opened here because the topbar is the
+  // one component mounted on every signed-in screen.
+  const { connected } = useRealtime(canMessage || canBeNotified);
+
+  const unreadMessages = useUnread("/messages/unread-count", canMessage, connected);
   const unreadNotifications = useUnread(
     "/notifications/unread-count",
-    permissions.has("notification.read"),
+    canBeNotified,
+    connected,
   );
 
   return (
