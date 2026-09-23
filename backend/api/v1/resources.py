@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 
 from backend.core.privacy import visible_username
@@ -32,6 +32,7 @@ from backend.schemas.resource import (
     SharedResourceResponse,
 )
 from backend.services.resource_service import ResourceService
+from backend.api.streaming import stream_for_playback
 from backend.storage import get_storage
 from backend.utils.enums import ResourcePermissionLevel, ResourceType
 
@@ -76,6 +77,7 @@ def _resource_response(
         uploaded_by_username=visible_username(r.uploader) if r.uploader else None,
         updated_at=r.updated_at,
         is_deleted=r.is_deleted,
+        is_restricted=r.is_restricted,
         deleted_at=r.deleted_at,
         current_version=versions[0].version_number if versions else 0,
         versions=[
@@ -111,6 +113,7 @@ def _share_response(s: SharedResource) -> SharedResourceResponse:
     return SharedResourceResponse(
         resource_id=s.resource.public_id,
         resource_name=s.resource.name,
+        level=s.level,
         shared_with_username=visible_username(s.shared_with_user) if s.shared_with_user else None,
         shared_by_username=visible_username(s.shared_by_user) if s.shared_by_user else None,
         created_at=s.created_at,
@@ -394,6 +397,7 @@ async def download_resource(
 @router.get("/resources/{resource_id}/preview", summary="Show a resource in the browser")
 async def preview_resource(
     resource_id: uuid.UUID,
+    request: Request,
     session: DBSession,
     actor: Annotated[
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
@@ -408,6 +412,17 @@ async def preview_resource(
     what the level was withholding.
     """
     resource, key = await ResourceService(session).resolve_preview(resource_id, actor=actor)
+
+    # Media goes through the ranged player built for class recordings. Without
+    # it a browser asking for the bytes forty minutes into a video is handed
+    # the whole file with a 200 and restarts the download on every scrub, which
+    # makes a long recording unwatchable. Everything else keeps the simpler
+    # path, which carries the same inline/nosniff/sandbox headers.
+    kind = (resource.mime_type or "").split("/")[0].lower()
+    if kind in {"video", "audio"}:
+        return await stream_for_playback(
+            request, key, filename=resource.name, mime_type=resource.mime_type
+        )
     return await _stream_inline(key, filename=resource.name, mime_type=resource.mime_type)
 
 
@@ -591,7 +606,9 @@ async def share_resource(
 ) -> list[SharedResourceResponse]:
     """Gives named users access to this one file without opening the course
     it belongs to."""
-    rows = await ResourceService(session).share(resource_id, payload.user_ids, actor=actor)
+    rows = await ResourceService(session).share(
+        resource_id, payload.user_ids, actor=actor, level=payload.level
+    )
     return [_share_response(s) for s in rows]
 
 
@@ -643,7 +660,13 @@ async def shared_with_me(
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
     ],
 ) -> list[SharedResourceResponse]:
-    rows = await ResourceService(session).shares.shared_with(actor.id)
+    service = ResourceService(session)
+    rows = await service.shares.shared_with(actor.id)
+    # A restricted file shared before it was restricted still has its share
+    # row. `get()` would refuse to open it, so listing it here would only
+    # advertise a file this person cannot reach and cannot be told about.
+    if not service.may_see_restricted(actor):
+        rows = [r for r in rows if not (r.resource and r.resource.is_restricted)]
     return [_share_response(s) for s in rows]
 
 

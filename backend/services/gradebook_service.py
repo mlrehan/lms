@@ -651,92 +651,15 @@ class GradeBookService:
             raise NotFoundError("Transcript not found.")
         return row
 
-    async def generate_transcripts(
-        self, batch_public_id: uuid.UUID, *, actor: User
-    ) -> dict[str, int]:
-        batch = await self.batches.get(batch_public_id, actor=actor)
-        students = await self._enrolled_student_ids(batch.id)
-        existing = await self.transcripts.existing_by_student(batch.id)
-        all_entries = await self.entries.for_batch(batch.id)
-
-        by_student: dict[int, list[GradeBookEntry]] = {}
-        for row in all_entries:
-            by_student.setdefault(row.student_id, []).append(row)
-
-        stats = {"generated": 0, "updated": 0, "skipped_final": 0, "skipped_no_grades": 0}
-
-        for student_id in students:
-            rows = by_student.get(student_id, [])
-            if not rows:
-                stats["skipped_no_grades"] += 1
-                continue
-
-            current = existing.get(student_id)
-            if current is not None and current.is_final:
-                # A finalised transcript is a published record; regenerating
-                # it silently would change a figure someone has already acted
-                # on. Un-finalise it deliberately first.
-                stats["skipped_final"] += 1
-                continue
-
-            _components, weighted = self._aggregate(rows)
-            band = await self.bands.for_percentage(weighted) if weighted is not None else None
-
-            if current is None:
-                self.session.add(
-                    Transcript(
-                        student_id=student_id,
-                        course_id=batch.course_id,
-                        batch_id=batch.id,
-                        gpa=band.gpa_points if band else None,
-                        overall_grade=band.letter_grade if band else None,
-                        generated_at=datetime.now(UTC),
-                        is_final=False,
-                    )
-                )
-                stats["generated"] += 1
-            else:
-                current.gpa = band.gpa_points if band else None
-                current.overall_grade = band.letter_grade if band else None
-                current.generated_at = datetime.now(UTC)
-                stats["updated"] += 1
-
-        await self.session.flush()
-        audit_service.record(
-            self.session,
-            action=AuditAction.UPDATE,
-            actor_user_id=actor.id,
-            actor_email=actor.email,
-            entity_type="batch",
-            entity_id=batch.id,
-            details={"transcripts": stats},
-        )
-        return stats
-
-    async def set_final(
-        self, public_id: uuid.UUID, is_final: bool, *, actor: User
-    ) -> Transcript:
-        row = await self.transcripts.get_by_public_id_full(public_id)
-        if row is None:
-            raise NotFoundError("Transcript not found.")
-
-        if is_final and row.gpa is None:
-            raise ConflictError(
-                "This transcript has no GPA yet -- generate it before finalising.",
-                details={"hint": "No grade band matched the computed percentage, or no grades exist."},
-            )
-
-        row.is_final = is_final
-        audit_service.record(
-            self.session,
-            action=AuditAction.UPDATE,
-            actor_user_id=actor.id,
-            actor_email=actor.email,
-            entity_type="transcript",
-            entity_id=row.id,
-            details={"is_final": is_final},
-        )
-        return row
+    # Transcript *generation* deliberately does not live here any more.
+    #
+    # It used to: an aggregation over `gradebook_entries` at a flat weight,
+    # with no publication filter -- so a draft mark could reach an official
+    # document, which is precisely what §5 forbids. `TranscriptService` is now
+    # the one implementation, built on the weighted engine and on
+    # `PerformanceService.for_transcript`, which takes no actor and therefore
+    # cannot be asked for unreleased marks. Two answers to "what is this
+    # student's official result" is the duplication §45 warns about.
 
     # -- helpers -------------------------------------------------------------
 

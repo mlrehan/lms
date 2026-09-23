@@ -102,6 +102,17 @@ class SubmissionRepository(BaseRepository[AssignmentSubmission]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def list_for_assignment(self, assignment_id: int) -> list[AssignmentSubmission]:
+        """Every submission for one assignment.
+
+        Unpaged on purpose: this backs the publish-results action, which must
+        act on the whole set or leave some students released and others not.
+        Bounded by a batch roster, which is the same bound the notification
+        fan-out already accepts.
+        """
+        stmt = self._base().where(AssignmentSubmission.assignment_id == assignment_id)
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
     async def search(
         self,
         params: PageParams,

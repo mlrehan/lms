@@ -21,6 +21,7 @@ import {
   Megaphone,
   MessagesSquare,
   Notebook,
+  Scale,
   ScrollText,
   Share2,
   ShieldCheck,
@@ -105,6 +106,16 @@ export const NAVIGATION: NavSection[] = [
       { href: "/exams", label: "Examinations", icon: BadgeCheck, permission: "exam.read" },
       { href: "/gradebook", label: "Grade book", icon: FileSpreadsheet, permission: "grade.read" },
       { href: "/transcripts", label: "Transcripts", icon: ScrollText, permission: "grade.read" },
+      // Sits with the assessment tools rather than under Settings: it is the
+      // rule the marks on those screens are turned into grades by, and an
+      // operator reaching for it is thinking about assessment, not about
+      // system configuration.
+      {
+        href: "/grading-schemes",
+        label: "Grading schemes",
+        icon: Scale,
+        permission: "grading_scheme.read",
+      },
     ],
   },
   {

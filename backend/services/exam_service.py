@@ -26,6 +26,11 @@ from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.course_service import CourseService
+from backend.services.assessment_scope import (
+    AssessmentScopeResolver,
+    AssessmentTarget,
+    validate as validate_scope,
+)
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import Roles
 
@@ -38,6 +43,7 @@ class ExamService:
         self.courses = CourseService(session)
         self.batches = BatchService(session)
         self.scopes = ScopeResolver(session)
+        self.targets = AssessmentScopeResolver(session)
 
     # -- exams ---------------------------------------------------------------
 
@@ -90,9 +96,28 @@ class ExamService:
                 # working without the caller having to say it twice.
                 course_id = batch.course_id
 
+        # Exams kept a fourth convention of their own -- nullable course/batch
+        # with the scope *inferred* from which was set. They now carry the same
+        # explicit `scope` the other two do, resolved by the same service, so
+        # one eligibility rule serves all three (§3).
+        target = await self.targets.resolve_ids(
+            scope=payload.scope,
+            course_id=course_id or 0,
+            batch_id=batch_id,
+            session_id=await self.targets.session_id(payload.session_id),
+        )
+        validate_scope(target)
+        if course_id and target.course_id != course_id:
+            raise ValidationError("That batch or session belongs to a different course.")
+        course_id = target.course_id or course_id
+
         row = Exam(
             course_id=course_id,
-            batch_id=batch_id,
+            batch_id=target.batch_id or batch_id,
+            session_id=target.session_id,
+            scope=target.scope,
+            is_online=payload.is_online,
+            weight=payload.weight,
             exam_type=payload.exam_type,
             title=payload.title,
             scheduled_at=payload.scheduled_at,
@@ -379,16 +404,17 @@ class ExamService:
     # -- helpers -------------------------------------------------------------
 
     async def _eligible_student_ids(self, exam: Exam) -> set[int]:
-        """Students who may be marked for this exam: those actively enrolled
-        in its batch if it is batch-anchored, otherwise anywhere in its
-        course."""
-        stmt = select(Enrollments.student_id).join(Batch, Batch.id == Enrollments.batch_id)
-        if exam.batch_id is not None:
-            stmt = stmt.where(Enrollments.batch_id == exam.batch_id)
-        else:
-            stmt = stmt.where(Batch.course_id == exam.course_id)
-        stmt = stmt.where(Enrollments.status.in_(ACTIVE_STATUSES))
-        return set((await self.session.execute(stmt)).scalars().all())
+        """Students who may be marked for this exam.
+
+        Was a hand-rolled copy of the same join assignments and quizzes each
+        had their own version of -- and it quietly differed: a course-wide exam
+        included students from **closed** batches, because the local copy never
+        filtered on `Batch.is_active`. Last year's cohort appeared on this
+        year's mark sheet.
+
+        Now the one shared resolver, so a fix in one place is a fix everywhere.
+        """
+        return await self.targets.eligible_student_ids(AssessmentTarget.of(exam))
 
     async def _can_reach(self, exam: Exam, actor: User) -> bool:
         if ScopeResolver.is_unrestricted(actor):

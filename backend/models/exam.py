@@ -10,8 +10,8 @@ from sqlalchemy import (CheckConstraint, Integer, String, ForeignKey, DateTime, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
-from .helpers import bool_column
-from backend.utils.enums import ExamType
+from .helpers import bool_column, utc_datetime_column
+from backend.utils.enums import AssessmentScope, ExamType, SubmissionState
 
 
 class Exam(Base, PublicIdMixin):
@@ -20,6 +20,26 @@ class Exam(Base, PublicIdMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
     course_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("courses.id", ondelete="CASCADE"), nullable=True)
     batch_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("batches.id", ondelete="CASCADE"), nullable=True)
+    # Exams already had course/batch by a hand-rolled shape of their own. They
+    # now carry the same `session_id` + `scope` the other two do, so one
+    # eligibility resolver serves all three rather than exams keeping a fourth
+    # convention.
+    session_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("batch_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    scope: Mapped[AssessmentScope] = mapped_column(
+        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False),
+        nullable=False,
+        default=AssessmentScope.COURSE,
+        server_default=AssessmentScope.COURSE.value,
+    )
+    # Online exams are answered in the LMS; offline ones have their marks
+    # entered afterwards. Both feed the same grade book (§10), and this is what
+    # lets a screen know which workflow to offer.
+    is_online: Mapped[bool] = bool_column(default=False)
+    weight: Mapped[Numeric] = mapped_column(
+        Numeric(6, 3), nullable=False, default=1, server_default="1"
+    )
     exam_type: Mapped[ExamType] = mapped_column(
         SQLEnum(ExamType, name="exam_type", native_enum=False), nullable=False,
         comment="MIDTERM, FINAL, PRACTICAL, MOCK, CUSTOM",
@@ -83,9 +103,27 @@ class ExamResult(Base, PublicIdMixin):
     grade: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_published: Mapped[bool] = bool_column(default=False)
+    # The lifecycle §14 asks for. `is_published` is kept and maintained in
+    # step: it is read by existing queries and API responses, and breaking
+    # those to avoid one redundant column would be a worse trade.
+    state: Mapped[SubmissionState] = mapped_column(
+        SQLEnum(SubmissionState, name="submission_state", native_enum=False),
+        nullable=False,
+        default=SubmissionState.GRADED,
+        server_default=SubmissionState.GRADED.value,
+    )
+    override_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    overridden_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    overridden_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
 
     exam: Mapped["Exam"] = relationship(back_populates="results")
-    student: Mapped["User"] = relationship("User", lazy="selectin")
+    # `foreign_keys` is now required: this table gained `overridden_by_id`, so
+    # there are two paths to `users` and SQLAlchemy cannot pick one for us.
+    student: Mapped["User"] = relationship(
+        "User", foreign_keys=[student_id], lazy="selectin"
+    )
 
     __table_args__ = (
         UniqueConstraint("exam_id", "student_id", name="uq_exam_results_exam_student"),

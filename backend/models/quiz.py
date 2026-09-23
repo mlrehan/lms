@@ -5,8 +5,8 @@ from sqlalchemy import (Integer, String, ForeignKey, DateTime,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
-from .helpers import bool_column
-from backend.utils.enums import QuestionType
+from .helpers import bool_column, utc_datetime_column
+from backend.utils.enums import AssessmentScope, AssessmentState, SubmissionState, QuestionType
 
 
 class Quiz(Base, PublicIdMixin):
@@ -15,6 +15,23 @@ class Quiz(Base, PublicIdMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey("courses.id"), nullable=False)
+    batch_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("batches.id", ondelete="CASCADE"), nullable=True
+    )
+    session_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("batch_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    # The same stored-not-inferred scope the assignments table uses. One shape
+    # across all three assessment types is what §3 means by not duplicating the
+    # implementation -- the eligibility resolver reads these three columns and
+    # does not care which table they came from.
+    scope: Mapped[AssessmentScope] = mapped_column(
+        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False),
+        nullable=False,
+        default=AssessmentScope.COURSE,
+        server_default=AssessmentScope.COURSE.value,
+    )
+
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     instructions: Mapped[Optional[str]] = mapped_column(Text)
     duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
@@ -25,6 +42,22 @@ class Quiz(Base, PublicIdMixin):
     # e.g. {"negative_marking": 0.25, "min_time": 10, "max_time": 60}
     grading_policy: Mapped[Optional[dict]] = mapped_column(JSON)
     is_published: Mapped[bool] = bool_column(default=False)
+    # -- availability and result visibility (spec §9) -----------------------
+    # A quiz that is published but not yet open is an ordinary thing to want,
+    # and `is_published` alone could not express it.
+    available_from: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    available_until: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    shuffle_answers: Mapped[bool] = bool_column(default=False)
+    # Null means "every question". A pool draws this many at random from the
+    # bank, which is what makes a reusable question bank worth having.
+    questions_per_attempt: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    show_result_immediately: Mapped[bool] = bool_column(default=True)
+    show_correct_answers: Mapped[bool] = bool_column(default=False)
+    show_explanations: Mapped[bool] = bool_column(default=False)
+    auto_submit_on_expiry: Mapped[bool] = bool_column(default=True)
+    weight: Mapped[Numeric] = mapped_column(
+        Numeric(6, 3), nullable=False, default=1, server_default="1"
+    )
 
     course: Mapped["Course"] = relationship("Course", lazy="selectin")
     questions: Mapped[List["Question"]] = relationship(back_populates="quiz")

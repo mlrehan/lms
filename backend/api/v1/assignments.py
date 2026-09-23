@@ -18,17 +18,25 @@ from backend.schemas.assignment import (
     AssignmentSummary,
     AssignmentUpdateRequest,
     GradeSubmissionRequest,
+    PublishResultsRequest,
+    ResubmissionRequest,
     SubmissionResponse,
+    SubmissionStateRequest,
     SubmitAssignmentRequest,
 )
 from backend.schemas.base import Page, PageParams
+from backend.services.assessment_scope import AssessmentTarget, describe as describe_scope
 from backend.services.assignment_service import AssignmentService
 
 router = APIRouter(tags=["Assignments"])
 
 
 def _assignment_response(
-    a: Assignment, *, submission_count: int = 0, my_submission_id: uuid.UUID | None = None
+    a: Assignment,
+    *,
+    submission_count: int = 0,
+    my_submission_id: uuid.UUID | None = None,
+    eligible_count: int | None = None,
 ) -> AssignmentResponse:
     return AssignmentResponse(
         public_id=a.public_id,
@@ -44,10 +52,37 @@ def _assignment_response(
         course_title=a.course.title,
         submission_count=submission_count,
         my_submission_id=my_submission_id,
+        scope=a.scope,
+        state=a.state,
+        batch_id=a.batch.public_id if a.batch else None,
+        batch_code=a.batch.batch_code if a.batch else None,
+        session_id=a.session.public_id if a.session else None,
+        scope_description=describe_scope(
+            AssessmentTarget.of(a), batch_code=a.batch.batch_code if a.batch else None
+        ),
+        eligible_count=eligible_count,
+        publish_at=a.publish_at,
+        available_from=a.available_from,
+        passing_score=a.passing_score,
+        weight=a.weight,
+        allowed_file_types=a.allowed_file_types,
+        max_upload_mb=a.max_upload_mb,
+        allow_multiple_submissions=a.allow_multiple_submissions,
+        allow_resubmission=a.allow_resubmission,
+        late_penalty_percent_per_day=a.late_penalty_percent_per_day,
     )
 
 
-def _submission_response(s: AssignmentSubmission) -> SubmissionResponse:
+def _submission_response(
+    s: AssignmentSubmission, *, staff: bool = True
+) -> SubmissionResponse:
+    """One submission.
+
+    `staff=False` omits the override trail. Why a mark was changed is a
+    conversation for the tutor to have with the student, not a field the
+    student discovers in an API response -- §24 says audit detail is not for
+    them.
+    """
     return SubmissionResponse(
         public_id=s.public_id,
         assignment_id=s.assignment.public_id,
@@ -62,6 +97,13 @@ def _submission_response(s: AssignmentSubmission) -> SubmissionResponse:
         graded_at=s.graded_at,
         graded_by_username=visible_username(s.grader) if s.grader else None,
         is_late=bool(s.submitted_at and s.assignment.due_date and s.submitted_at > s.assignment.due_date),
+        state=s.state,
+        attempt_number=s.attempt_number,
+        raw_grade=s.raw_grade,
+        late_penalty_applied=s.late_penalty_applied,
+        published_at=s.published_at,
+        override_reason=s.override_reason if staff else None,
+        overridden_at=s.overridden_at if staff else None,
     )
 
 
@@ -258,4 +300,92 @@ async def grade_submission(
     """The grade cannot exceed the assignment's `max_score`."""
     return _submission_response(
         await AssignmentService(session).grade(submission_id, payload, actor=actor)
+    )
+
+# =============================================================================
+# RESULT LIFECYCLE (spec §14)
+# =============================================================================
+# Marking and releasing are separate acts, so they are separate endpoints with
+# separate permissions. A tutor who may enter a mark does not automatically
+# make it visible to the student and their guardian the same instant -- that is
+# what leaves room for an institution's review step.
+
+
+@router.post(
+    "/assignments/{assignment_id}/publish-results",
+    summary="Release graded marks to students",
+)
+async def publish_assignment_results(
+    assignment_id: uuid.UUID,
+    payload: PublishResultsRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.PUBLISH)))
+    ],
+) -> dict[str, int]:
+    """Publishes every graded submission, or only the students named.
+
+    Submissions that are not yet graded are skipped rather than refused: a
+    tutor releasing a batch of marks should not be blocked by the three
+    students who never submitted.
+    """
+    service = AssignmentService(session)
+    student_ids = None
+    if payload.student_ids:
+        student_ids = [
+            (await service._load_user(pid)).id for pid in payload.student_ids
+        ]
+    released = await service.publish_results(
+        assignment_id, actor=actor, student_ids=student_ids
+    )
+    return {"published": released}
+
+
+@router.post(
+    "/submissions/{submission_id}/request-resubmission",
+    response_model=SubmissionResponse,
+    summary="Hand work back for another attempt",
+)
+async def request_resubmission(
+    submission_id: uuid.UUID,
+    payload: ResubmissionRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.GRADE)))
+    ],
+) -> SubmissionResponse:
+    """A distinct state rather than deleting the mark: the student needs to
+    know they were asked, and the performance engine needs to know this
+    component is not finished."""
+    return _submission_response(
+        await AssignmentService(session).request_resubmission(
+            submission_id, actor=actor, reason=payload.reason
+        )
+    )
+
+
+@router.put(
+    "/submissions/{submission_id}/state",
+    response_model=SubmissionResponse,
+    summary="Record an absence or an exemption",
+)
+async def set_submission_state(
+    submission_id: uuid.UUID,
+    payload: SubmissionStateRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.GRADE)))
+    ],
+) -> SubmissionResponse:
+    """Neither an absence nor an exemption is a mark, and neither is a missing
+    submission. §38 requires them to be distinguishable from a zero; this is
+    where a tutor says which applies.
+
+    An exemption removes the component from the student's weighted total. An
+    absence counts as a nil result. They are not interchangeable.
+    """
+    return _submission_response(
+        await AssignmentService(session).set_submission_state(
+            submission_id, actor=actor, state=payload.state, reason=payload.reason
+        )
     )

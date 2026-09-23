@@ -16,6 +16,7 @@ from backend.api.v1 import (
     attendance,
     auth,
     batches,
+    class_performance,
     courses,
     dashboard,
     discussions,
@@ -23,12 +24,14 @@ from backend.api.v1 import (
     exams,
     geo,
     gradebook,
+    grading_schemes,
     guardians,
     team,
     google_calendar,
     integrations,
     messages,
     notifications,
+    performance,
     push,
     realtime,
     ops,
@@ -63,12 +66,15 @@ router.include_router(assignments.router)
 router.include_router(quizzes.router)
 router.include_router(exams.router)
 router.include_router(gradebook.router)
+router.include_router(grading_schemes.router)
+router.include_router(class_performance.router)
 router.include_router(resources.router)
 router.include_router(organizations.router)
 router.include_router(guardians.router)
 router.include_router(team.router)
 router.include_router(messages.router)
 router.include_router(notifications.router)
+router.include_router(performance.router)
 router.include_router(push.router)
 router.include_router(realtime.router)
 router.include_router(announcements.router)

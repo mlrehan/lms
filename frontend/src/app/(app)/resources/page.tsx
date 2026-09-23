@@ -15,6 +15,7 @@ import {
   Link2,
   RotateCcw,
   Share2,
+  ShieldCheck,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -218,14 +219,31 @@ function ResourceDrawer({
     },
   });
 
+  // VIEW by default: the narrower of the two, so a share that forgets to say
+  // grants the less. This used to be unreachable -- `shared_resources.level`
+  // was stored and read, but nothing set it, so every share was DOWNLOAD.
+  const [shareLevel, setShareLevel] = useState<"VIEW" | "DOWNLOAD">("VIEW");
+
   const share = useApiMutation<SharedResourceResponse[], string>({
     mutationFn: (userId) =>
       api.post<SharedResourceResponse[]>(`/resources/${segment(resourceId!)}/share`, {
-        body: { user_ids: [userId] },
+        body: { user_ids: [userId], level: shareLevel },
       }),
     success: "Shared.",
     invalidate: [["resources"]],
     onSuccess: () => setShareWith(null),
+  });
+
+  const setRestricted = useApiMutation<ResourceResponse, boolean>({
+    mutationFn: (restricted) =>
+      api.patch<ResourceResponse>(`/resources/${segment(resourceId!)}`, {
+        body: { is_restricted: restricted },
+      }),
+    success: (r) =>
+      r.is_restricted
+        ? "Now staff-only. Any public link has been revoked."
+        : "No longer staff-only.",
+    invalidate: [["resources"]],
   });
 
   const setShareLink = useApiMutation<ShareLinkResponse, boolean>({
@@ -350,13 +368,33 @@ function ResourceDrawer({
                   <label className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-1.5 text-sm">
                     <Switch
                       checked={data.has_share_link ?? false}
-                      disabled={setShareLink.isPending}
+                      // A staff-only file cannot have one. Disabled rather than
+                      // hidden, so the reason is visible where the control is.
+                      disabled={setShareLink.isPending || data.is_restricted}
                       onCheckedChange={(checked) => setShareLink.mutate(checked)}
                     />
                     <Link2 className="size-4" aria-hidden /> Public link
                   </label>
                 ) : null}
+                {permissions.has("resource.view_restricted") && canManage ? (
+                  <label className="flex items-center gap-2 rounded-lg border border-border-subtle px-3 py-1.5 text-sm">
+                    <Switch
+                      checked={data.is_restricted ?? false}
+                      disabled={setRestricted.isPending}
+                      onCheckedChange={(checked) => setRestricted.mutate(checked)}
+                    />
+                    <ShieldCheck className="size-4" aria-hidden /> Staff only
+                  </label>
+                ) : null}
               </div>
+
+              {data.is_restricted ? (
+                <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+                  Staff only. Students, guardians and corporate managers cannot open it, find
+                  it in a list, or be shared it — whatever else they have been granted. It
+                  cannot carry a public link.
+                </p>
+              ) : null}
 
               {data.has_share_link ? (
                 <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -478,6 +516,20 @@ function ResourceDrawer({
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="min-w-56 flex-1">
                       <UserPicker value={shareWith} onChange={(next) => setShareWith(next)} />
+                      <NativeSelect
+                        aria-label="What they may do"
+                        value={shareLevel}
+                        onChange={(event) =>
+                          setShareLevel(event.target.value as "VIEW" | "DOWNLOAD")
+                        }
+                        // Auto width, not a fixed one: `w-40` clipped "Watch /
+                        // read only" to "Watch / read o...", and a control whose
+                        // label is cut off is a control nobody can be sure of.
+                        className="h-9 text-sm"
+                      >
+                        <option value="VIEW">Watch / read only</option>
+                        <option value="DOWNLOAD">Allow download</option>
+                      </NativeSelect>
                     </div>
                     <Button
                       loading={share.isPending}
@@ -692,13 +744,23 @@ function ResourcesContent() {
       key: "name",
       header: "Name",
       cell: (row) => (
-        <button
-          type="button"
-          className="text-left font-medium hover:underline"
-          onClick={() => setSelected(row.public_id)}
-        >
-          {row.name ?? "Untitled"}
-        </button>
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            className="text-left font-medium hover:underline"
+            onClick={() => setSelected(row.public_id)}
+          >
+            {row.name ?? "Untitled"}
+          </button>
+          {/* Only ever drawn for staff: a restricted row is filtered out of
+              the query for everyone else, so this badge cannot leak the
+              existence of a file its reader may not name. */}
+          {row.is_restricted ? (
+            <Badge tone="neutral" dot>
+              Staff only
+            </Badge>
+          ) : null}
+        </span>
       ),
     },
     {

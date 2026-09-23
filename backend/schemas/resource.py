@@ -88,6 +88,13 @@ class ResourceSummary(APIModel):
     public_id: uuid.UUID
     name: str | None = None
     resource_type: ResourceType
+    is_restricted: bool = Field(
+        default=False,
+        description=(
+            "Staff-only. A row carrying true is never returned to someone who "
+            "may not see such files -- they are filtered out of the query."
+        ),
+    )
     mime_type: str | None = None
     size: int | None = None
     created_at: datetime
@@ -111,6 +118,10 @@ class ResourceResponse(ResourceSummary):
     # What *this* caller may do with the file. Sent so the console can hide the
     # actions it would be refused rather than offering buttons that 403 -- the
     # server is still the authority, this is only what the UI renders.
+    is_restricted: bool = Field(
+        default=False,
+        description="Staff-only. Never true in a response to someone who may not see such files.",
+    )
     my_level: ResourcePermissionLevel | None = Field(
         default=None,
         description="Caller's effective level: VIEW < DOWNLOAD < EDIT < MANAGE.",
@@ -129,6 +140,14 @@ class ResourceUpdateRequest(RequestModel):
     name: Annotated[str | None, Field(min_length=1, max_length=255)] = None
     resource_type: ResourceType | None = None
     folder_id: uuid.UUID | None = None
+    is_restricted: bool | None = Field(
+        default=None,
+        description=(
+            "Staff-only. Hidden from students, guardians and corporate managers "
+            "whatever else they have been granted, and cannot carry a public link. "
+            "Only settable by someone who can see staff-only files."
+        ),
+    )
 
 
 class ResourceCopyRequest(RequestModel):
@@ -171,6 +190,9 @@ class GrantPermissionRequest(RequestModel):
 class SharedResourceResponse(APIModel):
     resource_id: uuid.UUID
     resource_name: str | None = None
+    level: ResourcePermissionLevel = Field(
+        description="What the recipient may do with it."
+    )
     shared_with_username: str | None = None
     shared_by_username: str | None = None
     created_at: datetime
@@ -179,6 +201,15 @@ class SharedResourceResponse(APIModel):
 class ShareResourceRequest(RequestModel):
     user_ids: list[uuid.UUID] = Field(
         min_length=1, max_length=200, description="Users to share this resource with."
+    )
+    level: ResourcePermissionLevel = Field(
+        default=ResourcePermissionLevel.VIEW,
+        description=(
+            "What the recipients may do. VIEW lets them watch or read it in "
+            "place without keeping a copy; DOWNLOAD hands over the bytes. "
+            "Defaults to VIEW -- the narrower of the two, so a share that "
+            "forgets to say grants the less."
+        ),
     )
 
 

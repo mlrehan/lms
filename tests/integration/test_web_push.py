@@ -218,15 +218,24 @@ def test_a_transient_failure_keeps_the_device(env) -> None:
 
 
 def test_nothing_is_sent_when_no_keys_are_configured(env) -> None:
-    """The deployment default. A send that quietly no-ops is right here; the
-    console hides the control rather than offering one that does nothing."""
+    """A deployment with no VAPID keys sends nothing, quietly.
+
+    The settings are built with **explicit empty keys**, not by calling
+    `PushSettings()` and trusting the ambient environment. That is the bug this
+    test had: it passed only while no machine running it had keys set, and it
+    started failing the moment a real pair was written into `.env` -- which is
+    the environment every developer will eventually have. A test whose result
+    depends on the developer's own configuration is testing the machine, not
+    the code.
+    """
     endpoint = env.push.url
+    unconfigured = PushSettings(vapid_public_key="", vapid_private_key="")
+    assert not unconfigured.configured
 
     def f(s):  # noqa: ANN001, ANN202
         async def go():  # noqa: ANN202
             user = await env.build(s, endpoint=endpoint)
-            service = PushService(s, PushSettings())  # no VAPID keys
-            return await service.send_to_user(user.id, "{}")
+            return await PushService(s, unconfigured).send_to_user(user.id, "{}")
         return go()
 
     assert env.run(f) == 0

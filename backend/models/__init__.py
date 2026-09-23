@@ -22,6 +22,8 @@ from .resource import Resource, SharedResource, ResourceFolder, ResourceVersion,
 from .assignment import Assignment, AssignmentSubmission
 from .quiz import Quiz, Question, QuestionOption, QuizAttempt, QuizAnswer
 from .exam import Exam, ExamInvigilator, ExamResult
+from .grading import GradingScheme, GradingSchemeComponent
+from .class_performance import ClassPerformanceMark
 from .gradebook import GradeBand, GradeBookEntry, Transcript
 from .certificate import Certificate, CertificateIssued
 from .badge import Badge, UserBadge
@@ -59,6 +61,9 @@ __all__ = [
     "Exam", "ExamInvigilator", "ExamResult",
     # Grade book
     "GradeBand", "GradeBookEntry", "Transcript",
+    "GradingScheme",
+    "GradingSchemeComponent",
+    "ClassPerformanceMark",
     # Certificates & badges
     "Certificate", "CertificateIssued", "Badge", "UserBadge",
     # Notifications

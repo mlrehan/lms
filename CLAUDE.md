@@ -2607,3 +2607,136 @@ prompt, the service worker's focus check and the toast are proven by unit tests
 and by the protocol-level live checks, not by clicking. **The Redis bus and a
 real vendor push endpoint (Google/Mozilla) are likewise unexercised** -- both
 need infrastructure this machine does not have.
+
+## Staff-only media — the last item of the six-subsystem brief
+
+Video and audio that colleagues can share without it reaching students,
+guardians or corporate managers. **The audit changed what needed building:**
+the obvious reading is "add a sharing feature", but this module already had
+three ways to reach a file and a fourth that bypasses authentication
+altogether. What was missing was an *audience* rule, and a working level on the
+share that already existed.
+
+**New:** `resource.view_restricted` in the permission catalogue,
+`resources.is_restricted` (migration `a93e17c0d5b8`), and a `level` on the
+share request. **Re-run `bootstrap_identity` after upgrading** -- the permission
+is in the catalogue but not in any deployment's `role_permissions` until the
+seeder runs, and until then the switch does nothing for anybody.
+
+**A permission, not a role check.** `permissions.py` already argues this for
+`institution.view_all`: an institution will eventually want a registrar or an
+external examiner who may see restricted media and little else, and
+`if role in (ADMIN, TUTOR)` scattered through the service layer cannot express
+that without a code change. Granted to SUPER_ADMIN, ADMIN and TUTOR; withheld
+from exactly the three roles the brief names.
+
+**The flag lives on the resource and is not inherited from a folder.** A file
+dragged out of a "Staff only" folder would otherwise become visible to a class
+as a silent side effect of tidying up.
+
+**Four doors, and a guard on `get()` alone would have left three open:**
+
+1. **Opening it** -- refused *before* reachability is even computed, so a
+   restricted file is refused to a student **even when it was shared with them
+   directly**. A restriction a share could override would protect nothing, and
+   sharing is exactly how this material travels between staff. 404, never 403.
+2. **The listing** -- filtered in the SQL rather than after it, so the paging
+   total cannot reveal that there are files here the reader is not allowed to
+   name.
+3. **Sharing** -- allowed to colleagues, refused to anyone who could not have
+   seen the file anyway. A share row that `get()` then refuses reads to the
+   recipient as the system losing a file.
+4. **The public share link** -- refused at issue time *and* checked again at
+   redemption, and restricting a file clears any token it already had. A link
+   that needs no sign-in cannot respect an audience rule: anyone holding the
+   string is outside every check this platform makes.
+
+**`shared_resources.level` was decorative and is now reachable.** The column
+shipped with its own migration and `effective_level` read it, but `share()`
+never *set* it -- so every share silently took the server default of DOWNLOAD
+and "watch it, don't keep it" could not be expressed at all, which is the whole
+of what the brief asks for. The API now takes a level, defaulting to **VIEW**:
+the narrower of the two, so a share that forgets to say grants the less.
+Re-sharing updates an existing row rather than skipping it, or "share this
+read-only" would silently do nothing to someone who already had DOWNLOAD.
+
+**`/resources/{id}/preview` gained Range support** for video and audio, reusing
+the player written for class recordings. Without it a browser asking for the
+bytes forty minutes into a shared recording is handed the whole file with a 200
+and restarts the download on every scrub.
+
+### The test that passed for the wrong reason, found by mutation
+
+Five guards were mutated one at a time. Four killed tests. **Removing the
+`resolve_share_link` restriction check killed nothing** -- because `update()`
+clears the token when a file is restricted, so the token lookup fails first and
+the audience check is never reached. The guard is a real second line of defence
+(a migration, a backfill or a future code path could set the flag without
+clearing the token) but it was untested, and a green suite said otherwise.
+`test_a_token_that_outlived_the_restriction_still_opens_nothing` sets the flag
+on the row directly so the token survives; deleting the guard now fails it.
+
+**A second fixture defect, the same shape.** The first draft gave the guardian
+and the corporate manager no link to the student, so they could not reach *any*
+file on that course -- every refusal would have passed with the audience rule
+deleted entirely. They now hold a real `student_guardians` row and a real
+organisation membership, so the refusals are about the rule rather than about
+being unconnected.
+
+### Verified
+
+**25 live checks over HTTP** (`scripts/_live_check_restricted.py`): a student
+opens a file and sees it listed, a public link works unauthenticated; the tutor
+marks it staff-only; the student then gets **404 and not 403**, the row vanishes
+from their listing and stays in the tutor's flagged, sharing it to them is
+**422**, the old public link is **404** and a new one is **422**; the tutor
+streams it with `Accept-Ranges: bytes` and a `Range` request returns **206 with
+exactly 40 bytes**, while the student's stream is **404**; unmarking restores
+all of it.
+
+**19 integration tests** against real Postgres and the real seeded roles, plus
+the five mutations above.
+
+**Status:** full backend suite green, `npm run build`, `tsc --noEmit`,
+`eslint src` (0 errors) and `vitest` (103 tests) all pass.
+
+**Not verified through a browser**, for the same reason as the two passes
+before it: the Chrome extension is not connected in this session. The staff-only
+switch, the badge and the share-level picker are proven by typecheck, lint,
+build and the HTTP checks behind them, not by clicking.
+
+### Shown in a real browser, at last
+
+The three previous passes could only be proven at the protocol level, because
+the Chrome extension was not connected. This one was driven in the built-in
+browser pane while signed in as Super Admin, and four things are now confirmed
+by clicking rather than by `curl`:
+
+* **The timetable payload carries no `meeting_link` field at all** -- only
+  `join_opens_at`, `join_closes_at`, `can_join_now`, `has_recording`. A 10:00
+  session reports `join_opens_at` of 09:30, so the thirty-minute rule is visible
+  in the response rather than asserted in a docstring.
+* **The Join button renders disabled with a live countdown** ("Opens in 86
+  days"), and the session page shows the recording panel with its
+  publish-from-library control.
+* **The Staff only switch works end to end** -- toggling it persists,
+  renders the explanation, and **greys out the Public link switch beside it**;
+  toggling it back restores both.
+* **The SSE stream connects through the BFF proxy in a real browser** and
+  delivers its `ready` frame. That was the one claim the earlier protocol-level
+  checks could not make.
+
+Two things the browser found that nothing else had:
+
+1. **The share-level picker was clipped.** `w-40` cut "Watch / read only" to
+   "Watch / read o...", and a control whose label is truncated is one nobody can
+   be sure of. Now auto-width.
+2. **`channels_note` had become false.** It told every reader that "push is
+   modelled but has no transport" -- true when it was written, and untrue since
+   Web Push shipped. Rewritten. A note that asserts a property which has stopped
+   holding is worse than no note, because it stops the next person checking.
+
+One false alarm, recorded because the reasoning matters: the Staff only switch
+appeared to go stale after a toggle. It had not -- the reading was taken while
+the invalidation was still in flight. A reload showed server and UI agreeing.
+

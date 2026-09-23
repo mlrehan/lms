@@ -4,7 +4,7 @@ import Link from "next/link";
 import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, Save, Trash2 } from "lucide-react";
+import { ClipboardCheck, Save, Sparkles, Trash2 } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
 import type {
   AttendanceResponse,
@@ -21,6 +21,7 @@ import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { ClassRecording } from "@/components/domain/sessions/class-recording";
+import { ClassPerformanceSheet } from "@/components/domain/sessions/class-performance-sheet";
 import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -505,6 +506,24 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
             description="Confirmed students on this batch. Saving records the whole class at once."
           />
           <Register session={data} />
+        </Card>
+      ) : null}
+
+      {permissions.has("class_performance.read") ? (
+        <Card>
+          <CardHeader
+            title={
+              <span className="flex items-center gap-2">
+                <Sparkles className="size-4 text-muted-foreground" aria-hidden /> Class performance
+              </span>
+            }
+            description={
+              "How each student took part. These marks are a weighted component of the " +
+              "final result, so a class left unassessed leaves the result incomplete rather " +
+              "than scoring it zero."
+            }
+          />
+          <ClassPerformanceSheet sessionId={sessionId} />
         </Card>
       ) : null}
 

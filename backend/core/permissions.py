@@ -58,6 +58,18 @@ class Module:
     GOOGLE: Final = "google"
     SETTING: Final = "setting"
     INSTITUTION: Final = "institution"
+    # The academic assessment system. `grade.*` already covers the grade book
+    # itself and is deliberately NOT renamed to `gradebook.*`: two names for one
+    # capability is worse than a name that differs from a spec written later.
+    TRANSCRIPT: Final = "transcript"
+    PERFORMANCE: Final = "performance"
+    GRADING_SCHEME: Final = "grading_scheme"
+    #: A tutor's per-session assessment of how a student took part (§11).
+    #: Its own module rather than a corner of `grade.*` because the audience
+    #: differs: a tutor records these for their own classes and nobody else's,
+    #: whereas `grade.update` is the whole grade book. Same reasoning that
+    #: keeps `assignment.grade` separate from `exam.grade`.
+    CLASS_PERFORMANCE: Final = "class_performance"
 
 
 class Action:
@@ -80,6 +92,16 @@ class Action:
     SYNC: Final = "sync"
     ALLOW_LOGIN: Final = "allow_login"
     VIEW_CONTACT: Final = "view_contact"
+    #: Reach material whose audience is staff. Not a level on the file and not
+    #: a role check: an institution will eventually want a REGISTRAR or an
+    #: external examiner who may see restricted media and little else, and
+    #: `if role in (ADMIN, TUTOR)` scattered through the service layer cannot
+    #: express that without a code change.
+    VIEW_RESTRICTED: Final = "view_restricted"
+    #: Make a result visible to the student and their care circle. Separate from
+    #: `grade` on purpose: marking work and releasing the mark are different
+    #: acts, and an institution will want the second to need more authority.
+    GENERATE: Final = "generate"
     OVERRIDE: Final = "override"
 
 
@@ -166,10 +188,50 @@ _register(Module.ENROLLMENT, _CRUD, "enrollments")
 # `override` lets somebody other than the session's assigned tutor take or correct its register (the assigned tutor is
 # recorded alongside who actually did it). Super Admin only, by construction; an Administrator is deliberately without it.
 _register(Module.ATTENDANCE, _CRUD + (Action.OVERRIDE,), "attendance records")
-_register(Module.RESOURCE, _CRUD, "learning resources")
-_register(Module.ASSIGNMENT, _CRUD + (Action.SUBMIT, Action.GRADE), "assignments")
-_register(Module.QUIZ, _CRUD + (Action.ATTEMPT, Action.GRADE), "quizzes")
-_register(Module.EXAM, _CRUD + (Action.PUBLISH,), "examinations")
+_register(
+    Module.RESOURCE,
+    _CRUD + (Action.VIEW_RESTRICTED,),
+    "learning resources",
+    phrasing={
+        Action.VIEW_RESTRICTED: (
+            "Open staff-only material, such as recordings and briefing audio, "
+            "which is hidden from students, guardians and corporate managers"
+        )
+    },
+)
+# `publish` on all three assessment types, and `grade` on all three.
+#
+# Marking work and releasing the mark are different acts. Without a separate
+# `publish`, anyone who could enter a mark could make it visible to the student
+# and their guardian the same instant -- which leaves no room for the review
+# step the result lifecycle exists to provide, and no way to grant an
+# institution's "marks are released by the registrar" rule.
+#
+# `exam.grade` was simply absent: examinations could be created and published
+# but the act of recording marks had no permission of its own, so it rode on
+# `exam.update` -- editing the exam's date and entering its results were the
+# same authority.
+_register(
+    Module.ASSIGNMENT,
+    _CRUD + (Action.SUBMIT, Action.GRADE, Action.PUBLISH),
+    "assignments",
+    phrasing={Action.PUBLISH: "Release assignment marks to students"},
+)
+_register(
+    Module.QUIZ,
+    _CRUD + (Action.ATTEMPT, Action.GRADE, Action.PUBLISH),
+    "quizzes",
+    phrasing={Action.PUBLISH: "Release quiz results to students"},
+)
+_register(
+    Module.EXAM,
+    _CRUD + (Action.GRADE, Action.PUBLISH),
+    "examinations",
+    phrasing={
+        Action.GRADE: "Record and amend examination marks",
+        Action.PUBLISH: "Release examination results to students",
+    },
+)
 _register(Module.GRADE, (Action.READ, Action.UPDATE, Action.PUBLISH), "grades and transcripts")
 _register(
     Module.ORGANIZATION,
@@ -216,6 +278,60 @@ _register(Module.GOOGLE, (Action.READ, Action.UPDATE, Action.SYNC), "the Google 
 # the service layer cannot express that without a code change.
 _register(Module.INSTITUTION, (Action.VIEW_ALL,), "records")
 
+# --- the academic assessment system ----------------------------------------
+# `transcript.view` is separate from `grade.read` because a transcript is an
+# *official* document assembled from finalised records -- somebody may be
+# entitled to see a mark without being entitled to issue the document that
+# certifies it.
+_register(
+    Module.TRANSCRIPT,
+    (Action.READ, Action.GENERATE),
+    "transcripts",
+    phrasing={
+        Action.READ: "View a student's transcript",
+        Action.GENERATE: "Generate and issue official transcripts",
+    },
+)
+# The computed, weighted picture of how a student is doing. Read-only by
+# nature: there is nothing to write, because every input lives somewhere else.
+_register(
+    Module.PERFORMANCE,
+    (Action.READ,),
+    "student performance",
+    phrasing={Action.READ: "View calculated student performance and its breakdown"},
+)
+# Who may decide that examinations are 45% of the mark. The most consequential
+# permission in the academic system: it silently changes every student's
+# result, which is why it is not folded into `grade.update`.
+# §11's per-session marks. `publish` is separate from `update` for the same
+# reason it is on assignments and examinations: a tutor's working note on how
+# somebody participated in one class is not a result, and it reaches a guardian
+# the moment it is released. Withholding only `publish` gives an institution a
+# tutor who can record observations that an administrator then releases.
+_register(
+    Module.CLASS_PERFORMANCE,
+    _CRUD + (Action.PUBLISH,),
+    "class performance marks",
+    phrasing={
+        Action.CREATE: "Record class performance marks for a session",
+        Action.READ: "View class performance marks",
+        Action.UPDATE: "Amend class performance marks",
+        # A mark entered against the wrong student cannot be corrected by
+        # zeroing it -- zero is itself a mark, and it would be averaged in.
+        Action.DELETE: "Remove a class performance mark entered in error",
+        Action.PUBLISH: "Release class performance marks to students and guardians",
+    },
+)
+_register(
+    Module.GRADING_SCHEME,
+    (Action.READ, Action.MANAGE),
+    "grading schemes and weightings",
+    phrasing={
+        Action.READ: "View grading schemes and their weightings",
+        Action.MANAGE: "Define grading schemes, weightings and grade bands",
+    },
+)
+
 
 ALL_PERMISSIONS: Final[dict[str, str]] = dict(_CATALOG)
 
@@ -242,6 +358,16 @@ _ADMIN: set[str] = (
         Module.ASSIGNMENT, Module.QUIZ, Module.EXAM, Module.GRADE,
         Module.ORGANIZATION, Module.GUARDIAN, Module.ANNOUNCEMENT,
         Module.DISCUSSION, Module.ACADEMIC, Module.REPORT,
+        # Running the academic office is daily operations: an administrator
+        # views performance and issues transcripts. Defining the weighting
+        # scheme is not -- it silently changes every student's result at once,
+        # so `grading_scheme.manage` is subtracted below and stays with the
+        # Super Admin, matching "cannot modify system settings".
+        Module.TRANSCRIPT, Module.PERFORMANCE, Module.GRADING_SCHEME,
+        # The academic office corrects and releases these like any other
+        # mark; row scoping is not needed for an administrator, who holds
+        # `institution.view_all`.
+        Module.CLASS_PERFORMANCE,
     )
     | {
         perm(Module.ROLE, Action.READ),
@@ -290,6 +416,10 @@ _ADMIN: set[str] = (
     perm(Module.USER, Action.VIEW_CONTACT),
     # Taking attendance for a tutor is a Super Admin act: it puts words in the assigned tutor's mouth, and is audited.
     perm(Module.ATTENDANCE, Action.OVERRIDE),
+    # Deciding that examinations are 45% of the mark re-grades every student
+    # in every affected course the moment it is saved. That is a governance
+    # decision, not an operational one.
+    perm(Module.GRADING_SCHEME, Action.MANAGE),
 }
 
 
@@ -311,6 +441,9 @@ _TUTOR: set[str] = {
     perm(Module.RESOURCE, Action.READ),
     perm(Module.RESOURCE, Action.UPDATE),
     perm(Module.RESOURCE, Action.DELETE),
+    # Tutors are staff: the whole point of restricted media is that colleagues
+    # can share a recording or a briefing without it reaching a class.
+    perm(Module.RESOURCE, Action.VIEW_RESTRICTED),
     perm(Module.ASSIGNMENT, Action.CREATE),
     perm(Module.ASSIGNMENT, Action.READ),
     perm(Module.ASSIGNMENT, Action.UPDATE),
@@ -324,6 +457,30 @@ _TUTOR: set[str] = {
     perm(Module.EXAM, Action.READ),
     perm(Module.GRADE, Action.READ),
     perm(Module.GRADE, Action.UPDATE),
+    # A tutor could previously neither set an examination for their own batch
+    # nor record its marks -- `exam.read` was the whole grant, so the one
+    # assessment type that carries the most weight was administrator-only.
+    # Row scoping still limits them to batches they teach.
+    perm(Module.EXAM, Action.CREATE),
+    perm(Module.EXAM, Action.UPDATE),
+    perm(Module.EXAM, Action.GRADE),
+    # Releasing marks, for the work they set and marked themselves.
+    perm(Module.ASSIGNMENT, Action.PUBLISH),
+    perm(Module.QUIZ, Action.PUBLISH),
+    perm(Module.EXAM, Action.PUBLISH),
+    # The weighted picture of a student they teach, and the scheme it was
+    # computed under -- read-only. Defining the scheme is not theirs: it
+    # changes every student's result at once.
+    perm(Module.PERFORMANCE, Action.READ),
+    perm(Module.GRADING_SCHEME, Action.READ),
+    perm(Module.TRANSCRIPT, Action.READ),
+    # §11: the marks a tutor is the only person in a position to give. Scoped
+    # in the service to sessions of batches they actually teach.
+    perm(Module.CLASS_PERFORMANCE, Action.CREATE),
+    perm(Module.CLASS_PERFORMANCE, Action.READ),
+    perm(Module.CLASS_PERFORMANCE, Action.UPDATE),
+    perm(Module.CLASS_PERFORMANCE, Action.DELETE),
+    perm(Module.CLASS_PERFORMANCE, Action.PUBLISH),
     perm(Module.ANNOUNCEMENT, Action.CREATE),
     perm(Module.ANNOUNCEMENT, Action.READ),
     # A tutor who can post an announcement but can never correct or withdraw
@@ -368,6 +525,14 @@ _STUDENT: set[str] = {
     perm(Module.QUIZ, Action.ATTEMPT),
     perm(Module.EXAM, Action.READ),
     perm(Module.GRADE, Action.READ),
+    # Their own, scoped by the service. A student who cannot see how their
+    # own mark was arrived at is the case §37's drill-down exists for.
+    perm(Module.PERFORMANCE, Action.READ),
+    perm(Module.TRANSCRIPT, Action.READ),
+    # Released marks only -- the service filters on state, not this grant.
+    # Without the read they would see a "Class performance" line in their own
+    # breakdown with no way to open it, which is §37's drill-down withheld.
+    perm(Module.CLASS_PERFORMANCE, Action.READ),
     perm(Module.ANNOUNCEMENT, Action.READ),
     perm(Module.DISCUSSION, Action.CREATE),
     perm(Module.DISCUSSION, Action.READ),
@@ -409,6 +574,18 @@ _CORPORATE_MANAGER: set[str] = {
     perm(Module.ENROLLMENT, Action.READ),
     perm(Module.ATTENDANCE, Action.READ),
     perm(Module.GRADE, Action.READ),
+    # Monitoring, read-only, and scoped by the service to the people in their
+    # care -- never a route to a student they are not linked to. Spec §1 lists
+    # assignments, quizzes, examinations, performance and transcripts as things
+    # this role may see; without these names they could see a *mark* through
+    # `grade.read` and not the piece of work it was for, which is a worse
+    # experience than no access and protects nothing.
+    perm(Module.ASSIGNMENT, Action.READ),
+    perm(Module.QUIZ, Action.READ),
+    perm(Module.EXAM, Action.READ),
+    perm(Module.PERFORMANCE, Action.READ),
+    perm(Module.TRANSCRIPT, Action.READ),
+    perm(Module.CLASS_PERFORMANCE, Action.READ),
     perm(Module.REPORT, Action.READ),
     perm(Module.REPORT, Action.EXPORT),
     perm(Module.NOTIFICATION, Action.READ),
@@ -437,6 +614,12 @@ _GUARDIAN: set[str] = {
     perm(Module.GRADE, Action.READ),
     perm(Module.ASSIGNMENT, Action.READ),
     perm(Module.EXAM, Action.READ),
+    # A guardian could see assignments and examinations but not quizzes --
+    # an accident of when each was added, not a decision anybody made.
+    perm(Module.QUIZ, Action.READ),
+    perm(Module.PERFORMANCE, Action.READ),
+    perm(Module.TRANSCRIPT, Action.READ),
+    perm(Module.CLASS_PERFORMANCE, Action.READ),
     perm(Module.ANNOUNCEMENT, Action.READ),
     # Read-only, and scoped to their own links. Creating a guardianship is
     # deliberately NOT granted: a self-service "I am this child's guardian"

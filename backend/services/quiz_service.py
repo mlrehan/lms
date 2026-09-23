@@ -38,6 +38,11 @@ from backend.schemas.quiz import (
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.course_service import CourseService
+from backend.services.assessment_scope import (
+    AssessmentScopeResolver,
+    AssessmentTarget,
+    validate as validate_scope,
+)
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import QuestionType
 
@@ -54,6 +59,9 @@ class QuizService:
         self.attempts = AttemptRepository(session)
         self.courses = CourseService(session)
         self.scopes = ScopeResolver(session)
+        # The same shared resolver assignments use. §3's "do not create
+        # duplicated implementations" is satisfied by there being exactly one.
+        self.targets = AssessmentScopeResolver(session)
 
     # -- quizzes -------------------------------------------------------------
 
@@ -103,8 +111,30 @@ class QuizService:
         if not scope.allows(course.id):
             raise AuthorizationError("You can only set coursework on a course you teach.")
 
+        target = await self.targets.resolve_ids(
+            scope=payload.scope,
+            course_id=course.id,
+            batch_id=await self.targets.batch_id(payload.batch_id),
+            session_id=await self.targets.session_id(payload.session_id),
+        )
+        validate_scope(target)
+        if target.course_id != course.id:
+            raise ValidationError("That batch or session belongs to a different course.")
+
         row = Quiz(
             course_id=course.id,
+            scope=target.scope,
+            batch_id=target.batch_id,
+            session_id=target.session_id,
+            available_from=payload.available_from,
+            available_until=payload.available_until,
+            shuffle_answers=payload.shuffle_answers,
+            questions_per_attempt=payload.questions_per_attempt,
+            show_result_immediately=payload.show_result_immediately,
+            show_correct_answers=payload.show_correct_answers,
+            show_explanations=payload.show_explanations,
+            auto_submit_on_expiry=payload.auto_submit_on_expiry,
+            weight=payload.weight,
             title=payload.title,
             instructions=payload.instructions,
             duration_minutes=payload.duration_minutes,
@@ -359,7 +389,24 @@ class QuizService:
         if not quiz.is_published:
             raise ConflictError("This quiz is not open for attempts.")
 
-        await self._assert_enrolled_in_course(actor, quiz.course_id)
+        # §3: eligibility follows the quiz's own scope, so a student in another
+        # batch is refused work that was never set for them.
+        if not await self.targets.is_eligible(AssessmentTarget.of(quiz), actor.id):
+            raise ConflictError("This quiz was not set for you.")
+
+        # §9's availability period. `is_published` alone could not express "open
+        # on Monday, closes Friday", so a quiz was either live or invisible.
+        now = datetime.now(UTC)
+        if quiz.available_from and now < quiz.available_from:
+            raise ConflictError(
+                "This quiz has not opened yet.",
+                details={"opens_at": quiz.available_from.isoformat()},
+            )
+        if quiz.available_until and now > quiz.available_until:
+            raise ConflictError(
+                "This quiz has closed.",
+                details={"closed_at": quiz.available_until.isoformat()},
+            )
 
         in_progress = await self.attempts.get_in_progress(quiz_id=quiz.id, student_id=actor.id)
         if in_progress is not None:

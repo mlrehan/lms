@@ -20,7 +20,7 @@ from typing import Annotated, Any
 from pydantic import Field, model_validator
 
 from backend.schemas.base import APIModel, RequestModel
-from backend.utils.enums import QuestionType
+from backend.utils.enums import AssessmentScope, QuestionType
 
 # Question types a machine can mark. SHORT_ANSWER and ESSAY are deliberately
 # absent: grading free text is a human's job, and pretending otherwise would
@@ -37,6 +37,11 @@ class QuizSummary(APIModel):
     attempts_allowed: int
     passing_score: Decimal
     is_published: bool
+    # On the summary as well as the detail: a tutor of two batches cannot use
+    # a list that will not say which batch each quiz is for.
+    scope: AssessmentScope = AssessmentScope.COURSE
+    available_from: datetime | None = None
+    available_until: datetime | None = None
 
 
 class QuizResponse(QuizSummary):
@@ -65,6 +70,34 @@ class QuizCreateRequest(RequestModel):
         default=None,
         description="e.g. {'negative_marking': 0.25} to deduct a quarter of a question's points per wrong answer.",
     )
+
+    # -- academic scope (spec §3) -------------------------------------------
+    # Identical to the assignment's, because it is the same concept resolved by
+    # the same service. COURSE is the default, so an existing client that sends
+    # none of these keeps the behaviour it has today.
+    scope: AssessmentScope = AssessmentScope.COURSE
+    batch_id: uuid.UUID | None = None
+    session_id: uuid.UUID | None = None
+
+    # -- availability and result visibility (spec §9) ------------------------
+    available_from: datetime | None = None
+    available_until: datetime | None = None
+    shuffle_answers: bool = False
+    questions_per_attempt: Annotated[int | None, Field(ge=1, le=500)] = Field(
+        default=None,
+        description="Draw this many at random from the bank. Null means every question.",
+    )
+    show_result_immediately: bool = True
+    show_correct_answers: bool = False
+    show_explanations: bool = False
+    auto_submit_on_expiry: bool = True
+    weight: Annotated[Decimal, Field(ge=0, le=Decimal("999.999"))] = Decimal("1")
+
+    @model_validator(mode="after")
+    def _window_is_coherent(self):  # type: ignore[no-untyped-def]
+        if self.available_from and self.available_until and self.available_until <= self.available_from:
+            raise ValueError("The quiz must close after it opens.")
+        return self
 
 
 class QuizUpdateRequest(RequestModel):

@@ -52,6 +52,7 @@ from backend.schemas.resource import (
     ResourceUpdateRequest,
 )
 from backend.services import audit_service
+from backend.core.permissions import Action as _Act, Module as _Mod, perm as _perm
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.course_service import CourseService
@@ -63,6 +64,11 @@ from backend.utils.enums import ResourcePermissionLevel, ResourceScopeType, Reso
 logger = get_logger(__name__)
 
 _UNSET = object()
+
+#: Holding this is what separates staff from the audience a restricted file is
+#: kept away from. Resolved as a permission rather than a role name so an
+#: institution can add a registrar or an external examiner later.
+_VIEW_RESTRICTED = _perm(_Mod.RESOURCE, _Act.VIEW_RESTRICTED)
 
 
 class ResourceService:
@@ -286,12 +292,27 @@ class ResourceService:
             resource_type=resource_type,
             query=query,
             include_deleted=include_deleted and await self._can_manage(actor),
+            include_restricted=self.may_see_restricted(actor),
         )
+
+    @staticmethod
+    def may_see_restricted(actor: User) -> bool:
+        return _VIEW_RESTRICTED in ScopeResolver.held_permissions(actor)
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Resource:
         row = await self.resources.get_by_public_id_full(public_id)
         if row is None:
             raise NotFoundError("Resource not found.")
+
+        # Checked first, and deliberately *before* reachability: a restricted
+        # file is refused to a student even when it was shared with them
+        # directly. A restriction that a share could override would protect
+        # nothing, and sharing is exactly how this material moves between
+        # staff. 404, not 403 -- a file this person should never have been
+        # offered must not be provable to exist.
+        if row.is_restricted and not self.may_see_restricted(actor):
+            raise NotFoundError("Resource not found.")
+
         if not await self._resource_reachable(row, actor):
             raise NotFoundError("Resource not found.")
         if row.is_deleted and not await self._can_manage(actor):
@@ -473,6 +494,17 @@ class ResourceService:
         resource = await self.get(public_id, actor=actor)
         await self.require_level(resource, actor, ResourcePermissionLevel.EDIT)
         changes = payload.model_dump(exclude_unset=True)
+
+        if changes.get("is_restricted"):
+            # Restricting is a withdrawal, so it has to withdraw everything --
+            # including a public link issued while the file was open. Leaving
+            # one live would mean the file is staff-only to everyone except
+            # whoever already has the URL.
+            if not self.may_see_restricted(actor):
+                raise AuthorizationError(
+                    "You cannot mark a file staff-only unless you can see staff-only files."
+                )
+            resource.share_token = None
 
         if "folder_id" in changes:
             if changes["folder_id"] is None:
@@ -755,6 +787,13 @@ class ResourceService:
         if not secrets.compare_digest(resource.share_token or "", token):
             raise NotFoundError("Resource not found.")
 
+        # Checked here as well as at issue time, and that repetition is the
+        # point: a file can be restricted *after* a link was handed out, and
+        # restricting it has to revoke the link rather than leaving an
+        # unauthenticated door open behind the new audience rule.
+        if resource.is_restricted:
+            raise NotFoundError("Resource not found.")
+
         return resource, resource.path
 
     # -- permissions and sharing --------------------------------------------
@@ -855,8 +894,20 @@ class ResourceService:
         )
 
     async def share(
-        self, public_id: uuid.UUID, user_public_ids: Sequence[uuid.UUID], *, actor: User
+        self,
+        public_id: uuid.UUID,
+        user_public_ids: Sequence[uuid.UUID],
+        *,
+        actor: User,
+        level: ResourcePermissionLevel = ResourcePermissionLevel.VIEW,
     ) -> list[SharedResource]:
+        """Share a file with named people, at a stated level.
+
+        `level` used to be unreachable: the column existed and `effective_level`
+        read it, but nothing ever set it, so every share took the server default
+        and "let them watch it without keeping a copy" could not be expressed --
+        which is the whole of what the brief asks for.
+        """
         resource = await self.get(public_id, actor=actor)
         await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
 
@@ -869,14 +920,32 @@ class ResourceService:
                 details={"unknown_users": sorted(str(m) for m in missing)},
             )
 
+        if resource.is_restricted:
+            # Sharing is how staff material travels, so it is allowed -- but
+            # only to people who could have seen the file anyway. Otherwise a
+            # share row would exist that `get()` then refuses, which reads to
+            # the recipient as the system losing a file.
+            blocked = [u for u in users if not self.may_see_restricted(u)]
+            if blocked:
+                raise ValidationError(
+                    "This file is staff-only and cannot be shared with these people.",
+                    details={"users": sorted(u.username or str(u.public_id) for u in blocked)},
+                )
+
         for user in users:
-            if await self.shares.existing(resource_id=resource.id, user_id=user.id):
+            existing = await self.shares.existing(resource_id=resource.id, user_id=user.id)
+            if existing is not None:
+                # Re-sharing is how a level is changed; skipping would make
+                # "share this read-only" silently do nothing to someone who
+                # already had it at DOWNLOAD.
+                existing.level = level
                 continue
             self.session.add(
                 SharedResource(
                     resource_id=resource.id,
                     shared_with_user_id=user.id,
                     shared_by_user_id=actor.id,
+                    level=level,
                     created_at=datetime.now(UTC),
                 )
             )
@@ -889,7 +958,7 @@ class ResourceService:
             actor_email=actor.email,
             entity_type="resource",
             entity_id=resource.id,
-            details={"shared_with": sorted(u.username for u in users)},
+            details={"shared_with": sorted(u.username for u in users), "level": level.value},
         )
         return await self.shares.for_resource(resource.id)
 
@@ -920,6 +989,16 @@ class ResourceService:
         """Issue or revoke a public, unauthenticated download link."""
         resource = await self.get(public_id, actor=actor)
         await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
+
+        if enabled and resource.is_restricted:
+            # A link that needs no sign-in cannot respect an audience rule --
+            # anyone holding the string is outside every check this platform
+            # makes. Refusing is the only honest answer; the alternative is a
+            # control that appears to work and silently does not.
+            raise ValidationError(
+                "This file is staff-only, so it cannot have a public link. "
+                "Share it with named people instead."
+            )
 
         # 256 bits: the token is the only thing standing between the file and
         # anyone on the internet, so it has to be unguessable rather than

@@ -16,6 +16,12 @@ class Course(Base, PublicIdMixin, SoftDeleteMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
     category_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
     department_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    # §13: a course may override the institution's default grading scheme.
+    # Null means "use the default", which is what every existing course does
+    # and continues to do -- the migration adds no scheme to anything.
+    grading_scheme_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("grading_schemes.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Spec §5's exact lifecycle: Draft -> Published -> Running -> Completed
     # -> Archived. There was previously no status column at all here.

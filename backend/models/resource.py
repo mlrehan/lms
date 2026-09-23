@@ -68,6 +68,11 @@ class Resource(Base, PublicIdMixin):
     uploaded_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"))
     modified_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"))
     is_deleted: Mapped[bool] = bool_column(default=False)
+    # Staff-only material. Checked *before* any share or grant is consulted,
+    # so a share cannot re-admit an audience that was deliberately excluded --
+    # see `ResourceService.get`. Not inherited from a folder: moving a file
+    # must never change who can see it as a side effect.
+    is_restricted: Mapped[bool] = bool_column(default=False)
     created_at: Mapped[datetime] = utc_datetime_column(nullable=False)
     updated_at: Mapped[datetime] = utc_datetime_column(onupdate=True)
     deleted_at: Mapped[datetime] = utc_datetime_column(default=False)

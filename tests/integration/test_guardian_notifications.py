@@ -113,12 +113,26 @@ def env():
         loop.close()
 
 
-def _grade(s, made):  # noqa: ANN001, ANN202
-    return AssignmentService(s).grade(
+async def _grade(s, made):  # noqa: ANN001, ANN202
+    """Mark the work **and release it**.
+
+    Grading alone used to notify. It no longer does: spec §14 separates
+    recording a mark from releasing it, and a guardian must not be told about
+    a result the family has not been given. Publishing is now what announces,
+    so these tests -- which are about the *content* of a guardian's
+    notification and their ability to switch it off -- do both.
+
+    `test_grading_alone_tells_nobody` below covers the new timing directly,
+    rather than leaving it as an invisible side effect of this helper.
+    """
+    service = AssignmentService(s)
+    await service.grade(
         made["submission"].public_id,
         GradeSubmissionRequest(grade=72, feedback="good"),
         actor=made["tutor"],
     )
+    await s.flush()
+    return await service.publish_results(made["assignment"].public_id, actor=made["tutor"])
 
 
 def test_a_guardian_is_told_when_their_ward_is_graded(env) -> None:
@@ -138,6 +152,34 @@ def test_a_guardian_is_told_when_their_ward_is_graded(env) -> None:
     # The student's own notification is untouched and still second person.
     assert [r.type for r in student_rows] == [NotificationType.SUBMISSION_GRADED]
     assert "You scored" in student_rows[0].body
+
+
+def test_grading_alone_tells_nobody(env) -> None:
+    """§14: recording a mark and releasing it are separate acts.
+
+    A tutor marking thirty scripts over a week must not be telling thirty
+    families one at a time as they go. This is the property that changed the
+    helper above, so it gets a test of its own rather than being an invisible
+    consequence of one.
+    """
+    def f(s):  # noqa: ANN001, ANN202
+        async def go():  # noqa: ANN202
+            made = await env.build(s)
+            await AssignmentService(s).grade(
+                made["submission"].public_id,
+                GradeSubmissionRequest(grade=72, feedback="good"),
+                actor=made["tutor"],
+            )
+            await s.flush()
+            return (
+                await env.rows_for(s, made["guardian"].id),
+                await env.rows_for(s, made["student"].id),
+            )
+        return go()
+
+    guardian_rows, student_rows = env.run(f)
+    assert guardian_rows == []
+    assert student_rows == []
 
 
 def test_the_guardians_copy_names_the_child_and_is_not_written_in_the_second_person(env) -> None:

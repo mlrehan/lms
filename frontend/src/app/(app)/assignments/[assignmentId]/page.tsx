@@ -34,6 +34,26 @@ import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
+/** Every state §7 defines, with the tone it deserves. */
+const STATE_LABELS: Record<string, { label: string; tone: "neutral" | "success" | "warning" | "danger" }> = {
+  NOT_STARTED: { label: "Not started", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "neutral" },
+  SUBMITTED: { label: "Submitted", tone: "neutral" },
+  LATE: { label: "Late", tone: "warning" },
+  UNDER_REVIEW: { label: "Under review", tone: "neutral" },
+  GRADED: { label: "Graded, not released", tone: "warning" },
+  PUBLISHED: { label: "Published", tone: "success" },
+  ABSENT: { label: "Absent", tone: "danger" },
+  EXEMPTED: { label: "Exempted", tone: "neutral" },
+  RESUBMISSION_REQUIRED: { label: "Resubmission asked", tone: "warning" },
+  REASSESSED: { label: "Reassessed", tone: "success" },
+};
+
+function SubmissionStateBadge({ state }: { state?: string | null }) {
+  const found = STATE_LABELS[state ?? ""] ?? { label: state ?? "—", tone: "neutral" as const };
+  return <Badge tone={found.tone}>{found.label}</Badge>;
+}
+
 function GradeDialog({
   submission,
   maxScore,
@@ -45,13 +65,23 @@ function GradeDialog({
 }) {
   const [grade, setGrade] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [reason, setReason] = useState("");
+
+  // Changing a mark that has already been given needs a reason (§24). The API
+  // refuses without one; asking here means the tutor is not told off after
+  // typing everything else.
+  const isChange = submission?.grade !== null && submission?.grade !== undefined;
 
   const save = useApiMutation<SubmissionResponse, { grade: string; feedback: string }>({
     mutationFn: (values) =>
       api.put<SubmissionResponse>(`/submissions/${segment(submission!.public_id)}/grade`, {
-        body: { grade: Number(values.grade), feedback: values.feedback || null },
+        body: {
+          grade: Number(values.grade),
+          feedback: values.feedback || null,
+          override_reason: isChange ? reason : null,
+        },
       }),
-    success: "Grade recorded.",
+    success: "Grade recorded. Publish it when you are ready for the student to see it.",
     invalidate: [["submissions"], ["assignments"], ["gradebook"], ["dashboard"]],
     onSuccess: () => {
       setGrade("");
@@ -102,12 +132,32 @@ function GradeDialog({
               <Textarea id={id} value={feedback} onChange={(event) => setFeedback(event.target.value)} />
             )}
           </Field>
+          {isChange ? (
+            <Field label="Reason for the change" required>
+              {({ id }) => (
+                <Textarea
+                  id={id}
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  placeholder="Recorded against the mark, and visible to administrators."
+                />
+              )}
+            </Field>
+          ) : null}
+          <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+            Recording a mark does not show it to the student. Publish the
+            assignment&rsquo;s results when you are ready to release them.
+          </p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={grade === ""} onClick={() => save.mutate({ grade, feedback })}>
+          <Button
+            loading={save.isPending}
+            disabled={grade === "" || (isChange && reason.trim().length < 3)}
+            onClick={() => save.mutate({ grade, feedback })}
+          >
             Record grade
           </Button>
         </DialogFooter>
@@ -186,6 +236,21 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
       }),
   });
 
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const publish = useApiMutation<{ published: number }, void>({
+    mutationFn: () =>
+      api.post<{ published: number }>(
+        `/assignments/${segment(assignment.public_id)}/publish-results`,
+        { body: {} },
+      ),
+    success: (result) =>
+      result.published === 0
+        ? "Nothing to publish — no submissions are graded yet."
+        : `${result.published} result(s) published.`,
+    invalidate: [["submissions"], ["assignments"], ["gradebook"], ["dashboard"]],
+    onSuccess: () => setConfirmPublish(false),
+  });
+
   const columns: Column<SubmissionResponse>[] = [
     {
       key: "student",
@@ -207,15 +272,31 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
       ),
     },
     {
+      key: "state",
+      header: "Status",
+      // §38: scored zero, not yet assessed, absent and exempted are four
+      // different facts. A "graded / not graded" badge could show only two of
+      // them, and showed an exempted student as "not graded" -- which reads
+      // as a tutor who has not done their marking.
+      cell: (row) => <SubmissionStateBadge state={row.state} />,
+    },
+    {
       key: "grade",
       header: "Grade",
       align: "right",
       cell: (row) =>
         row.grade === null || row.grade === undefined ? (
-          <Badge tone="warning">Not graded</Badge>
+          <span className="text-xs text-muted-foreground">—</span>
         ) : (
           <span className="tabular-nums font-medium">
             {row.grade} / {assignment.max_score}
+            {/* The deduction, shown as arithmetic rather than folded into one
+                opaque number the student cannot reconcile. */}
+            {row.late_penalty_applied && Number(row.late_penalty_applied) > 0 ? (
+              <span className="block text-2xs font-normal text-warning">
+                {row.raw_grade} less {row.late_penalty_applied} late penalty
+              </span>
+            ) : null}
           </span>
         ),
     },
@@ -249,6 +330,21 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
         title="Submissions"
         description={`${assignment.submission_count ?? 0} received.`}
         actions={
+          <span className="flex flex-wrap items-center gap-2">
+          {/* §14's release step, as its own action. Marking thirty scripts
+              over a week and releasing them together is the normal workflow;
+              releasing each as it is marked tells the first student days
+              before the last. */}
+          {permissions.has("assignment.publish") ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={publish.isPending}
+              onClick={() => setConfirmPublish(true)}
+            >
+              Publish results
+            </Button>
+          ) : null}
           <NativeSelect
             className="w-auto"
             aria-label="Filter by grading state"
@@ -262,7 +358,19 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
             <option value="false">Awaiting grading</option>
             <option value="true">Graded</option>
           </NativeSelect>
+          </span>
         }
+      />
+      <ConfirmDialog
+        open={confirmPublish}
+        onOpenChange={setConfirmPublish}
+        title="Publish these results?"
+        // A high-impact action gets a confirmation (§27): once a mark is
+        // released the student and their guardian have seen it, and there is
+        // no taking that back.
+        description="Every graded submission becomes visible to its student, and they are notified. Submissions that are not yet graded are left alone."
+        confirmLabel="Publish"
+        onConfirm={() => publish.mutate()}
       />
       {isPending ? (
         <LoadingState />

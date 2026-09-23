@@ -25,10 +25,17 @@ class NotificationPreferencesResponse(APIModel):
     preferences: list[NotificationPreferenceResponse]
     channels_note: str = Field(
         default=(
-            "Only in-app notifications are delivered. Email, SMS and push are "
-            "modelled but have no transport, so no per-channel setting is offered."
+            "These switches decide what is worth telling you at all. Anything "
+            "left on arrives in the app, and on any device you have turned on "
+            "above. Email and SMS are modelled but have no transport, so there "
+            "is no per-channel setting for them."
         ),
-        description="Stated rather than implied, so nobody expects an email.",
+        description=(
+            "Stated rather than implied, so nobody expects an email. Rewritten "
+            "when Web Push gained a real transport: the previous wording said "
+            "push was modelled and undeliverable, which had stopped being true "
+            "and is the worst kind of note -- one that stops the reader checking."
+        ),
     )
 
 

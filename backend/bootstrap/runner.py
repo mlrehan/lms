@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.bootstrap.seeders.geo import seed_geo
+from backend.bootstrap.seeders.grading import seed_grading
 from backend.bootstrap.seeders.identity import seed_identity
 from backend.core.logging import get_logger
 from backend.models.identity.role import Role
@@ -28,6 +29,18 @@ async def bootstrap_geo(session: AsyncSession) -> dict[str, int]:
     every deploy alongside `bootstrap_identity`."""
     result = await seed_geo(session)
     logger.info("Geo reference data seeded", extra=result)
+    return result
+
+
+async def bootstrap_grading(session: AsyncSession) -> dict[str, int]:
+    """Give the institution's default grading scheme a usable starting point.
+
+    Idempotent, and deliberately timid: it only touches a scheme that has no
+    components at all, so an institution's own weightings are never replaced by
+    a deploy. See the seeder's own docstring for why this is not in a migration.
+    """
+    result = await seed_grading(session)
+    logger.info("Grading defaults seeded", extra=result)
     return result
 
 

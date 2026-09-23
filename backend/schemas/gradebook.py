@@ -147,6 +147,37 @@ class TranscriptResponse(APIModel):
     generated_at: datetime
     is_final: bool
 
+    # -- the official record (spec §5) --------------------------------------
+    final_percentage: Decimal | None = Field(
+        default=None,
+        description=(
+            "Null while the course is incomplete. A transcript never reports a "
+            "mid-course standing as a final result (spec §38)."
+        ),
+    )
+    total_marks_earned: Decimal | None = None
+    total_marks_possible: Decimal | None = None
+    is_pass: bool | None = None
+    scheme_name: str | None = Field(
+        default=None,
+        description="The grading policy that produced these figures. Schemes change.",
+    )
+    sessions_total: int | None = None
+    sessions_attended: int | None = None
+    attendance_percentage: Decimal | None = None
+    breakdown: list[dict] | None = Field(
+        default=None,
+        description="The per-component arithmetic as it stood at issue (spec §37).",
+    )
+    issued_at: datetime | None = None
+    issued_by_username: str | None = Field(
+        default=None, description="Who certified it (spec §5's verification)."
+    )
+    is_complete: bool = Field(
+        default=False,
+        description="True when every weighted component was assessed at issue.",
+    )
+
 
 class GenerateTranscriptsResponse(APIModel):
     generated: int = 0
@@ -155,7 +186,11 @@ class GenerateTranscriptsResponse(APIModel):
         default=0, description="Transcripts left alone because they are already finalised."
     )
     skipped_no_grades: int = Field(
-        default=0, description="Students with no grade book entries to aggregate."
+        default=0,
+        description=(
+            "Students with nothing to certify -- no grading scheme configured for "
+            "the course, or no published marks in any weighted component."
+        ),
     )
 
 

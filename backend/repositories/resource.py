@@ -168,11 +168,20 @@ class ResourceRepository(BaseRepository[Resource]):
         resource_type: ResourceType | None = None,
         query: str | None = None,
         include_deleted: bool = False,
+        include_restricted: bool = False,
     ) -> tuple[Sequence[Resource], int]:
         stmt = self._base()
 
         if not include_deleted:
             stmt = stmt.where(Resource.is_deleted.is_(False))
+
+        # Filtered in the query, not after it. Restricted rows are never loaded
+        # for someone who may not see them, so a paging count cannot reveal
+        # that there are files here they cannot name -- and the "unrestricted
+        # scope" shortcut below must not be read as covering this, because it
+        # is about *reachability*, which is a different question.
+        if not include_restricted:
+            stmt = stmt.where(Resource.is_restricted.is_(False))
 
         # Reachable through the resource's course, its batch, or an explicit
         # grant/share. Unrestricted callers skip the whole filter.

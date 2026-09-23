@@ -13,7 +13,9 @@ import type {
   AssignmentResponse,
   AssignmentSummary,
   PageAssignmentSummary,
+  PageBatchSummary,
   PageCourseSummary,
+  PageSessionSummary,
 } from "@/lib/api/types";
 import { SubmissionTypeValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
@@ -29,15 +31,45 @@ import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
-const createSchema = z.object({
-  course_id: z.string().min(1, "Choose the course this belongs to."),
-  title: z.string().trim().min(2, "Give the assignment a title."),
-  description: z.string().trim(),
-  due_date: z.string().min(1, "Set a due date."),
-  max_score: z.string().min(1, "Set the maximum score."),
-  submission_type: z.enum(SubmissionTypeValues),
-  allow_late_submissions: z.boolean(),
-});
+const createSchema = z
+  .object({
+    course_id: z.string().min(1, "Choose the course this belongs to."),
+    // §3: who the work is for. COURSE keeps the behaviour every existing
+    // assignment has, so the default changes nothing for anyone.
+    scope: z.enum(["COURSE", "BATCH", "SESSION"]),
+    batch_id: z.string(),
+    session_id: z.string(),
+    title: z.string().trim().min(2, "Give the assignment a title."),
+    description: z.string().trim(),
+    available_from: z.string(),
+    due_date: z.string().min(1, "Set a due date."),
+    max_score: z.string().min(1, "Set the maximum score."),
+    passing_score: z.string(),
+    submission_type: z.enum(SubmissionTypeValues),
+    allow_late_submissions: z.boolean(),
+    late_penalty_percent_per_day: z.string(),
+    allow_resubmission: z.boolean(),
+    state: z.enum(["DRAFT", "PUBLISHED"]),
+  })
+  // Client-side copies of two rules the API also enforces. Not a substitute
+  // for the server check (§30) -- this only spares the person a round trip to
+  // be told something the form already knew.
+  .refine((v) => v.scope !== "BATCH" || v.batch_id, {
+    path: ["batch_id"],
+    message: "Choose the batch this is set for.",
+  })
+  .refine((v) => v.scope !== "SESSION" || v.session_id, {
+    path: ["session_id"],
+    message: "Choose the class this is set for.",
+  })
+  .refine((v) => !v.passing_score || Number(v.passing_score) <= Number(v.max_score), {
+    path: ["passing_score"],
+    message: "The passing mark cannot exceed the maximum.",
+  })
+  .refine((v) => !v.available_from || !v.due_date || v.due_date > v.available_from, {
+    path: ["due_date"],
+    message: "The deadline must be after the assignment opens.",
+  });
 
 type CreateValues = z.infer<typeof createSchema>;
 
@@ -71,12 +103,20 @@ function CreateAssignmentDialog({
     resolver: zodResolver(createSchema),
     defaultValues: {
       course_id: "",
+      scope: "COURSE",
+      batch_id: "",
+      session_id: "",
       title: "",
       description: "",
+      available_from: "",
       due_date: "",
       max_score: "100",
+      passing_score: "",
       submission_type: "TEXT",
       allow_late_submissions: false,
+      late_penalty_percent_per_day: "",
+      allow_resubmission: false,
+      state: "PUBLISHED",
     },
   });
 
@@ -90,6 +130,22 @@ function CreateAssignmentDialog({
           max_score: Number(values.max_score),
           submission_type: values.submission_type,
           allow_late_submissions: values.allow_late_submissions,
+          scope: values.scope,
+          // Sent only when the scope asks for them. Passing a stale batch id
+          // on a course-wide assignment is refused by the API, and rightly:
+          // it is how somebody later "fixes" the scope by reading the wrong
+          // field.
+          batch_id: values.scope === "BATCH" ? values.batch_id : null,
+          session_id: values.scope === "SESSION" ? values.session_id : null,
+          state: values.state,
+          available_from: values.available_from
+            ? fromLocalInputValue(values.available_from, timeZone)
+            : null,
+          passing_score: values.passing_score ? Number(values.passing_score) : null,
+          late_penalty_percent_per_day: values.late_penalty_percent_per_day
+            ? Number(values.late_penalty_percent_per_day)
+            : null,
+          allow_resubmission: values.allow_resubmission,
         },
       }),
     success: "Assignment created.",
@@ -107,6 +163,28 @@ function CreateAssignmentDialog({
   });
 
   const allowLate = watch("allow_late_submissions");
+  const scope = watch("scope");
+  const courseId = watch("course_id");
+
+  // Only the batches of the course that was chosen. Offering every batch on
+  // the platform would let a tutor pick one from another course, which the API
+  // refuses -- an error the form should never have allowed them to reach.
+  const batches = useQuery({
+    queryKey: ["batches", "for-course", courseId],
+    queryFn: () =>
+      api.get<PageBatchSummary>("/batches", { query: { course_id: courseId, limit: 200 } }),
+    enabled: open && Boolean(courseId) && scope !== "COURSE",
+    staleTime: 60_000,
+  });
+
+  const batchId = watch("batch_id");
+  const sessions = useQuery({
+    queryKey: ["sessions", "for-batch", batchId],
+    queryFn: () =>
+      api.get<PageSessionSummary>("/sessions", { query: { batch_id: batchId, limit: 200 } }),
+    enabled: open && Boolean(batchId) && scope === "SESSION",
+    staleTime: 60_000,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -133,6 +211,67 @@ function CreateAssignmentDialog({
               </NativeSelect>
             )}
           </Field>
+          {/* §3's academic scope. Grouped and explained rather than left as a
+              bare dropdown: "who is this for" is the decision with the widest
+              consequences on this form, and the one a tutor most needs to get
+              right. */}
+          <fieldset className="space-y-3 rounded-lg border border-border-subtle p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              Who is this for
+            </legend>
+            <Field label="Set for" error={errors.scope?.message}>
+              {({ id }) => (
+                <NativeSelect id={id} {...register("scope")}>
+                  <option value="COURSE">Everyone on the course</option>
+                  <option value="BATCH">One batch</option>
+                  <option value="SESSION">One class</option>
+                </NativeSelect>
+              )}
+            </Field>
+
+            {scope !== "COURSE" ? (
+              <Field label="Batch" error={errors.batch_id?.message} required>
+                {({ id }) => (
+                  <NativeSelect id={id} {...register("batch_id")} disabled={!courseId}>
+                    <option value="">
+                      {courseId ? "Choose a batch" : "Choose a course first"}
+                    </option>
+                    {(batches.data?.items ?? []).map((b) => (
+                      <option key={b.public_id} value={b.public_id}>
+                        {b.batch_code}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </Field>
+            ) : null}
+
+            {scope === "SESSION" ? (
+              <Field label="Class" error={errors.session_id?.message} required>
+                {({ id }) => (
+                  <NativeSelect id={id} {...register("session_id")} disabled={!batchId}>
+                    <option value="">
+                      {batchId ? "Choose a class" : "Choose a batch first"}
+                    </option>
+                    {(sessions.data?.items ?? []).map((sess) => (
+                      <option key={sess.public_id} value={sess.public_id}>
+                        {formatDateTime(sess.session_start_time, { timeZone })}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </Field>
+            ) : null}
+
+            <p className="text-xs text-muted-foreground">
+              {scope === "COURSE"
+                ? "Every student in every active batch of this course will be set this work."
+                : scope === "BATCH"
+                  ? "Only students enrolled in the chosen batch."
+                  : "Students of the batch this class belongs to — including anyone who missed it."}
+            </p>
+          </fieldset>
+
           <Field label="Title" error={errors.title?.message} required>
             {({ id }) => <Input id={id} {...register("title")} />}
           </Field>
@@ -158,6 +297,36 @@ function CreateAssignmentDialog({
           <Field label="Description">
             {({ id }) => <Textarea id={id} {...register("description")} />}
           </Field>
+          <fieldset className="space-y-3 rounded-lg border border-border-subtle p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              Rules
+            </legend>
+            <FormGrid>
+              <Field label="Opens" error={errors.available_from?.message}>
+                {({ id }) => (
+                  <Input id={id} type="datetime-local" {...register("available_from")} />
+                )}
+              </Field>
+              <Field label="Passing mark" error={errors.passing_score?.message}>
+                {({ id }) => (
+                  <Input id={id} type="number" min={0} step="0.01" {...register("passing_score")} />
+                )}
+              </Field>
+            </FormGrid>
+            <label className="flex items-center gap-3 text-sm">
+              <Switch
+                checked={watch("allow_resubmission")}
+                onCheckedChange={(checked) => setValue("allow_resubmission", checked)}
+              />
+              <span>
+                Allow resubmission
+                <span className="block text-xs text-muted-foreground">
+                  Lets you hand work back for another attempt after marking it.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
           <label className="flex items-center gap-3 text-sm">
             <Switch
               checked={allowLate}
@@ -170,6 +339,35 @@ function CreateAssignmentDialog({
               </span>
             </span>
           </label>
+          {allowLate ? (
+            <Field
+              label="Late penalty (% of the maximum, per day)"
+              error={errors.late_penalty_percent_per_day?.message}
+            >
+              {({ id }) => (
+                <Input
+                  id={id}
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  placeholder="Leave empty for no penalty"
+                  {...register("late_penalty_percent_per_day")}
+                />
+              )}
+            </Field>
+          ) : null}
+
+          {/* §8's "save as Draft" / "publish immediately". A draft notifies
+              nobody and accepts no submissions, which is the point of it. */}
+          <Field label="On save">
+            {({ id }) => (
+              <NativeSelect id={id} {...register("state")}>
+                <option value="PUBLISHED">Publish now — students are notified</option>
+                <option value="DRAFT">Save as draft — nobody is notified</option>
+              </NativeSelect>
+            )}
+          </Field>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -212,9 +410,18 @@ export default function AssignmentsPage() {
       key: "title",
       header: "Assignment",
       cell: (row) => (
-        <Link href={`/assignments/${row.public_id}`} className="font-medium hover:underline">
-          {row.title}
-        </Link>
+        <span className="flex flex-wrap items-center gap-2">
+          <Link href={`/assignments/${row.public_id}`} className="font-medium hover:underline">
+            {row.title}
+          </Link>
+          {/* A draft is invisible to students and accepts nothing, so a tutor
+              scanning this list needs to see it at a glance -- not discover it
+              when nobody submits. */}
+          {row.state === "DRAFT" ? <Badge tone="warning" dot>Draft</Badge> : null}
+          {row.scope !== "COURSE" ? (
+            <Badge tone="neutral">{row.scope === "BATCH" ? "One batch" : "One class"}</Badge>
+          ) : null}
+        </span>
       ),
     },
     {

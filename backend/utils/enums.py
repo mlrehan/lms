@@ -168,6 +168,120 @@ class GradeComponentType(str, Enum):
 
 
 # =============================================================================
+# Academic assessment (spec §3, §7, §13, §14)
+# =============================================================================
+
+
+class AssessmentScope(str, Enum):
+    """Which population an assessment is set for.
+
+    One enum shared by assignments, quizzes and examinations rather than three
+    parallel implementations -- §3 says so explicitly, and the alternative is
+    the same eligibility rule written out three times and drifting.
+
+    The scope is stored alongside the ids it refers to, rather than inferred
+    from which id happens to be non-null. "Set for the whole course" and "set
+    for a batch we have not chosen yet" are different states, and an inference
+    rule cannot tell them apart.
+    """
+
+    COURSE = "COURSE"
+    BATCH = "BATCH"
+    SESSION = "SESSION"
+
+
+class AssessmentState(str, Enum):
+    """Whether an assessment is visible to the students it is set for.
+
+    Distinct from `ResultState` below: this is the *question* becoming visible,
+    that is the *mark* becoming visible, and an institution needs both.
+    """
+
+    DRAFT = "DRAFT"
+    SCHEDULED = "SCHEDULED"
+    PUBLISHED = "PUBLISHED"
+    CLOSED = "CLOSED"
+    ARCHIVED = "ARCHIVED"
+
+
+class SubmissionState(str, Enum):
+    """Where one student stands on one assessment (spec §7).
+
+    Eleven states because the four §38 insists on distinguishing -- scored
+    zero, not yet assessed, absent, exempted -- are genuinely different facts,
+    and a nullable mark plus a boolean cannot express them. Silently treating
+    a missing mark as zero is the specific failure this enum exists to prevent.
+    """
+
+    NOT_STARTED = "NOT_STARTED"
+    PENDING = "PENDING"
+    SUBMITTED = "SUBMITTED"
+    LATE = "LATE"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    GRADED = "GRADED"
+    PUBLISHED = "PUBLISHED"
+    ABSENT = "ABSENT"
+    EXEMPTED = "EXEMPTED"
+    RESUBMISSION_REQUIRED = "RESUBMISSION_REQUIRED"
+    REASSESSED = "REASSESSED"
+
+    @property
+    def counts_toward_grade(self) -> bool:
+        """Does this state contribute a number to the weighted result?
+
+        `EXEMPTED` deliberately does not: an exempted component is removed from
+        the denominator rather than scored zero, which is the whole point of
+        exempting somebody. `ABSENT` does count -- an absence is a nil result
+        the institution has decided about, not a gap in the record.
+        """
+        return self in {
+            SubmissionState.GRADED,
+            SubmissionState.PUBLISHED,
+            SubmissionState.REASSESSED,
+            SubmissionState.ABSENT,
+        }
+
+    @property
+    def is_visible_to_student(self) -> bool:
+        """Only a published mark reaches the student and their care circle
+        (§14). Every other state is staff-facing."""
+        return self in {SubmissionState.PUBLISHED, SubmissionState.REASSESSED}
+
+
+class ResultState(str, Enum):
+    """The lifecycle a set of marks moves through (spec §14)."""
+
+    DRAFT = "DRAFT"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    FINALIZED = "FINALIZED"
+    PUBLISHED = "PUBLISHED"
+
+
+class GradeScaleType(str, Enum):
+    """How a computed percentage is expressed (spec §13)."""
+
+    PERCENTAGE = "PERCENTAGE"
+    LETTER = "LETTER"
+    GPA = "GPA"
+    PASS_FAIL = "PASS_FAIL"
+    NUMERIC = "NUMERIC"
+    COMPETENCY = "COMPETENCY"
+
+
+class MissingMarkPolicy(str, Enum):
+    """What the engine does with a component that has no mark (spec §38).
+
+    Configurable because institutions genuinely differ, and because the wrong
+    default produces a confidently wrong number. `EXCLUDE` is the safe one: it
+    reports "82% of the 35 marks assessed so far" rather than "29%".
+    """
+
+    EXCLUDE = "EXCLUDE"
+    ZERO = "ZERO"
+    CARRY_FORWARD = "CARRY_FORWARD"
+
+
+# =============================================================================
 # Resources & files (spec §10, §11)
 # =============================================================================
 

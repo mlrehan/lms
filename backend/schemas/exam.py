@@ -10,7 +10,7 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 
 from backend.schemas.base import APIModel, RequestModel
-from backend.utils.enums import ExamType
+from backend.utils.enums import AssessmentScope, ExamType
 
 
 class ExamSummary(APIModel):
@@ -59,6 +59,19 @@ class ExamCreateRequest(_ExamMarks):
     instructions: str | None = None
     course_id: uuid.UUID | None = None
     batch_id: uuid.UUID | None = None
+    session_id: uuid.UUID | None = None
+
+    # -- academic scope (spec §3) -------------------------------------------
+    # Explicit now, rather than inferred from which of course_id/batch_id was
+    # set. COURSE with a batch named is a different intent from BATCH, and an
+    # inference rule cannot tell them apart.
+    scope: AssessmentScope = AssessmentScope.COURSE
+
+    # §10: both examination styles feed the same grade book. This only decides
+    # which workflow a screen offers -- answering in the LMS, or a tutor
+    # entering marks after a physical sitting.
+    is_online: bool = False
+    weight: Annotated[Decimal, Field(ge=0, le=Decimal("999.999"))] = Decimal("1")
 
     @model_validator(mode="after")
     def _anchored(self):  # type: ignore[no-untyped-def]

@@ -101,6 +101,30 @@ export interface AppointManagerRequest {
   title?: string | null;
 }
 
+/**
+ * Which population an assessment is set for.
+ *
+ * One enum shared by assignments, quizzes and examinations rather than three
+ * parallel implementations -- §3 says so explicitly, and the alternative is
+ * the same eligibility rule written out three times and drifting.
+ *
+ * The scope is stored alongside the ids it refers to, rather than inferred
+ * from which id happens to be non-null. "Set for the whole course" and "set
+ * for a batch we have not chosen yet" are different states, and an inference
+ * rule cannot tell them apart.
+ */
+export type AssessmentScope = "COURSE" | "BATCH" | "SESSION";
+export const AssessmentScopeValues = ["COURSE", "BATCH", "SESSION"] as const;
+
+/**
+ * Whether an assessment is visible to the students it is set for.
+ *
+ * Distinct from `ResultState` below: this is the *question* becoming visible,
+ * that is the *mark* becoming visible, and an institution needs both.
+ */
+export type AssessmentState = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
+export const AssessmentStateValues = ["DRAFT", "SCHEDULED", "PUBLISHED", "CLOSED", "ARCHIVED"] as const;
+
 export interface AssignmentBrief {
   public_id: string;
   title: string;
@@ -118,6 +142,29 @@ export interface AssignmentCreateRequest {
   instructions_path?: string | null;
   rubric?: unknown | null;
   allow_late_submissions?: boolean;
+  scope?: AssessmentScope;
+  /** Required when scope is BATCH. */
+  batch_id?: string | null;
+  /** Required when scope is SESSION. */
+  session_id?: string | null;
+  /** DRAFT saves without notifying anybody; PUBLISHED sets it immediately. */
+  state?: AssessmentState;
+  publish_at?: string | null;
+  available_from?: string | null;
+  passing_score?: number | string | null;
+  weight?: number | string;
+  allowed_file_types?: string | null;
+  max_upload_mb?: number | null;
+  allow_multiple_submissions?: boolean;
+  allow_resubmission?: boolean;
+  late_penalty_percent_per_day?: number | string | null;
+}
+
+/**
+ * Release marks. Omitting `student_ids` releases every graded submission.
+ */
+export interface AssignmentPublishResultsRequest {
+  student_ids?: string[] | null;
 }
 
 export interface AssignmentResponse {
@@ -127,6 +174,8 @@ export interface AssignmentResponse {
   max_score: string;
   submission_type: SubmissionType;
   allow_late_submissions: boolean;
+  scope?: AssessmentScope;
+  state?: AssessmentState;
   description?: string | null;
   instructions_path?: string | null;
   rubric?: unknown | null;
@@ -135,6 +184,22 @@ export interface AssignmentResponse {
   submission_count?: number;
   /** Set when the caller has already submitted, so a client need not fetch the list to know. */
   my_submission_id?: string | null;
+  batch_id?: string | null;
+  batch_code?: string | null;
+  session_id?: string | null;
+  /** One line a tutor can read: "Batch LMS-A". */
+  scope_description?: string | null;
+  /** How many students this was set for. */
+  eligible_count?: number | null;
+  publish_at?: string | null;
+  available_from?: string | null;
+  passing_score?: string | null;
+  weight?: string;
+  allowed_file_types?: string | null;
+  max_upload_mb?: number | null;
+  allow_multiple_submissions?: boolean;
+  allow_resubmission?: boolean;
+  late_penalty_percent_per_day?: string | null;
 }
 
 export interface AssignmentSummary {
@@ -144,6 +209,8 @@ export interface AssignmentSummary {
   max_score: string;
   submission_type: SubmissionType;
   allow_late_submissions: boolean;
+  scope?: AssessmentScope;
+  state?: AssessmentState;
 }
 
 export interface AssignmentUpdateRequest {
@@ -155,6 +222,16 @@ export interface AssignmentUpdateRequest {
   instructions_path?: string | null;
   rubric?: unknown | null;
   allow_late_submissions?: boolean | null;
+  state?: AssessmentState | null;
+  publish_at?: string | null;
+  available_from?: string | null;
+  passing_score?: number | string | null;
+  weight?: number | string | null;
+  allowed_file_types?: string | null;
+  max_upload_mb?: number | null;
+  allow_multiple_submissions?: boolean | null;
+  allow_resubmission?: boolean | null;
+  late_penalty_percent_per_day?: number | string | null;
 }
 
 export interface AttemptResponse {
@@ -260,6 +337,22 @@ export interface AuthSessionResponse {
   ip_address?: string | null;
   /** True for the session making this request. */
   is_current?: boolean;
+}
+
+export interface BandPayload {
+  min_score: number | string;
+  max_score: number | string;
+  letter_grade: string;
+  gpa_points: number | string;
+  is_pass?: boolean;
+}
+
+export interface BandResponse {
+  min_score: string;
+  max_score: string;
+  letter_grade: string;
+  gpa_points: string;
+  is_pass?: boolean;
 }
 
 export interface BatchCreateRequest {
@@ -486,6 +579,79 @@ export interface CitySummary {
   timezone?: string | null;
 }
 
+/**
+ * One student's row on the grid.
+ */
+export interface ClassPerformanceEntry {
+  student_id: string;
+  participation?: number | string | null;
+  interaction?: number | string | null;
+  preparation?: number | string | null;
+  practical?: number | string | null;
+  presentation?: number | string | null;
+  teamwork?: number | string | null;
+  communication?: number | string | null;
+  professionalism?: number | string | null;
+  /** The tutor's own figure for the class. Null means 'average the criteria above', which is what most tutors want. */
+  overall_score?: number | string | null;
+  comment?: string | null;
+  /** Institution-specific criteria, as {name: score}. */
+  custom_scores?: Record<string, number | string> | null;
+}
+
+export interface ClassPerformanceMarkResponse {
+  participation?: string | null;
+  interaction?: string | null;
+  preparation?: string | null;
+  practical?: string | null;
+  presentation?: string | null;
+  teamwork?: string | null;
+  communication?: string | null;
+  professionalism?: string | null;
+  public_id: string;
+  student: MarkPerson;
+  max_score: string;
+  /** The tutor's own figure, if they gave one. */
+  overall_score?: string | null;
+  /** The score the calculation engine will actually use: the tutor's own figure, or the mean of the criteria they filled in. Null when nothing has been assessed -- which is excluded from the weighted result, never counted as zero. */
+  average?: string | null;
+  comment?: string | null;
+  custom_scores?: Record<string, unknown> | null;
+  state: ResultState;
+  recorded_by?: MarkPerson | null;
+  recorded_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ClassPerformanceSheetResponse {
+  session: ClassPerformanceSheetSession;
+  rows: ClassPerformanceSheetRow[];
+  /** Whether this caller may record marks here. False for a reader, and false for a tutor who is not the session's assigned tutor -- the backend refuses the write either way; this only stops the console offering a form that cannot be saved. */
+  can_edit: boolean;
+  /** True when the caller may record but is not the assigned tutor -- the academic office correcting a record. Recorded in the audit trail and worth saying out loud on the screen. */
+  would_be_on_behalf?: boolean;
+  /** The common state of the marks recorded so far, or null when they disagree (or none exist). A sheet part-released is a real state and is reported honestly rather than rounded to one value. */
+  state?: ResultState | null;
+  marked?: number;
+  total?: number;
+}
+
+export interface ClassPerformanceSheetRow {
+  student: MarkPerson;
+  /** Null until somebody has assessed this student. */
+  mark?: ClassPerformanceMarkResponse | null;
+}
+
+export interface ClassPerformanceSheetSession {
+  public_id: string;
+  session_start_time?: string | null;
+  session_end_time?: string | null;
+  classroom?: string | null;
+  batch_code?: string | null;
+  course_title?: string | null;
+  assigned_tutor?: MarkPerson | null;
+}
+
 export interface CodeSuggestion {
   code: string;
 }
@@ -497,6 +663,44 @@ export interface ComponentBreakdown {
   available: string;
   percentage?: string | null;
   weight: string;
+}
+
+/**
+ * One line of the drill-down: `82 x 15% = 12.30`.
+ */
+export interface ComponentLine {
+  component_type: GradeComponentType;
+  label: string;
+  weight_percentage: string;
+  /** The student's mark in this component, out of 100. */
+  percentage?: string | null;
+  /** percentage x weight / 100. Null when the component does not count. */
+  contribution?: string | null;
+  marks_total: number;
+  marks_scored: number;
+  counted: boolean;
+  /** Why it was left out, in words a tutor can act on. */
+  excluded_reason?: string;
+  is_mandatory?: boolean;
+  meets_component_pass?: boolean | null;
+}
+
+export interface ComponentWeightPayload {
+  component_type: GradeComponentType;
+  label?: string | null;
+  weight_percentage: number | string;
+  /** A component that must be passed in its own right, whatever the total. */
+  is_mandatory?: boolean;
+  passing_percentage?: number | string | null;
+}
+
+export interface ComponentWeightResponse {
+  public_id: string;
+  component_type: GradeComponentType;
+  label?: string | null;
+  weight_percentage: string;
+  is_mandatory?: boolean;
+  passing_percentage?: string | null;
 }
 
 export interface ComposeRequest {
@@ -829,6 +1033,10 @@ export interface ExamCreateRequest {
   instructions?: string | null;
   course_id?: string | null;
   batch_id?: string | null;
+  session_id?: string | null;
+  scope?: AssessmentScope;
+  is_online?: boolean;
+  weight?: number | string;
 }
 
 export interface ExamInvigilatorsRequest {
@@ -837,6 +1045,11 @@ export interface ExamInvigilatorsRequest {
 }
 
 export interface ExamPublishRequest {
+  is_published: boolean;
+}
+
+export interface ExamPublishResultsRequest {
+  /** Publish or retract every recorded result for this exam. */
   is_published: boolean;
 }
 
@@ -976,7 +1189,7 @@ export interface GenerateTranscriptsResponse {
   updated?: number;
   /** Transcripts left alone because they are already finalised. */
   skipped_final?: number;
-  /** Students with no grade book entries to aggregate. */
+  /** Students with nothing to certify -- no grading scheme configured for the course, or no published marks in any weighted component. */
   skipped_no_grades?: number;
 }
 
@@ -1130,9 +1343,67 @@ export interface GradeBookSummaryResponse {
 export type GradeComponentType = "ASSIGNMENT" | "QUIZ" | "ATTENDANCE" | "PRACTICAL" | "FINAL_EXAM";
 export const GradeComponentTypeValues = ["ASSIGNMENT", "QUIZ", "ATTENDANCE", "PRACTICAL", "FINAL_EXAM"] as const;
 
+/**
+ * How a computed percentage is expressed (spec §13).
+ */
+export type GradeScaleType = "PERCENTAGE" | "LETTER" | "GPA" | "PASS_FAIL" | "NUMERIC" | "COMPETENCY";
+export const GradeScaleTypeValues = ["PERCENTAGE", "LETTER", "GPA", "PASS_FAIL", "NUMERIC", "COMPETENCY"] as const;
+
 export interface GradeSubmissionRequest {
   grade: number | string;
   feedback?: string | null;
+  override_reason?: string | null;
+  /** Defaults to GRADED. Marking and releasing are separate acts. */
+  state?: SubmissionState | null;
+}
+
+export interface GradingSchemeCreateRequest {
+  name: string;
+  description?: string | null;
+  scale_type?: GradeScaleType;
+  /** EXCLUDE leaves unassessed work out of the total, which is the honest default. ZERO marks it as nothing -- a real policy some institutions hold, but never one to inherit by accident. */
+  missing_mark_policy?: MissingMarkPolicy;
+  passing_percentage?: number | string;
+}
+
+export interface GradingSchemeResponse {
+  public_id: string;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  scale_type: GradeScaleType;
+  missing_mark_policy: MissingMarkPolicy;
+  passing_percentage: string;
+  /** The component weights added up. Shown because a scheme that does not total 100 cannot be activated, and an operator editing one needs to see how far off they are without doing the sum. */
+  total_weight: string;
+  component_count?: number;
+  components?: ComponentWeightResponse[];
+  bands?: BandResponse[];
+  /** How many courses this scheme grades. Shown before a change, because editing a weight re-grades every student in every one of them at once. */
+  courses_using?: number;
+}
+
+export interface GradingSchemeSummary {
+  public_id: string;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  scale_type: GradeScaleType;
+  missing_mark_policy: MissingMarkPolicy;
+  passing_percentage: string;
+  /** The component weights added up. Shown because a scheme that does not total 100 cannot be activated, and an operator editing one needs to see how far off they are without doing the sum. */
+  total_weight: string;
+  component_count?: number;
+}
+
+export interface GradingSchemeUpdateRequest {
+  name?: string | null;
+  description?: string | null;
+  scale_type?: GradeScaleType | null;
+  missing_mark_policy?: MissingMarkPolicy | null;
+  passing_percentage?: number | string | null;
 }
 
 export interface GrantPermissionRequest {
@@ -1331,6 +1602,11 @@ export interface MarkAttendanceRequest {
   entries: AttendanceEntry[];
 }
 
+export interface MarkPerson {
+  public_id: string;
+  name: string;
+}
+
 export interface MarkReadResponse {
   updated: number;
 }
@@ -1355,6 +1631,16 @@ export interface MembershipStatusRequest {
 }
 
 /**
+ * What the engine does with a component that has no mark (spec §38).
+ *
+ * Configurable because institutions genuinely differ, and because the wrong
+ * default produces a confidently wrong number. `EXCLUDE` is the safe one: it
+ * reports "82% of the 35 marks assessed so far" rather than "29%".
+ */
+export type MissingMarkPolicy = "EXCLUDE" | "ZERO" | "CARRY_FORWARD";
+export const MissingMarkPolicyValues = ["EXCLUDE", "ZERO", "CARRY_FORWARD"] as const;
+
+/**
  * Spec §16/§21: one delivery record per channel, not four separate
  * notification tables.
  */
@@ -1374,7 +1660,7 @@ export interface NotificationPreferencesResponse {
   /** Display order for grouping. */
   categories: string[];
   preferences: NotificationPreferenceResponse[];
-  /** Stated rather than implied, so nobody expects an email. */
+  /** Stated rather than implied, so nobody expects an email. Rewritten when Web Push gained a real transport: the previous wording said push was modelled and undeliverable, which had stopped being true and is the worst kind of note -- one that stops the reader checking. */
   channels_note?: string;
 }
 
@@ -1814,6 +2100,34 @@ export const PerformanceGroupByValues = ["course", "batch", "component", "studen
 export type PerformanceLevel = "poor" | "below_average" | "average" | "good" | "excellent";
 export const PerformanceLevelValues = ["poor", "below_average", "average", "good", "excellent"] as const;
 
+/**
+ * A student's standing, with every figure it was built from.
+ */
+export interface PerformanceResponse {
+  student_id: string;
+  student_name?: string | null;
+  batch_id: string;
+  batch_code?: string | null;
+  scheme_name?: string | null;
+  components: ComponentLine[];
+  /** The share of the scheme's 100 that has been assessed (spec 38). */
+  assessed_weight: string;
+  total_weight: string;
+  /** The mark out of what has been assessed. The figure to show mid-course. */
+  current_percentage?: string | null;
+  /** The mark out of the whole scheme. Null until every weighted component has been assessed -- spec 38's 'Not Yet Available'. A client must not substitute current_percentage here; they mean different things. */
+  final_percentage?: string | null;
+  grade?: string | null;
+  gpa?: string | null;
+  is_pass?: boolean | null;
+  /** True when no grading scheme is configured. Every figure above is null. */
+  unconfigured?: boolean;
+  failed_mandatory?: GradeComponentType[];
+  sessions_total?: number;
+  sessions_attended?: number;
+  attendance_percentage?: string | null;
+}
+
 export interface PermissionResponse {
   name: string;
   description?: string | null;
@@ -1888,11 +2202,6 @@ export const PlatformsValues = ["Zoom", "Zoho", "Google_Meet", "Microsoft_Teams"
 
 export interface PreferenceResetResponse {
   cleared: number;
-}
-
-export interface PublishResultsRequest {
-  /** Publish or retract every recorded result for this exam. */
-  is_published: boolean;
 }
 
 export interface PushDeviceResponse {
@@ -2001,6 +2310,19 @@ export interface QuizCreateRequest {
   is_auto_graded?: boolean;
   /** e.g. {'negative_marking': 0.25} to deduct a quarter of a question's points per wrong answer. */
   grading_policy?: unknown | null;
+  scope?: AssessmentScope;
+  batch_id?: string | null;
+  session_id?: string | null;
+  available_from?: string | null;
+  available_until?: string | null;
+  shuffle_answers?: boolean;
+  /** Draw this many at random from the bank. Null means every question. */
+  questions_per_attempt?: number | null;
+  show_result_immediately?: boolean;
+  show_correct_answers?: boolean;
+  show_explanations?: boolean;
+  auto_submit_on_expiry?: boolean;
+  weight?: number | string;
 }
 
 export interface QuizPublishRequest {
@@ -2014,6 +2336,9 @@ export interface QuizResponse {
   attempts_allowed: number;
   passing_score: string;
   is_published: boolean;
+  scope?: AssessmentScope;
+  available_from?: string | null;
+  available_until?: string | null;
   instructions?: string | null;
   shuffle_questions: boolean;
   is_auto_graded: boolean;
@@ -2033,6 +2358,9 @@ export interface QuizSummary {
   attempts_allowed: number;
   passing_score: string;
   is_published: boolean;
+  scope?: AssessmentScope;
+  available_from?: string | null;
+  available_until?: string | null;
 }
 
 export interface QuizUpdateRequest {
@@ -2149,6 +2477,8 @@ export interface ResourceResponse {
   public_id: string;
   name?: string | null;
   resource_type: ResourceType;
+  /** Staff-only. Never true in a response to someone who may not see such files. */
+  is_restricted?: boolean;
   mime_type?: string | null;
   size?: number | null;
   created_at: string;
@@ -2181,6 +2511,8 @@ export interface ResourceSummary {
   public_id: string;
   name?: string | null;
   resource_type: ResourceType;
+  /** Staff-only. A row carrying true is never returned to someone who may not see such files -- they are filtered out of the query. */
+  is_restricted?: boolean;
   mime_type?: string | null;
   size?: number | null;
   created_at: string;
@@ -2196,6 +2528,8 @@ export interface ResourceUpdateRequest {
   name?: string | null;
   resource_type?: ResourceType | null;
   folder_id?: string | null;
+  /** Staff-only. Hidden from students, guardians and corporate managers whatever else they have been granted, and cannot carry a public link. Only settable by someone who can see staff-only files. */
+  is_restricted?: boolean | null;
 }
 
 export interface ResourceVersionResponse {
@@ -2206,6 +2540,16 @@ export interface ResourceVersionResponse {
   created_at: string;
   uploaded_by_username?: string | null;
 }
+
+export interface ResubmissionRequest {
+  reason: string;
+}
+
+/**
+ * The lifecycle a set of marks moves through (spec §14).
+ */
+export type ResultState = "DRAFT" | "UNDER_REVIEW" | "FINALIZED" | "PUBLISHED";
+export const ResultStateValues = ["DRAFT", "UNDER_REVIEW", "FINALIZED", "PUBLISHED"] as const;
 
 export interface RevocationResponse {
   revoked: number;
@@ -2247,6 +2591,12 @@ export interface RotateSecretResponse {
   public_id: string;
   /** The new secret. The previous one stops working now. */
   secret: string;
+}
+
+export interface SaveClassPerformanceRequest {
+  entries: ClassPerformanceEntry[];
+  /** What each criterion is marked out of. Applies to every row in this request; omitted, existing rows keep their own and new ones get 10. */
+  max_score?: number | string | null;
 }
 
 export interface SaveSheetRequest {
@@ -2499,6 +2849,27 @@ export interface SessionUpdateRequest {
   student_notes?: string | null;
 }
 
+export interface SetBandsRequest {
+  bands: BandPayload[];
+}
+
+export interface SetClassPerformanceStateRequest {
+  state: ResultState;
+  /** Release or withdraw one student's mark instead of the whole class. */
+  student_id?: string | null;
+}
+
+/**
+ * Replace the whole set.
+ *
+ * Wholesale rather than one at a time because the set is what has to add up:
+ * five individual edits mean four intermediate states that do not total 100,
+ * and a concurrent reader would see one of them.
+ */
+export interface SetComponentsRequest {
+  components: ComponentWeightPayload[];
+}
+
 export interface SetCourseTagsRequest {
   /** The complete set. Tags omitted here are removed. */
   tag_ids?: string[];
@@ -2528,11 +2899,15 @@ export interface ShareLinkResponse {
 export interface ShareResourceRequest {
   /** Users to share this resource with. */
   user_ids: string[];
+  /** What the recipients may do. VIEW lets them watch or read it in place without keeping a copy; DOWNLOAD hands over the bytes. Defaults to VIEW -- the narrower of the two, so a share that forgets to say grants the less. */
+  level?: ResourcePermissionLevel;
 }
 
 export interface SharedResourceResponse {
   resource_id: string;
   resource_name?: string | null;
+  /** What the recipient may do with it. */
+  level: ResourcePermissionLevel;
   shared_with_username?: string | null;
   shared_by_username?: string | null;
   created_at: string;
@@ -2645,6 +3020,16 @@ export interface StateRequest {
   starred?: boolean | null;
 }
 
+/**
+ * §37's drill-down: every class behind one student's `PRACTICAL` figure.
+ */
+export interface StudentClassPerformanceResponse {
+  marks: ClassPerformanceMarkResponse[];
+  sessions?: number;
+  /** The mean of the sessions that carry a score, as a percentage of `max_score`. Sessions with nothing assessed are excluded, not counted as zero. */
+  average?: string | null;
+}
+
 export interface StudentPanel {
   enrolled_batches?: number;
   active_courses?: number;
@@ -2673,6 +3058,32 @@ export interface SubmissionResponse {
   graded_by_username?: string | null;
   /** Submitted after the assignment's due date. */
   is_late?: boolean;
+  state?: SubmissionState;
+  attempt_number?: number;
+  raw_grade?: string | null;
+  late_penalty_applied?: string | null;
+  published_at?: string | null;
+  override_reason?: string | null;
+  overridden_at?: string | null;
+}
+
+/**
+ * Where one student stands on one assessment (spec §7).
+ *
+ * Eleven states because the four §38 insists on distinguishing -- scored
+ * zero, not yet assessed, absent, exempted -- are genuinely different facts,
+ * and a nullable mark plus a boolean cannot express them. Silently treating
+ * a missing mark as zero is the specific failure this enum exists to prevent.
+ */
+export type SubmissionState = "NOT_STARTED" | "PENDING" | "SUBMITTED" | "LATE" | "UNDER_REVIEW" | "GRADED" | "PUBLISHED" | "ABSENT" | "EXEMPTED" | "RESUBMISSION_REQUIRED" | "REASSESSED";
+export const SubmissionStateValues = ["NOT_STARTED", "PENDING", "SUBMITTED", "LATE", "UNDER_REVIEW", "GRADED", "PUBLISHED", "ABSENT", "EXEMPTED", "RESUBMISSION_REQUIRED", "REASSESSED"] as const;
+
+/**
+ * Record an absence or an exemption -- neither of which is a mark.
+ */
+export interface SubmissionStateRequest {
+  state: SubmissionState;
+  reason?: string | null;
 }
 
 export type SubmissionType = "FILE_UPLOAD" | "TEXT" | "LINK";
@@ -2878,6 +3289,23 @@ export interface TranscriptResponse {
   overall_grade?: string | null;
   generated_at: string;
   is_final: boolean;
+  /** Null while the course is incomplete. A transcript never reports a mid-course standing as a final result (spec §38). */
+  final_percentage?: string | null;
+  total_marks_earned?: string | null;
+  total_marks_possible?: string | null;
+  is_pass?: boolean | null;
+  /** The grading policy that produced these figures. Schemes change. */
+  scheme_name?: string | null;
+  sessions_total?: number | null;
+  sessions_attended?: number | null;
+  attendance_percentage?: string | null;
+  /** The per-component arithmetic as it stood at issue (spec §37). */
+  breakdown?: (Record<string, unknown>)[] | null;
+  issued_at?: string | null;
+  /** Who certified it (spec §5's verification). */
+  issued_by_username?: string | null;
+  /** True when every weighted component was assessed at issue. */
+  is_complete?: boolean;
 }
 
 /**

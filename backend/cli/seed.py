@@ -18,7 +18,12 @@ import os
 import sys
 import time
 
-from backend.bootstrap.runner import bootstrap_geo, bootstrap_identity, ensure_super_admin
+from backend.bootstrap.runner import (
+    bootstrap_geo,
+    bootstrap_grading,
+    bootstrap_identity,
+    ensure_super_admin,
+)
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging, get_logger
 from backend.db.manager import DatabaseManager
@@ -74,6 +79,15 @@ async def _run(args: argparse.Namespace) -> int:
             )
             username = user.username
 
+        # The grading starting point. Without this the institution's default
+        # scheme has no weightings and no grade ladder, so every performance
+        # figure in the product reports "not configured" and no transcript can
+        # be completed -- which is what the seeder's own docstring says it
+        # exists to prevent, and it had no caller at all until now. Idempotent,
+        # and it never touches a scheme somebody has already configured.
+        async with db.session_factory.begin() as session:
+            grading_summary = await bootstrap_grading(session)
+
         geo_summary: dict[str, int] | None = None
         geo_seconds = 0.0
         if not args.skip_geo:
@@ -89,6 +103,9 @@ async def _run(args: argparse.Namespace) -> int:
             f"Super admin {username!r}: "
             + ("created." if created else "already existed, left unchanged.")
         )
+        print("Grading:")
+        for key, value in grading_summary.items():
+            print(f"  {key}: {value}")
         if geo_summary is not None:
             print(f"Geo reference data ({geo_seconds:.1f}s):")
             for key, value in geo_summary.items():
