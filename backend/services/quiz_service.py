@@ -43,6 +43,8 @@ from backend.services.assessment_scope import (
     AssessmentTarget,
     validate as validate_scope,
 )
+from backend.services.notification_service import NotificationService
+from backend.core.notification_types import NotificationType
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import QuestionType
 
@@ -198,6 +200,7 @@ class QuizService:
             if count == 0:
                 raise ConflictError("A quiz with no questions cannot be published.")
 
+        was_published = bool(row.is_published)
         row.is_published = is_published
         audit_service.record(
             self.session,
@@ -208,7 +211,44 @@ class QuizService:
             entity_id=row.id,
             details={"is_published": is_published},
         )
+
+        # Only the transition into being published, and only once.
+        #
+        # Re-saving a published quiz must not re-announce it, and *withdrawing*
+        # one must not announce anything at all -- "your quiz is available"
+        # arriving as it is taken down is worse than silence. Retraction is
+        # deliberately quiet: it is rare, and the quiz simply stops appearing.
+        if is_published and not was_published:
+            await self._announce(row)
+
         return row
+
+    async def _announce(self, quiz: Quiz) -> None:
+        """Tell the students it was set for -- and only them.
+
+        The roster comes from the shared scope resolver, so a batch-scoped quiz
+        reaches that batch rather than the whole course. Telling a course about
+        work they cannot open is how a student learns about an assessment that
+        is not theirs, and it is the mistake `AssessmentScopeResolver` exists
+        to prevent.
+        """
+        roster = sorted(await self.targets.eligible_student_ids(AssessmentTarget.of(quiz)))
+        if not roster:
+            return
+
+        # `Quiz.course` is `lazy="selectin"`, so the title costs no extra
+        # query here.
+        where = quiz.course.title if quiz.course is not None else "your course"
+        meta = {"quiz_id": str(quiz.public_id)}
+
+        notifications = NotificationService(self.session)
+        await notifications.notify_many(
+            roster,
+            type_=NotificationType.QUIZ_PUBLISHED,
+            title=f"New quiz: {quiz.title}",
+            body=f"{where} — open it from your coursework.",
+            meta=meta,
+        )
 
     async def delete(self, public_id: uuid.UUID, *, actor: User) -> None:
         row = await self.get(public_id, actor=actor)

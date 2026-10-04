@@ -52,6 +52,8 @@ from backend.schemas.gradebook import (
     GradeBookEntryCreateRequest,
     GradeBookEntryUpdateRequest,
 )
+from backend.core.notification_types import NotificationType
+from backend.services.notification_service import NotificationService
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
@@ -263,6 +265,7 @@ class GradeBookService:
             entity_id=row.id,
             details={"student": student.username, "component": payload.component_type.value},
         )
+        await self._announce_mark(row, student_id=student.id, batch=batch)
         return await self.entries.get_by_public_id_full(row.public_id)  # type: ignore[return-value]
 
     async def update_entry(
@@ -297,7 +300,39 @@ class GradeBookService:
             entity_id=row.id,
             details={"fields": sorted(changes)},
         )
+        if "score" in changes:
+            # Only a changed mark is worth telling someone about. Correcting a
+            # weight or a maximum does not change what they scored.
+            await self._announce_mark(row, student_id=row.student_id, batch=row.batch)
         return row
+
+    async def _announce_mark(self, row: GradeBookEntry, *, student_id: int, batch: Batch | None) -> None:
+        """Tell a student about a mark that has no other announcement.
+
+        **Manual entries only, and that is the whole point.** Every *synced*
+        entry already has an emitter at its source -- a graded submission, a
+        published exam result -- so announcing it again here would notify the
+        same student twice for one mark, from two services that do not know
+        about each other. `reference_id is None` is exactly the set of marks a
+        tutor typed straight into the grade book, which nothing else can
+        announce. This is spec §23's single-source-of-truth rule applied to
+        notifications rather than to data.
+
+        Guarded rather than assumed: `update_entry` already refuses a synced
+        row, but this is reached from two call sites and a third would not
+        have that protection.
+        """
+        if row.reference_id is not None:
+            return
+
+        where = batch.batch_code if batch is not None else "your batch"
+        await NotificationService(self.session).notify(
+            user_id=student_id,
+            type_=NotificationType.GRADE_RECORDED,
+            title=f"Mark recorded: {row.component_type.value.replace('_', ' ').title()}",
+            body=f"{where} — {row.score} of {row.max_score}.",
+            meta={"batch_id": str(batch.public_id) if batch is not None else None},
+        )
 
     async def delete_entry(self, public_id: uuid.UUID, *, actor: User) -> None:
         row = await self.get_entry(public_id, actor=actor)

@@ -16,6 +16,8 @@ from backend.models.organization import OrganizationManager, OrganizationMembers
 from backend.repositories.batch import BatchRepository
 from backend.repositories.enrollment import ACTIVE_STATUSES, EnrollmentRepository
 from backend.schemas.base import PageParams
+from backend.core.notification_types import NotificationType
+from backend.services.notification_service import NotificationService
 from backend.services import audit_service
 from backend.core.notification_types import NotificationType
 from backend.services.audit_service import AuditAction
@@ -300,6 +302,20 @@ class EnrollmentService:
             entity_type="enrollment",
             entity_id=enrollment.enrollment_id,
             details={"status": f"{current.value} -> {new_status.value}"},
+        )
+
+        # The early return above means this is only ever a real transition --
+        # setting a status to what it already is notifies nobody.
+        batch = enrollment.batch
+        await NotificationService(self.session).notify(
+            user_id=enrollment.student_id,
+            type_=NotificationType.ENROLLMENT_STATUS_CHANGED,
+            title="Your enrollment status changed",
+            body=(
+                f"{batch.batch_code if batch is not None else 'Your batch'} — "
+                f"now {new_status.value.lower()}."
+            ),
+            meta={"enrollment_id": str(enrollment.public_id)},
         )
         return enrollment
 

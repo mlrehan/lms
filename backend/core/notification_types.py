@@ -42,6 +42,8 @@ class NotificationType:
     ASSIGNMENT_PUBLISHED: Final = "assignment_published"
     SUBMISSION_GRADED: Final = "submission_graded"
     GRADE_RECORDED: Final = "grade_recorded"
+    QUIZ_PUBLISHED: Final = "quiz_published"
+    EXAM_SCHEDULED: Final = "exam_scheduled"
     EXAM_RESULT_PUBLISHED: Final = "exam_result_published"
     ENROLLED_IN_BATCH: Final = "enrolled_in_batch"
     ENROLLMENT_STATUS_CHANGED: Final = "enrollment_status_changed"
@@ -53,6 +55,7 @@ class NotificationType:
     WARD_SUBMISSION_GRADED: Final = "ward_submission_graded"
     WARD_ASSIGNMENT_PUBLISHED: Final = "ward_assignment_published"
     WARD_ENROLLED_IN_BATCH: Final = "ward_enrolled_in_batch"
+    WARD_EXAM_RESULT_PUBLISHED: Final = "ward_exam_result_published"
     ACCOUNT_LOCKED: Final = "account_locked"
     ACCOUNT_UNLOCKED: Final = "account_unlocked"
     SESSIONS_REVOKED: Final = "sessions_revoked"
@@ -75,6 +78,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.GRADE_RECORDED, "grades",
         "A mark was recorded against your grade book.",
+    ),
+    NotificationKind(
+        NotificationType.QUIZ_PUBLISHED, "coursework",
+        "A quiz was opened on one of your courses.",
+    ),
+    NotificationKind(
+        NotificationType.EXAM_SCHEDULED, "coursework",
+        "An examination was scheduled on one of your courses.",
     ),
     NotificationKind(
         NotificationType.EXAM_RESULT_PUBLISHED, "grades",
@@ -107,6 +118,10 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.WARD_ENROLLED_IN_BATCH, "guardian",
         "A student in your care was enrolled in a batch.",
+    ),
+    NotificationKind(
+        NotificationType.WARD_EXAM_RESULT_PUBLISHED, "guardian",
+        "An examination result was published for a student in your care.",
     ),
     # --- security: mandatory ------------------------------------------------
     # Deliberately not opt-out. These exist so a person notices a compromise,

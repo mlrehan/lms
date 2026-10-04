@@ -20,6 +20,8 @@ from backend.models.identity.user import User
 from backend.repositories.guardian import GuardianRepository
 from backend.schemas.base import PageParams
 from backend.schemas.guardian import CreateGuardianLinkRequest, UpdateGuardianLinkRequest
+from backend.core.notification_types import NotificationType
+from backend.services.notification_service import NotificationService
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.scope import ScopeResolver
@@ -112,6 +114,30 @@ class GuardianService:
                 "relationship": payload.relationship_type,
             },
         )
+        # Both sides, deliberately.
+        #
+        # This link decides who may read a student's attendance, marks and
+        # results, and it is created *by an administrator* -- neither party is
+        # in the room when it happens. A student finding out that someone can
+        # now see their academic record is the point; it is the only moment
+        # they could object. The type is mandatory-adjacent in spirit but left
+        # opt-out, matching the rest of the `enrollment` category.
+        notifications = NotificationService(self.session)
+        await notifications.notify(
+            user_id=student.id,
+            type_=NotificationType.GUARDIAN_LINKED,
+            title="A guardian was linked to your account",
+            body=f"{guardian.full_name or guardian.username} can now see your academic record.",
+            meta={"link_id": str(link.public_id)},
+        )
+        await notifications.notify(
+            user_id=guardian.id,
+            type_=NotificationType.GUARDIAN_LINKED,
+            title="You were linked to a student",
+            body=f"You can now see {student.full_name or student.username}'s academic record.",
+            meta={"link_id": str(link.public_id)},
+        )
+
         return await self.links.get_by_public_id_full(link.public_id)  # type: ignore[return-value]
 
     async def update(

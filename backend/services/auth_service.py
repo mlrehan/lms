@@ -40,6 +40,8 @@ from backend.repositories.user import UserRepository
 from backend.security import password as pwd
 from backend.security.jwt import JWTService
 from backend.security.refresh_tokens import generate_refresh_token, hash_refresh_token
+from backend.core.notification_types import NotificationType
+from backend.services.notification_service import NotificationService
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.utils.enums import TokenType, UserStatus
@@ -204,6 +206,36 @@ class AuthService:
             user_agent=user_agent,
         )
 
+        if should_lock:
+            await self._notify_independently(
+                user_id=user.id,
+                type_=NotificationType.ACCOUNT_LOCKED,
+                title="Your account was locked",
+                body=(
+                    "Too many failed sign-in attempts. If this was not you, "
+                    "change your password as soon as you can sign in again."
+                ),
+            )
+
+    async def _notify_independently(self, *, user_id: int, type_: str, title: str, body: str) -> None:
+        """Send a security notification in its own transaction, never fatally.
+
+        Its own transaction for the same reason the audit record above has
+        one: the sign-in path raises immediately afterwards, and that rollback
+        would discard the very warning this exists to deliver.
+
+        Never fatally, because the alternative is worse in both directions --
+        a notification backend that is down must not turn a 401 into a 500,
+        and must not stop an account being locked.
+        """
+        try:
+            async with self._session_factory.begin() as s:
+                await NotificationService(s).notify(
+                    user_id=user_id, type_=type_, title=title, body=body, meta={}
+                )
+        except Exception:  # noqa: BLE001 - a warning that cannot be sent must not break sign-in
+            logger.exception("Failed to send security notification", extra={"user_id": user_id})
+
     # -- token issuance ------------------------------------------------------
 
     async def issue_tokens(
@@ -363,4 +395,19 @@ class AuthService:
             action=AuditAction.PASSWORD_CHANGED,
             actor_user_id=user.id,
             actor_email=user.email,
+        )
+
+        # On this session, not independently: unlike the lockout path nothing
+        # raises after this, so the notification should live or die with the
+        # password change itself. Telling someone their password changed when
+        # it did not would be its own small alarm.
+        await NotificationService(self.session).notify(
+            user_id=user.id,
+            type_=NotificationType.PASSWORD_CHANGED,
+            title="Your password was changed",
+            body=(
+                "Every other sign-in was ended. If this was not you, reset "
+                "your password and contact an administrator."
+            ),
+            meta={},
         )

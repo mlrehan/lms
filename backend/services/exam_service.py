@@ -31,6 +31,8 @@ from backend.services.assessment_scope import (
     AssessmentTarget,
     validate as validate_scope,
 )
+from backend.core.notification_types import NotificationType
+from backend.services.notification_service import NotificationService
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import Roles
 
@@ -190,6 +192,7 @@ class ExamService:
         self, public_id: uuid.UUID, is_published: bool, *, actor: User
     ) -> Exam:
         row = await self.get(public_id, actor=actor)
+        was_published = bool(row.is_published)
         row.is_published = is_published
 
         audit_service.record(
@@ -201,7 +204,32 @@ class ExamService:
             entity_id=row.id,
             details={"schedule_published": is_published},
         )
+
+        # Only the transition into being published. Re-saving must not
+        # re-announce, and withdrawing a schedule announces nothing: a student
+        # told "your exam is scheduled" at the moment it is cancelled is worse
+        # served than one told nothing.
+        if is_published and not was_published:
+            await self._announce_schedule(row)
+
         return row
+
+    async def _announce_schedule(self, exam: Exam) -> None:
+        roster = sorted(await self._eligible_student_ids(exam))
+        if not roster:
+            return
+
+        where = exam.course.title if exam.course is not None else "your course"
+        when = f"{exam.scheduled_at:%d %b %Y, %H:%M}"
+        meta = {"exam_id": str(exam.public_id)}
+
+        await NotificationService(self.session).notify_many(
+            roster,
+            type_=NotificationType.EXAM_SCHEDULED,
+            title=f"Exam scheduled: {exam.title}",
+            body=f"{where} — {when}.",
+            meta=meta,
+        )
 
     async def delete(self, public_id: uuid.UUID, *, actor: User) -> None:
         row = await self.get(public_id, actor=actor)
@@ -399,7 +427,42 @@ class ExamService:
             entity_id=exam.id,
             details={"results_published": is_published, "count": len(rows)},
         )
+
+        if is_published:
+            await self._announce_results(exam, student_ids=sorted(rows.keys()))
+
         return len(rows)
+
+    async def _announce_results(self, exam: Exam, *, student_ids: Sequence[int]) -> None:
+        """Tell the students who actually have a result.
+
+        Not the eligible roster: a student who was absent and has no recorded
+        row has nothing to read, and "your result is available" pointing at
+        nothing is a worse message than none. Guardians get their own code
+        rather than a copy of the student's, because every description in the
+        catalogue is written in the second person about its subject.
+        """
+        if not student_ids:
+            return
+
+        where = exam.course.title if exam.course is not None else "your course"
+        meta = {"exam_id": str(exam.public_id)}
+
+        notifications = NotificationService(self.session)
+        await notifications.notify_many(
+            student_ids,
+            type_=NotificationType.EXAM_RESULT_PUBLISHED,
+            title=f"Result published: {exam.title}",
+            body=f"{where} — your mark is now available.",
+            meta=meta,
+        )
+        await notifications.notify_guardians_of(
+            student_ids,
+            type_=NotificationType.WARD_EXAM_RESULT_PUBLISHED,
+            title=f"Result published for {{student}}: {exam.title}",
+            body=f"{where} — the mark is now available.",
+            meta=meta,
+        )
 
     # -- helpers -------------------------------------------------------------
 
