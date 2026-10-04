@@ -135,3 +135,98 @@ current behaviour (§44).
 4. **A missing mark is not a zero.** The lifecycle in 2.3 exists precisely so
    that *absent*, *exempted*, *not yet assessed* and *scored zero* are four
    distinct states, as §38 requires.
+
+---
+
+## 5. What has been built since the audit
+
+Sections 1–4 are the record of what was *found* and are left as written. This
+section is the running status, and states what is **not** done as plainly as
+what is.
+
+| # (from §3) | Status | Where |
+|---|---|---|
+| 1 — one reusable scope | Done | `services/assessment_scope.py`; `AssessmentScope` on assignments, quizzes, exams |
+| 2 — configurable weighting | Done | `models/grading.py`, `services/grading_scheme_service.py`, `/grading-schemes`, console editor |
+| 3 — result lifecycle | Done | `ResultState` on submissions, exam results, class-performance marks |
+| 4 — tutor class marks | **Done** | `models/class_performance.py`, `services/class_performance_service.py`, `/class-performance/*`, the grid on the session screen |
+| 5 — schemes with course override | Done | `grade_bands.scheme_id`, `courses.grading_scheme_id` |
+| 6 — permission catalogue | Done | 121 permissions; `class_performance.*` added with item 4 |
+| 7 — calculation engine | Done | `core/performance.py` (pure), `services/performance_service.py`, `/performance/*`, the `/performance` screen |
+
+### Item 4 was not merely missing — it disabled §5
+
+The seeded default scheme gives class performance 10% of the mark. An unassessed
+component is **excluded** from the weighted total rather than scored zero (§38),
+and a result is only *final* once every weighted component has been assessed. So
+with no write path for `PRACTICAL` marks, **no transcript could ever be
+completed** under the default scheme. A gap in §11 silently disabled §5, and
+neither screen showed anything wrong.
+`tests/integration/test_class_performance.py::test_class_performance_marks_make_a_transcript_completable`
+is the test that pins this: it asserts no final result before the marks exist,
+and a complete one after.
+
+### Two defects found while building it
+
+1. **Every grade band claimed to be a pass.** `b71f2c8ea940` added
+   `grade_bands.is_pass` with `server_default=true`, so every band that already
+   existed became a passing band — the live ladder read `F`, `0–49.99`,
+   `is_pass = true`, against a scheme passing at 50. `Performance.is_pass` and
+   `Transcript.is_pass` are both read straight off the matched band, so every
+   student who had failed would have been recorded as passing *on the
+   transcript*. Corrected by `e93a5c17b204`, which derives the value only where
+   the stored one is a contradiction (the band's whole range below its own
+   scheme's passing mark) and leaves bands that straddle the mark alone — those
+   are a judgement the institution is entitled to make (§44). No already-issued
+   transcript carried the wrong flag, checked before writing the migration.
+2. **The grading seeder had no caller.** `bootstrap_grading` was written,
+   documented, and invoked from nowhere; `backend/cli/seed.py` called only
+   identity and geo. Without it the default scheme has no weightings and no
+   grade ladder, so every performance figure reports "not configured" — the
+   exact outcome the seeder's own docstring says it exists to prevent. Now wired
+   into the seed CLI.
+
+### Transcript presentation (§5)
+
+`/transcripts/{id}` renders the official document: the student, the batch, the
+frozen per-component breakdown, the result, the attendance, the grading policy
+that produced it, and who certified it. Three things about it are deliberate:
+
+* **Nothing is recomputed.** Every figure, `breakdown` included, is read off the
+  stored record — which is the entire reason those columns exist. A document that
+  restated itself when a register was corrected would invalidate something
+  somebody had already relied on.
+* **Access is the backend's, not the page's.** `GET /transcripts/{id}` already
+  scopes to visible students and hides a provisional record from anybody without
+  the marking grant, so there is no second check in the console to drift out of
+  step with it (§46). An unauthorised id is a 404.
+* **Print, not a generated PDF.** The browser's own print-to-PDF gives the
+  registrar a file they can save, email or put on headed paper, keeps the text
+  selectable, and needs no rendering service to keep alive. A `@media print`
+  block drops the console chrome. A provisional transcript prints marked
+  *Provisional — not certified*, because a draft that prints like an official
+  record is worse than one that cannot be printed at all.
+
+### Still not built
+
+* **A class-performance queue.** Attendance has "sessions to take"; class
+  performance has to be reached one session at a time from the session screen.
+  §11 asks for the marks, not the queue, so this is convenience rather than a
+  gap in the requirement — but it is the difference between a tutor using the
+  feature and not.
+* **Quiz and exam creation forms do not expose the new scope, window and
+  online/offline fields.** The backend enforces them; the console does not offer
+  them, so they are reachable only through the API.
+* **Guardian and corporate-manager dashboards (§18–19), calendar integration of
+  assessment deadlines (§26), and the report/analytics surfaces (§34–35).**
+
+### Running these
+
+After pulling this work: **re-run the seeders** (`class_performance.*` is five
+new permissions, and nothing checks a permission that was never seeded) and
+**apply the migration**:
+
+```bash
+python -m alembic upgrade head
+python -m backend.cli.seed
+```

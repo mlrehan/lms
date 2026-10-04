@@ -107,7 +107,25 @@ class ResourceService:
             if batch_public_id is not None:
                 batch_id = (await self.batches.get(batch_public_id, actor=actor)).id
 
-        return await self.folders.children_of(parent_id, course_id=course_id, batch_id=batch_id)
+        rows = await self.folders.children_of(
+            parent_id, course_id=course_id, batch_id=batch_id
+        )
+        # Filtered by the *same* rule `get_folder` applies, because the listing
+        # and the thing it links to must agree. It did not: `children_of` has no
+        # reachability filter, so the list showed every folder at that level to
+        # everyone -- opening one then answered "Folder not found", and the
+        # names of folders belonging to other people's courses were readable by
+        # anybody who could reach this endpoint. A list is a disclosure, not a
+        # convenience.
+        #
+        # Filtered rather than refused: a tutor opening the library should see
+        # their own courses' folders, not an error because somebody else's is at
+        # the same level.
+        reachable = []
+        for row in rows:
+            if await self._folder_reachable(row, actor):
+                reachable.append(row)
+        return reachable
 
     async def get_folder(self, public_id: uuid.UUID, *, actor: User) -> ResourceFolder:
         folder = await self.folders.get_by_public_id_full(public_id)
@@ -265,6 +283,7 @@ class ResourceService:
         *,
         actor: User,
         folder_public_id: uuid.UUID | None = None,
+        root_only: bool = False,
         course_public_id: uuid.UUID | None = None,
         resource_type: ResourceType | None = None,
         query: str | None = None,
@@ -288,6 +307,11 @@ class ResourceService:
             batch_scope=batch_scope,
             extra_resource_ids=extra,
             folder_id=folder_id,
+            # Ignored when a folder is named, and deliberately dropped when a
+            # search term is given: browsing is scoped to where you are, a
+            # search spans the library -- which is what people expect from
+            # every file manager.
+            root_only=root_only and folder_id is None and not query,
             course_id=course_id,
             resource_type=resource_type,
             query=query,

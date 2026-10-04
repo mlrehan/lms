@@ -25,6 +25,7 @@ import {
   ScrollText,
   Share2,
   ShieldCheck,
+  TrendingUp,
   Users,
   UserSquare2,
   Webhook,
@@ -105,6 +106,16 @@ export const NAVIGATION: NavSection[] = [
       { href: "/quizzes", label: "Quizzes", icon: Notebook, permission: "quiz.read" },
       { href: "/exams", label: "Examinations", icon: BadgeCheck, permission: "exam.read" },
       { href: "/gradebook", label: "Grade book", icon: FileSpreadsheet, permission: "grade.read" },
+      // The calculation engine's own output, and the only screen that explains
+      // how a mark was reached (§37). Gated on `performance.read` rather than
+      // `grade.read`: a guardian and a corporate manager hold the first and not
+      // the second, and explaining a result to them is the point.
+      {
+        href: "/performance",
+        label: "Performance",
+        icon: TrendingUp,
+        permission: "performance.read",
+      },
       { href: "/transcripts", label: "Transcripts", icon: ScrollText, permission: "grade.read" },
       // Sits with the assessment tools rather than under Settings: it is the
       // rule the marks on those screens are turned into grades by, and an

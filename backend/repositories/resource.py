@@ -164,6 +164,7 @@ class ResourceRepository(BaseRepository[Resource]):
         batch_scope: "Scope",
         extra_resource_ids: set[int] | None = None,
         folder_id: int | None = None,
+        root_only: bool = False,
         course_id: int | None = None,
         resource_type: ResourceType | None = None,
         query: str | None = None,
@@ -202,6 +203,15 @@ class ResourceRepository(BaseRepository[Resource]):
 
         if folder_id is not None:
             stmt = stmt.where(Resource.folder_id == folder_id)
+        elif root_only:
+            # `folder_id=None` means "don't filter", which is what a *search*
+            # wants -- so there was no way to ask for the files that sit at the
+            # root and nowhere else. Browsing the library root therefore listed
+            # every file in every folder, and moving a file into a folder left
+            # it sitting in the root as well. `ResourceFolderRepository` has
+            # always made this distinction (`parent_folder_id.is_(None)`); the
+            # resource side simply never did.
+            stmt = stmt.where(Resource.folder_id.is_(None))
         if course_id is not None:
             stmt = stmt.where(Resource.course_id == course_id)
         if resource_type is not None:

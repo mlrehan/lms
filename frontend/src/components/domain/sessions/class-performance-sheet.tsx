@@ -55,7 +55,7 @@ const STATE_TONE: Record<ResultState, string> = {
   PUBLISHED: "border-success bg-success/15 text-success",
 };
 
-interface Row {
+export interface Row {
   studentId: string;
   username: string;
   scores: Record<CriterionKey, string>;
@@ -68,7 +68,7 @@ interface Row {
 }
 
 /** Empty means "not assessed"; `0` is a real mark. */
-function toValue(raw: string): number | null {
+export function toValue(raw: string): number | null {
   const trimmed = raw.trim();
   if (trimmed === "") return null;
   const parsed = Number(trimmed);
@@ -81,13 +81,15 @@ function cell(mark: ClassPerformanceMarkResponse | null | undefined, key: Criter
 }
 
 /**
- * The mean of whatever has been typed, shown live so a tutor sees the figure
- * they are creating before saving it. Computed the same way the backend does
- * (tutor's own overall wins; blanks excluded) — which is a duplication of the
- * rule and is why the *saved* row shows `mark.average` from the server instead.
- * This one is a preview of unsaved edits, which the server cannot provide.
+ * The mean of whatever has been *typed*, for unsaved edits only.
+ *
+ * This repeats a rule the backend owns (the tutor's own overall wins; blanks are
+ * excluded), which is why it is confined to the one case the server cannot
+ * answer: a row the tutor is still editing. A saved row shows `row.average`,
+ * computed by the calculation engine itself — so the number on screen for a
+ * stored mark is the number the transcript will use, and the two cannot drift.
  */
-function previewAverage(row: Row): string | null {
+export function previewAverage(row: Row): string | null {
   const overall = toValue(row.overall);
   if (overall !== null) return overall.toFixed(2);
   const values = CRITERIA.map(({ key }) => toValue(row.scores[key])).filter(
@@ -95,6 +97,25 @@ function previewAverage(row: Row): string | null {
   );
   if (values.length === 0) return null;
   return (values.reduce((total, value) => total + value, 0) / values.length).toFixed(2);
+}
+
+/**
+ * One row as the API receives it.
+ *
+ * Exported and tested on its own because this is where "blank is not zero"
+ * either holds or silently fails. A `?? 0`, a `Number("")` (which is 0, not
+ * NaN) or a `parseFloat` fallback anywhere in here would send a zero for every
+ * cell the tutor never touched -- averaged into the student's class-performance
+ * figure and, through the weighting, into their result. Nothing on screen would
+ * look wrong.
+ */
+export function toEntry(row: Row): Record<string, unknown> {
+  return {
+    student_id: row.studentId,
+    ...Object.fromEntries(CRITERIA.map(({ key }) => [key, toValue(row.scores[key])])),
+    overall_score: toValue(row.overall),
+    comment: row.comment.trim() || null,
+  };
 }
 
 export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
@@ -152,14 +173,7 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
         {
           body: {
             max_score: toValue(maxScore),
-            entries: entries.map((row) => ({
-              student_id: row.studentId,
-              ...Object.fromEntries(
-                CRITERIA.map(({ key }) => [key, toValue(row.scores[key])]),
-              ),
-              overall_score: toValue(row.overall),
-              comment: row.comment.trim() || null,
-            })),
+            entries: entries.map(toEntry),
           },
         },
       ),
@@ -218,6 +232,9 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
   const dirty = rows !== null;
   const published = current.some((row) => row.state === "PUBLISHED");
   const canEdit = data.can_edit;
+  // Optional in the generated types because the schema gives them defaults.
+  const marked = data.marked ?? 0;
+  const total = data.total ?? current.length;
 
   return (
     <>
@@ -238,11 +255,11 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
 
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="text-muted-foreground">
-            {data.marked} of {data.total} assessed
+            {marked} of {total} assessed
           </span>
           {data.state ? (
             <Badge className={STATE_TONE[data.state]}>{data.state.replace("_", " ")}</Badge>
-          ) : data.marked > 0 ? (
+          ) : marked > 0 ? (
             <Badge className="border-border-subtle text-muted-foreground">Mixed states</Badge>
           ) : null}
           {canEdit ? (
@@ -279,7 +296,9 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
             <tbody>
               {current.map((row) => {
                 const locked = row.state === "PUBLISHED";
-                const preview = previewAverage(row);
+                // The engine's own figure while the row is untouched; a local
+                // preview once it is being edited.
+                const shown = dirty ? previewAverage(row) : (row.average ?? previewAverage(row));
                 return (
                   <tr key={row.studentId} className="border-t border-border-subtle">
                     <td className="sticky left-0 bg-surface px-2 py-1.5">
@@ -320,8 +339,8 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
                     <td className="px-2 py-1.5 text-center">
                       {/* Blank, never "0" -- nothing assessed is excluded from
                           the weighted result, not counted as a zero. */}
-                      <span className={cn("tabular-nums", preview === null && "text-muted-foreground")}>
-                        {preview ?? "—"}
+                      <span className={cn("tabular-nums", shown === null && "text-muted-foreground")}>
+                        {shown ?? "—"}
                       </span>
                     </td>
                     <td className="px-2 py-1.5">
@@ -356,7 +375,7 @@ export function ClassPerformanceSheet({ sessionId }: { sessionId: string }) {
           >
             <Save className="size-4" aria-hidden /> Save marks
           </Button>
-          {canRelease && data.marked > 0 ? (
+          {canRelease && marked > 0 ? (
             published ? (
               <Button
                 variant="secondary"

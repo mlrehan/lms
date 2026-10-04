@@ -277,6 +277,16 @@ async def list_resources(
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
     ],
     folder_id: Annotated[uuid.UUID | None, Query()] = None,
+    root_only: Annotated[
+        bool,
+        Query(
+            description=(
+                "Only files that sit at the root, in no folder. Omitting both this "
+                "and folder_id searches the whole library, which is what a search "
+                "wants and what browsing does not."
+            )
+        ),
+    ] = False,
     course_id: Annotated[uuid.UUID | None, Query()] = None,
     resource_type: Annotated[ResourceType | None, Query()] = None,
     query: Annotated[str | None, Query(max_length=100)] = None,
@@ -288,6 +298,7 @@ async def list_resources(
         params,
         actor=actor,
         folder_public_id=folder_id,
+        root_only=root_only,
         course_public_id=course_id,
         resource_type=resource_type,
         query=query,
