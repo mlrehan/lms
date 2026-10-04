@@ -67,6 +67,18 @@ class CourseworkGroupBy(str, Enum):
     STUDENT = "student"
 
 
+class GradingQueueGroupBy(str, Enum):
+    """Only course and batch.
+
+    A queue grouped by student or assessment would be a worklist, which is
+    what the submission and attempt screens already are. This answers "where
+    is the backlog", and the answer is a place, not a person.
+    """
+
+    COURSE = "course"
+    BATCH = "batch"
+
+
 class ReportRow(APIModel):
     key: str = Field(description="Stable identifier for the group (a public_id, a status, or a month).")
     label: str

@@ -24,6 +24,7 @@ from backend.schemas.reporting import (
     AttendanceGroupBy,
     EnrollmentGroupBy,
     CourseworkGroupBy,
+    GradingQueueGroupBy,
     PerformanceGroupBy,
     ReportFormat,
     ReportResponse,
@@ -224,5 +225,39 @@ async def distribution_report(
     """
     report = await ReportService(session).distribution(
         actor=actor, course_id=course_id, batch_id=batch_id
+    )
+    return _render(report, format, actor)
+
+
+@router.get(
+    "/grading-queue",
+    response_model=ReportResponse,
+    summary="What is waiting to be marked, grouped",
+)
+async def grading_queue_report(
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(_READ)],
+    group_by: Annotated[GradingQueueGroupBy, Query()] = GradingQueueGroupBy.COURSE,
+    course_id: Annotated[uuid.UUID | None, Query()] = None,
+    batch_id: Annotated[uuid.UUID | None, Query()] = None,
+    format: Annotated[ReportFormat, Query()] = ReportFormat.JSON,
+):  # type: ignore[no-untyped-def]
+    """§34's Tutor Grading Status, across assignments, quizzes and exams.
+
+    A queue, not a rate. Each type's definition of "waiting" is its own: a
+    submission that arrived without a mark, a *finished* quiz attempt with no
+    score (how an auto-graded quiz says something needed a person), and an
+    exam result row with no marks entered — the offline case.
+
+    An exam with no result rows at all is not counted: nobody has said those
+    students sat it, and a queue that assumed they had would show every future
+    exam as outstanding work.
+
+    Groups with nothing outstanding are omitted. An empty queue is the absence
+    of work, and listing every course with a zero turns the answer into a
+    directory nobody can scan.
+    """
+    report = await ReportService(session).grading_queue(
+        actor=actor, group_by=group_by, course_id=course_id, batch_id=batch_id
     )
     return _render(report, format, actor)

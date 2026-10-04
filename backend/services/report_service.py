@@ -38,10 +38,12 @@ from backend.models.course import Course
 from backend.models.identity.user import User
 from backend.repositories.coursework_reporting import CourseworkReportingRepository
 from backend.repositories.distribution_reporting import DistributionReportingRepository
+from backend.repositories.grading_queue_reporting import GradingQueueRepository
 from backend.repositories.reporting import MAX_GROUPS, ReportingRepository
 from backend.schemas.reporting import (
     AttendanceGroupBy,
     CourseworkGroupBy,
+    GradingQueueGroupBy,
     EnrollmentGroupBy,
     PerformanceGroupBy,
     ReportResponse,
@@ -70,6 +72,7 @@ class ReportService:
         self.reports = ReportingRepository(session)
         self.coursework_reports = CourseworkReportingRepository(session)
         self.distribution_reports = DistributionReportingRepository(session)
+        self.grading_queue_reports = GradingQueueRepository(session)
         self.scopes = ScopeResolver(session)
 
     # -- attendance ----------------------------------------------------------
@@ -371,6 +374,42 @@ class ReportService:
             columns=["students", "percent_of_assessed"],
             rows=rows,
             truncated=False,
+        )
+
+    async def grading_queue(
+        self,
+        *,
+        actor: User,
+        group_by: GradingQueueGroupBy,
+        course_id: uuid.UUID | None = None,
+        batch_id: uuid.UUID | None = None,
+    ) -> ReportResponse:
+        """§34's Tutor Grading Status, across all three assessment types.
+
+        Scoped through `WorkVisibility`, so a tutor sees their own backlog
+        rather than the institution's.
+        """
+        visibility = await self.scopes.work_visibility(actor)
+
+        groups = await self.grading_queue_reports.queue_by(
+            group_by.value,
+            visibility=visibility,
+            course_id=await self._course_pk(course_id),
+            batch_id=await self._batch_pk(batch_id),
+        )
+
+        return ReportResponse(
+            report="grading_queue",
+            group_by=group_by.value,
+            generated_at=_now(),
+            # Total first: the question is "how much", and the breakdown is
+            # how you decide where to start.
+            columns=["total", "assignments", "quizzes", "exams"],
+            rows=[
+                ReportRow(key=key, label=label, metrics=metrics)
+                for key, label, metrics in groups
+            ],
+            truncated=len(groups) >= MAX_GROUPS,
         )
 
     @staticmethod

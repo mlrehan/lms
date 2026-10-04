@@ -19,6 +19,7 @@ import {
   AttendanceGroupByValues,
   EnrollmentGroupByValues,
   CourseworkGroupByValues,
+  GradingQueueGroupByValues,
   PerformanceGroupByValues,
 } from "@/lib/api/types";
 import { PageHeader } from "@/components/page-header";
@@ -32,7 +33,7 @@ import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
-type ReportKind = "attendance" | "enrollment" | "performance" | "coursework" | "distribution";
+type ReportKind = "attendance" | "enrollment" | "performance" | "coursework" | "distribution" | "gradingQueue";
 
 const GROUPS: Record<ReportKind, readonly string[]> = {
   attendance: AttendanceGroupByValues,
@@ -42,6 +43,23 @@ const GROUPS: Record<ReportKind, readonly string[]> = {
   // The distribution has no grouping of its own: its rows *are* the grading
   // scheme's bands, and the scheme is fixed by the course.
   distribution: [] as readonly string[],
+  gradingQueue: GradingQueueGroupByValues,
+};
+
+/**
+ * The API path for each tab.
+ *
+ * Stated rather than derived from the tab name: they matched for the first
+ * four reports and stop matching the moment one has a hyphen in it, which is
+ * a 404 at runtime that nothing in a typecheck can see.
+ */
+const PATHS: Record<ReportKind, string> = {
+  attendance: "attendance",
+  enrollment: "enrollment",
+  performance: "performance",
+  coursework: "coursework",
+  distribution: "distribution",
+  gradingQueue: "grading-queue",
 };
 
 const DESCRIPTIONS: Record<ReportKind, string> = {
@@ -56,6 +74,9 @@ const DESCRIPTIONS: Record<ReportKind, string> = {
   distribution:
     "How a cohort is spread across its grade bands — the shape an average cannot show. " +
     "Choose a course or batch: bands belong to a grading scheme, and a course may use its own.",
+  gradingQueue:
+    "Assignments, quiz attempts and exam results still waiting on a person. " +
+    "Groups with nothing outstanding are left out.",
 };
 
 /** Colours are read from the theme so the chart follows light/dark. */
@@ -86,13 +107,13 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["reports", kind, filters],
     queryFn: () =>
-      api.get<ReportResponse>(`/reports/${kind}`, { query: { ...filters, format: "json" } }),
+      api.get<ReportResponse>(`/reports/${PATHS[kind]}`, { query: { ...filters, format: "json" } }),
   });
 
   async function exportCsv() {
     setExporting(true);
     try {
-      await downloadFile(`/reports/${kind}`, `${kind}-report.csv`, { ...filters, format: "csv" });
+      await downloadFile(`/reports/${PATHS[kind]}`, `${PATHS[kind]}-report.csv`, { ...filters, format: "csv" });
     } catch (caught) {
       toast.error(caught instanceof Error ? caught.message : "The export failed.");
     } finally {
@@ -339,8 +360,16 @@ export default function ReportsPage() {
           <TabsTab value="performance">Performance</TabsTab>
           <TabsTab value="coursework">Coursework</TabsTab>
           <TabsTab value="distribution">Distribution</TabsTab>
+          <TabsTab value="gradingQueue">Grading queue</TabsTab>
         </TabsList>
-        {(["attendance", "enrollment", "performance", "coursework", "distribution"] as const).map((kind) => (
+        {([
+          "attendance",
+          "enrollment",
+          "performance",
+          "coursework",
+          "distribution",
+          "gradingQueue",
+        ] as const).map((kind) => (
           <TabsPanel key={kind} value={kind}>
             <p className="mb-3 text-sm text-muted-foreground">{DESCRIPTIONS[kind]}</p>
             <ReportPanel kind={kind} />
