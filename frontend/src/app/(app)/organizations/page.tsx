@@ -129,6 +129,7 @@ export default function OrganizationsPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="organizations"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

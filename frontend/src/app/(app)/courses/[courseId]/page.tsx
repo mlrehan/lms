@@ -167,6 +167,7 @@ function BatchesTab({ course }: { course: CourseResponse }) {
       ) : (
         <>
           <DataTable
+              columnsKey="course-batches"
             columns={columns}
             rows={data?.items ?? []}
             rowKey={(batch) => batch.public_id}

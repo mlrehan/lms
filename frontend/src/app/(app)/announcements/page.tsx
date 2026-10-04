@@ -4,12 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Megaphone, Pin, Plus, Trash2 } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
-import type {
-  AnnouncementResponse,
-  PageAnnouncementResponse,
-  PageBatchSummary,
-  PageCourseSummary,
-} from "@/lib/api/types";
+import type { AnnouncementResponse, PageAnnouncementResponse } from "@/lib/api/types";
 import { RolesValues } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
@@ -24,6 +19,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, fromLocalInputValue, toLocalInputValue } from "@/lib/format/datetime";
+import { BatchPicker, CoursePicker } from "@/components/domain/entity-pickers";
 
 interface Draft {
   title: string;
@@ -57,7 +53,6 @@ function AnnouncementDialog({
   editing: AnnouncementResponse | null;
 }) {
   const timeZone = useDisplayTimeZone();
-  const { permissions } = useSession();
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [initialised, setInitialised] = useState<string | null>(null);
 
@@ -79,20 +74,6 @@ function AnnouncementDialog({
         : EMPTY,
     );
   }
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open && permissions.has("course.read"),
-    staleTime: 60_000,
-  });
-
-  const batches = useQuery({
-    queryKey: ["batches", "picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: open && permissions.has("batch.read"),
-    staleTime: 60_000,
-  });
 
   const save = useApiMutation<AnnouncementResponse, Draft>({
     mutationFn: (values) => {
@@ -167,20 +148,12 @@ function AnnouncementDialog({
             <FormGrid>
               <Field label="Course" hint="Optional: narrow to one course.">
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(draft.course_id) || null}
-                    onValueChange={(next) => setDraft({ ...draft, course_id: (next ?? "") })}
-                   placeholder="Everyone" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                  <CoursePicker id={id} value={(draft.course_id) || null} onValueChange={(next) => setDraft({ ...draft, course_id: (next ?? "") })} placeholder="Everyone" clearable />
                 )}
               </Field>
               <Field label="Batch" hint="Optional: narrow to one cohort.">
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(draft.batch_id) || null}
-                    onValueChange={(next) => setDraft({ ...draft, batch_id: (next ?? "") })}
-                   placeholder="Everyone" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
+                  <BatchPicker id={id} value={(draft.batch_id) || null} onValueChange={(next) => setDraft({ ...draft, batch_id: (next ?? "") })} placeholder="Everyone" clearable />
                 )}
               </Field>
             </FormGrid>

@@ -14,6 +14,7 @@ import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormGrid, Input } from "@/components/ui/form";
+import { optionsFromValues } from "@/components/ui/select";
 import { FormSelect } from "@/components/ui/form-controls";
 import { Switch } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -313,7 +314,7 @@ export function CreateUserDialog({
               </Field>
               <Field label="Gender">
                 {({ id }) => (
-                  <FormSelect id={id}  control={control} name="gender" options={GendersValues.map((value) => ({ value: value, label: value }))} />
+                  <FormSelect id={id}  control={control} name="gender" options={optionsFromValues(GendersValues)} />
                 )}
               </Field>
               <Field label="First name" error={errors.first_name?.message}>

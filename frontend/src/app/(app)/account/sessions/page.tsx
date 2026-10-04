@@ -103,6 +103,7 @@ export default function MySessionsPage() {
           <ErrorState error={error} onRetry={() => void refetch()} />
         ) : (
           <DataTable
+              columnsKey="account-sessions"
             columns={columns}
             rows={data ?? []}
             rowKey={(session) => session.public_id}

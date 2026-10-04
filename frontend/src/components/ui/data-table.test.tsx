@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DataTable, type Column } from "@/components/ui/data-table";
 
@@ -171,6 +171,73 @@ function SelectionHarness({ isSelectable }: { isSelectable?: (key: string) => bo
   );
 }
 
+describe("DataTable — column resizing", () => {
+  /*
+   * This exists because the first version of `resizable` registered TanStack's
+   * feature and rendered no handle at all — a prop that read as a feature and
+   * did nothing, which no typecheck or build could notice. The assertion is
+   * deliberately on the handle being *in the DOM*, not on the prop being set.
+   */
+  it("renders a drag handle on every column by default", () => {
+    render(<DataTable columns={COLUMNS} rows={PEOPLE} rowKey={(r) => r.id} />);
+    expect(screen.getByTestId("resize-name")).toBeInTheDocument();
+    expect(screen.getByTestId("resize-role")).toBeInTheDocument();
+  });
+
+  it("can be turned off for a table where it would only break the layout", () => {
+    render(<DataTable columns={COLUMNS} rows={PEOPLE} rowKey={(r) => r.id} resizable={false} />);
+    expect(screen.queryByTestId("resize-name")).not.toBeInTheDocument();
+  });
+
+  it("keeps the column header's accessible name free of the handle", () => {
+    render(<DataTable columns={COLUMNS} rows={PEOPLE} rowKey={(r) => r.id} />);
+    // Exact match: a labelled handle inside the <th> made this read
+    // "Role Resize Role" for every screen-reader user.
+    expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+  });
+
+  /*
+   * The handle existed, TanStack's state updated, and **no column ever
+   * changed width** -- because under the default `table-layout: auto` a
+   * `width` on a `<th>` is a suggestion the browser discards. The handle
+   * looked present and did nothing, which is how it shipped.
+   *
+   * jsdom has no layout engine, so it cannot reproduce that on its own: every
+   * element measures zero and the component correctly declines to pin a table
+   * to a width of nothing. The measurement is therefore stubbed, which is
+   * enough to pin the two things that actually made widths take effect --
+   * `fixed` layout, and a table as wide as its columns rather than its
+   * container.
+   */
+  it("switches to fixed layout, at its measured width, when a drag starts", () => {
+    const widths: Record<string, number> = { name: 300, role: 200 };
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const id = this.dataset?.column;
+      const width = id ? (widths[id] ?? 0) : 0;
+      return { ...original.call(this), width } as DOMRect;
+    };
+    try {
+      render(<DataTable columns={COLUMNS} rows={PEOPLE} rowKey={(r) => r.id} />);
+      const table = screen.getByRole("table");
+      expect(table.style.tableLayout).toBe("");
+
+      fireEvent.mouseDown(screen.getByTestId("resize-name"), { clientX: 300 });
+
+      expect(table.style.tableLayout).toBe("fixed");
+      // 500px, not "100%": at 100% the browser shares the difference between
+      // the column total and the table width across every column, so one
+      // 150px drag moved the edge 519px.
+      expect(table.style.width).toBe("500px");
+      // And the hand-over is invisible, because the widths it adopts are the
+      // ones already on screen.
+      expect(screen.getByRole("columnheader", { name: "Name" })).toHaveStyle({ width: "300px" });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = original;
+    }
+  });
+});
+
 describe("DataTable — row selection", () => {
   it("selects and clears a single row", async () => {
     const user = userEvent.setup();
@@ -282,5 +349,95 @@ describe("DataTable — expandable rows", () => {
 
     expect(screen.getByText("Detail for Grace Hopper")).toBeInTheDocument();
     expect(screen.queryByText("Detail for Ada Lovelace")).not.toBeInTheDocument();
+  });
+});
+
+/*
+ * The remembered Columns menu.
+ *
+ * Column visibility shipped as a controlled prop and no screen used it,
+ * because using it meant state, a `ColumnToggle[]` and a toolbar per page.
+ * `columnsKey` is the one-prop form, so these tests cover the thing that
+ * actually ships: naming a key gives a working, persisted menu.
+ */
+describe("DataTable columnsKey", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("renders no toolbar at all without a key", () => {
+    render(<DataTable columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    expect(screen.queryByRole("button", { name: /columns/i })).toBeNull();
+  });
+
+  it("hides a column when its menu item is clicked, and remembers it", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <DataTable columnsKey="t1" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: /role/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /columns/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /role/i }));
+    expect(screen.queryByRole("columnheader", { name: /role/i })).toBeNull();
+
+    // Remembered: a fresh mount of the same key starts with it hidden, which
+    // is the half a `useState` in the page would lose on every navigation.
+    unmount();
+    render(<DataTable columnsKey="t1" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    expect(screen.queryByRole("columnheader", { name: /role/i })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: /name/i })).toBeInTheDocument();
+  });
+
+  it("keeps two tables' choices apart", async () => {
+    const user = userEvent.setup();
+    render(<DataTable columnsKey="t2" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    await user.click(screen.getByRole("button", { name: /columns/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /role/i }));
+    expect(screen.queryByRole("columnheader", { name: /role/i })).toBeNull();
+
+    render(<DataTable columnsKey="t3" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    // The second table has its own key, so it still shows everything.
+    expect(screen.getAllByRole("columnheader", { name: /role/i })).toHaveLength(1);
+  });
+
+  it("will not offer to hide a column the table is unreadable without", async () => {
+    const user = userEvent.setup();
+    render(<DataTable columnsKey="t4" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    await user.click(screen.getByRole("button", { name: /columns/i }));
+    // `name` is the identity column, locked by default as the first column.
+    expect(await screen.findByRole("menuitem", { name: /name/i })).toHaveAttribute("data-disabled");
+  });
+
+  it("survives storage being unavailable", async () => {
+    const user = userEvent.setup();
+    const getItem = vi
+      .spyOn(window.localStorage, "getItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    try {
+      render(<DataTable columnsKey="t5" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+      // A private window with site data blocked must show a working table,
+      // not an error. The choice applies; it is simply not remembered.
+      expect(bodyRowTexts()).toHaveLength(3);
+      await user.click(screen.getByRole("button", { name: /columns/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /role/i }));
+      expect(screen.queryByRole("columnheader", { name: /role/i })).toBeNull();
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
+  });
+
+  it("ignores a stored value that is not a list of column keys", () => {
+    window.localStorage.setItem("lms.table.t6.hidden", '{"role":true}');
+    render(<DataTable columnsKey="t6" columns={COLUMNS} rows={PEOPLE} rowKey={(p) => p.id} />);
+    // Hand-edited or written by an older version: show everything rather than
+    // guessing at it.
+    expect(screen.getByRole("columnheader", { name: /role/i })).toBeInTheDocument();
   });
 });

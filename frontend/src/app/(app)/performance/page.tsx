@@ -5,19 +5,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
-import type {
-  ComponentLine,
-  PageBatchSummary,
-  PerformanceResponse,
-  StudentClassPerformanceResponse,
-} from "@/lib/api/types";
+import type { ComponentLine, PerformanceResponse, StudentClassPerformanceResponse } from "@/lib/api/types";
 import { PageHeader } from "@/components/page-header";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
-import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/form";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { cn, humanise } from "@/lib/utils";
+import { BatchPicker } from "@/components/domain/entity-pickers";
 
 /**
  * §6 and §37: the weighted picture, and how it was reached.
@@ -242,11 +237,6 @@ export default function PerformancePage() {
   const [batchId, setBatchId] = useState("");
   const [open, setOpen] = useState<string | null>(null);
 
-  const batches = useQuery({
-    queryKey: ["batches", "performance-picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-  });
-
   const rows = useQuery({
     queryKey: ["performance", "batch", batchId],
     queryFn: () =>
@@ -274,14 +264,10 @@ export default function PerformancePage() {
         <CardBody>
           <Field label="Batch">
             {({ id }) => (
-              <Select
-                id={id}
-                value={(batchId) || null}
-                onValueChange={(next) => {
+              <BatchPicker id={id} value={(batchId) || null} onValueChange={(next) => {
                   setBatchId((next ?? ""));
                   setOpen(null);
-                }}
-               placeholder="Choose a batch…" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: `${batch.batch_code}${batch.course_title ? ` — ${batch.course_title}` : ""}` }))} />
+                }} placeholder="Choose a batch…" clearable />
             )}
           </Field>
         </CardBody>

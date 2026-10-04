@@ -216,6 +216,7 @@ export default function CoursesPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="courses"
               caption="Courses"
               columns={columns}
               rows={data?.items ?? []}

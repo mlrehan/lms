@@ -1,14 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import { api } from "@/lib/api/client";
-import type {
-  PageBatchSummary,
-  PageCourseSummary,
-  ResourceResponse,
-} from "@/lib/api/types";
+import type { ResourceResponse } from "@/lib/api/types";
 import { ResourceTypeValues } from "@/lib/api/types";
 import { useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
@@ -16,6 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/
 import { Field, FormGrid, Input } from "@/components/ui/form";
 import { Select, optionsFromValues } from "@/components/ui/select";
 import { formatBytes } from "@/components/domain/resources/drive-view";
+import { BatchPicker, CoursePicker } from "@/components/domain/entity-pickers";
 
 /**
  * Uploading files.
@@ -66,20 +63,6 @@ export function UploadDialog({
     setFiles(initialFiles ?? []);
     setName(initialFiles?.length === 1 ? (initialFiles[0]?.name ?? "") : "");
   }
-
-  const courses = useQuery({
-    queryKey: ["courses", "upload-anchor"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open && atRoot,
-    staleTime: 60_000,
-  });
-
-  const batches = useQuery({
-    queryKey: ["batches", "upload-anchor"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: open && atRoot,
-    staleTime: 60_000,
-  });
 
   const upload = useApiMutation<number, void>({
     mutationFn: async () => {
@@ -169,20 +152,12 @@ export function UploadDialog({
             <FormGrid>
               <Field label="Course">
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(courseId) || null}
-                    onValueChange={(next) => setCourseId((next ?? ""))}
-                   placeholder="No course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                  <CoursePicker id={id} value={(courseId) || null} onValueChange={(next) => setCourseId((next ?? ""))} placeholder="No course" clearable />
                 )}
               </Field>
               <Field label="Batch">
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(batchId) || null}
-                    onValueChange={(next) => setBatchId((next ?? ""))}
-                   placeholder="No batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: `${batch.batch_code}${batch.course_title ? ` — ${batch.course_title}` : ""}` }))} />
+                  <BatchPicker id={id} value={(batchId) || null} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="No batch" clearable />
                 )}
               </Field>
             </FormGrid>

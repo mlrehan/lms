@@ -1,19 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
-import type { BatchResponse, PageBatchSummary, PageCourseSummary } from "@/lib/api/types";
+import type { BatchResponse, CourseSummary, PageBatchSummary } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
-import { Combobox } from "@/components/ui/combobox";
 import { humanise } from "@/lib/utils";
+import { CoursePicker } from "@/components/domain/entity-pickers";
 
 const schema = z.object({
   course_id: z.string().min(1, "Choose the course this batch belongs to."),
@@ -64,16 +63,18 @@ export function NewBatchDialog({ onCreated }: { onCreated?: (batch: BatchRespons
   });
   const courseId = watch("course_id");
 
-  const courses = useQuery({
-    queryKey: ["courses", "for-new-batch"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 100 } }),
-    enabled: open,
-  });
-  const course = useMemo(() => courses.data?.items.find((c) => c.public_id === courseId), [courses.data, courseId]);
+  /*
+   * The chosen course is held here rather than found in a fetched page.
+   * `CoursePicker` searches the whole catalogue server-side and hands back the
+   * row it selected, so the previous `limit: 100` fetch -- which both capped
+   * the catalogue at 100 and was the only place a chosen course could be
+   * resolved from -- is gone.
+   */
+  const [course, setCourse] = useState<CourseSummary | null>(null);
 
-  async function chooseCourse(id: string) {
+  async function chooseCourse(id: string, chosen: CourseSummary | null) {
     setValue("course_id", id, { shouldValidate: true });
-    const chosen = courses.data?.items.find((c) => c.public_id === id);
+    setCourse(chosen);
     if (!chosen) return;
     if (chosen.duration_hours != null) setValue("duration_hours", String(chosen.duration_hours));
     try {
@@ -124,21 +125,13 @@ export function NewBatchDialog({ onCreated }: { onCreated?: (batch: BatchRespons
                 {banner}
               </div>
             ) : null}
-            <Field label="Course" error={errors.course_id?.message} required hint={courses.isError ? "The course list could not be loaded." : undefined}>
+            <Field label="Course" error={errors.course_id?.message} required>
               {({ id }) => (
-                <Combobox
+                <CoursePicker
                   id={id}
                   value={courseId || null}
-                  disabled={courses.isPending}
-                  loading={courses.isPending}
-                  placeholder={courses.isPending ? "Loading courses…" : "Choose a course"}
-                  emptyMessage="No courses match."
-                  onValueChange={(next) => void chooseCourse(next ?? "")}
-                  options={(courses.data?.items ?? []).map((c) => ({
-                    value: c.public_id,
-                    label: `${c.title}${c.code ? ` (${c.code})` : ""}`,
-                    description: humanise(c.status),
-                  }))}
+                  placeholder="Search courses"
+                  onValueChange={(next, chosen) => void chooseCourse(next ?? "", chosen)}
                 />
               )}
             </Field>

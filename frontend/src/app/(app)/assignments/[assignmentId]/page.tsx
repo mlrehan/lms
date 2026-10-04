@@ -376,6 +376,7 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
       ) : (
         <>
           <DataTable
+              columnsKey="assignment-submissions"
             columns={columns}
             rows={data?.items ?? []}
             rowKey={(row) => row.public_id}

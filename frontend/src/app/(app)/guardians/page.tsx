@@ -197,6 +197,7 @@ export default function GuardiansPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="guardians"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

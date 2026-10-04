@@ -148,6 +148,7 @@ export default function UsersPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="users"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(user) => user.public_id}

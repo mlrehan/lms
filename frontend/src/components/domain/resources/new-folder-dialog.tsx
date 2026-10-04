@@ -1,19 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { FolderPlus } from "lucide-react";
 import { api } from "@/lib/api/client";
-import type {
-  FolderResponse,
-  PageBatchSummary,
-  PageCourseSummary,
-} from "@/lib/api/types";
+import type { FolderResponse } from "@/lib/api/types";
 import { useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/form";
+import { BatchPicker, CoursePicker } from "@/components/domain/entity-pickers";
 
 /**
  * Creating a folder.
@@ -50,24 +45,10 @@ export function NewFolderDialog({
 
   const atRoot = parentId === null;
 
-  const courses = useQuery({
-    queryKey: ["courses", "folder-anchor"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open && atRoot,
-    staleTime: 60_000,
-  });
-
   // Not narrowed by the chosen course: `/batches` has no `course_id` filter
   // and `BatchSummary` carries only `course_title`, so narrowing would mean
   // matching on a display string. Each option names its course instead, which
   // is honest and needs no such match.
-  const batches = useQuery({
-    queryKey: ["batches", "folder-anchor"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: open && atRoot,
-    staleTime: 60_000,
-  });
-
   const create = useApiMutation<FolderResponse, void>({
     mutationFn: () =>
       api.post<FolderResponse>("/folders", {
@@ -129,11 +110,7 @@ export function NewFolderDialog({
                 hint="Everyone on the course can reach folders anchored to it."
               >
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(courseId) || null}
-                    onValueChange={(next) => setCourseId((next ?? ""))}
-                   placeholder="No course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                  <CoursePicker id={id} value={(courseId) || null} onValueChange={(next) => setCourseId((next ?? ""))} placeholder="No course" clearable />
                 )}
               </Field>
 
@@ -142,11 +119,7 @@ export function NewFolderDialog({
                 hint="Narrower than a course: only this batch's students reach it."
               >
                 {({ id }) => (
-                  <Select
-                    id={id}
-                    value={(batchId) || null}
-                    onValueChange={(next) => setBatchId((next ?? ""))}
-                   placeholder="No batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: `${batch.batch_code}${batch.course_title ? ` — ${batch.course_title}` : ""}` }))} />
+                  <BatchPicker id={id} value={(batchId) || null} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="No batch" clearable />
                 )}
               </Field>
 

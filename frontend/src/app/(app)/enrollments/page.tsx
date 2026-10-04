@@ -269,6 +269,7 @@ export default function EnrollmentsPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="enrollments"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

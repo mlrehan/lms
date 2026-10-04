@@ -248,12 +248,72 @@ export function Combobox<T extends string = string>({
 }: ComboboxProps<T>): ReactNode {
   const { archive, remember } = useChosenLabels<T>();
   const [term, setTerm] = useState("");
+  /*
+   * Whether the person is currently typing, rather than looking at what is
+   * already chosen.
+   *
+   * The field used to show its selection as the *placeholder*, which renders
+   * in muted "nothing is selected here" styling -- so a form with five
+   * answered combobox fields looked like a form with five empty ones. The
+   * selection is now the input's real text, and the typed term takes over only
+   * while it is being typed.
+   *
+   * Derived from an event, deliberately: syncing the input text to the
+   * selection from an effect would render twice on every change and is the
+   * pattern the React Compiler rules reject.
+   */
+  const [typing, setTyping] = useState(false);
 
-  const selected = value != null ? lookup(value, options, archive) : null;
+  const found = value != null ? lookup(value, options, archive) : null;
+
+  /*
+   * The selected option's label, kept from the last render that could see it.
+   *
+   * A server-backed list is replaced on every search, so a moment after
+   * someone types the selected row is usually no longer in `options` -- and
+   * the field then fell back to rendering the raw value. The saved city on a
+   * profile showed as `bc94d2ff-a158-...` after any search that did not match
+   * it, which is the exact failure this control exists to prevent.
+   *
+   * Adjusting state during render rather than in an effect: this is the
+   * documented "derive state from props" case. React discards the in-progress
+   * render and immediately re-runs it, so nothing is painted with the stale
+   * label and there is no second commit.
+   */
+  const [lastSeen, setLastSeen] = useState<{ value: T | null; label: string }>({
+    value: null,
+    label: "",
+  });
+  if (found && (lastSeen.value !== value || lastSeen.label !== found.label)) {
+    setLastSeen({ value, label: found.label });
+  } else if (value == null && lastSeen.value !== null) {
+    setLastSeen({ value: null, label: "" });
+  }
+
+  const selected =
+    found ?? (value != null && lastSeen.value === value
+      ? { value, label: lastSeen.label }
+      : null);
+  const shown = typing ? term : (selected?.label ?? "");
+
+  /*
+   * The selected option is always part of the list the control resolves
+   * against, even when the current search did not return it.
+   *
+   * Controlling `inputValue` is not enough on its own: Base UI also derives
+   * display text through `itemToStringLabel`, and that saw only `options`, so
+   * it answered with the raw value for a row the latest search had dropped.
+   * This is the same thing `BatchPicker` and `CoursePicker` do with their
+   * single-row lookups, done once for every caller.
+   */
+  const resolvable: readonly SelectOption<T>[] =
+    selected && !options.some((option) => option.value === selected.value)
+      ? [selected, ...options]
+      : options;
 
   return (
     <BaseCombobox.Root
-      items={options as SelectOption<T>[]}
+      items={resolvable as SelectOption<T>[]}
       // `null` hands filtering to the server. Leaving Base UI's matcher on
       // would filter the server's own results a second time and hide rows the
       // server deliberately returned.
@@ -263,14 +323,23 @@ export function Combobox<T extends string = string>({
         const key = (next as T | null) ?? null;
         const option = key != null ? lookup(key, options, archive) : null;
         if (option) remember([option]);
+        // Choosing ends the edit, so the field goes back to showing the
+        // selection rather than the half-typed term that found it.
+        setTyping(false);
+        setTerm("");
+        // The parent's list is still filtered by whatever was typed to find
+        // this. Leaving it that way means the next time the field is read, the
+        // chosen row may no longer be in it.
+        onSearch?.("");
         onValueChange(key, option);
       }}
-      inputValue={term}
+      inputValue={shown}
       onInputValueChange={(next) => {
+        setTyping(true);
         setTerm(next);
         onSearch?.(next);
       }}
-      itemToStringLabel={(item: unknown) => labelOf(item, options, archive)}
+      itemToStringLabel={(item: unknown) => labelOf(item, resolvable, archive)}
       disabled={disabled}
       readOnly={readOnly}
       required={required}
@@ -279,7 +348,14 @@ export function Combobox<T extends string = string>({
       <div className="relative flex items-center">
         <BaseCombobox.Input
           id={id}
-          placeholder={selected ? selected.label : placeholder}
+          placeholder={placeholder}
+          // Leaving the field without choosing anything restores the current
+          // selection, so an abandoned search cannot look like a cleared one.
+          onBlur={() => {
+            setTyping(false);
+            setTerm("");
+            onSearch?.("");
+          }}
           aria-invalid={invalid || undefined}
           aria-describedby={describedBy}
           aria-label={ariaLabel}
@@ -288,7 +364,12 @@ export function Combobox<T extends string = string>({
         {clearable && value != null && !disabled && !readOnly ? (
           <BaseCombobox.Clear
             aria-label="Clear selection"
-            onClick={() => onValueChange(null, null)}
+            onClick={() => {
+              setTyping(false);
+              setTerm("");
+              onSearch?.("");
+              onValueChange(null, null);
+            }}
             className={cn(
               "absolute right-8 rounded-xs p-0.5 text-subtle-foreground",
               "transition-colors duration-150 hover:text-foreground",
@@ -312,7 +393,7 @@ export function Combobox<T extends string = string>({
       </div>
       <Popup>
         <ListBody
-          options={options}
+          options={resolvable}
           loading={loading}
           error={error}
           onRetry={onRetry}

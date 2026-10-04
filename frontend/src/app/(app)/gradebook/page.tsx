@@ -6,14 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
-import type {
-  GradeBandResponse,
-  GradeBookEntryResponse,
-  GradeBookSummaryResponse,
-  PageBatchSummary,
-  PageGradeBookEntryResponse,
-  SyncResultResponse,
-} from "@/lib/api/types";
+import type { GradeBandResponse, GradeBookEntryResponse, GradeBookSummaryResponse, PageGradeBookEntryResponse, SyncResultResponse } from "@/lib/api/types";
 import { GradeComponentTypeValues } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
@@ -40,6 +33,7 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { BatchPicker } from "@/components/domain/entity-pickers";
 
 function GradeBands() {
   const { permissions } = useSession();
@@ -612,13 +606,6 @@ function GradebookContent() {
   const { permissions } = useSession();
   const [batchId, setBatchId] = useState(params.get("batch") ?? "");
 
-  const batches = useQuery({
-    queryKey: ["batches", "picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: permissions.has("batch.read"),
-    staleTime: 60_000,
-  });
-
   return (
     <div className="space-y-5">
       <PageHeader
@@ -630,12 +617,7 @@ function GradebookContent() {
         <div className="flex flex-wrap items-end gap-3 p-3">
           <Field label="Batch" className="w-80">
             {({ id }) => (
-              <Select
-                id={id}
-                value={(batchId) || null}
-                disabled={!permissions.has("batch.read")}
-                onValueChange={(next) => setBatchId((next ?? ""))}
-               placeholder="Every batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
+              <BatchPicker id={id} value={(batchId) || null} disabled={!permissions.has("batch.read")} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="Every batch" clearable />
             )}
           </Field>
         </div>

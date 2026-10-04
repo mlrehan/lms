@@ -2,7 +2,6 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Card, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
 import { Select } from "@/components/ui/select";
@@ -12,10 +11,9 @@ import { AttendanceRecords } from "@/components/domain/attendance/records-view";
 import { AttendanceSheetPanel } from "@/components/domain/attendance/sheet-panel";
 import { SessionQueue, type Range, type StateFilter } from "@/components/domain/attendance/session-queue";
 import { UserPicker } from "@/components/domain/user-picker";
-import { api } from "@/lib/api/client";
-import type { PageBatchSummary } from "@/lib/api/types";
 import { useSession } from "@/lib/auth/session";
 import { cn } from "@/lib/utils";
+import { BatchPicker } from "@/components/domain/entity-pickers";
 
 const STATES: { value: StateFilter; label: string }[] = [
   { value: "PENDING", label: "To do" },
@@ -41,13 +39,6 @@ function AttendanceWorkspace() {
   const [range, setRange] = useState<Range>("week");
   const [state, setState] = useState<StateFilter>("PENDING");
   const [sessionId, setSessionId] = useState<string | null>(params.get("session"));
-
-  const batches = useQuery({
-    queryKey: ["batches", "picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 100, sort: "batch_code" } }),
-    enabled: canTake,
-    staleTime: 60_000,
-  });
 
   if (!canTake) {
     return (
@@ -76,7 +67,7 @@ function AttendanceWorkspace() {
             <Card className={cn("flex min-h-[28rem] flex-col overflow-hidden lg:max-h-[calc(100dvh-14rem)]", sessionId && "hidden lg:flex")}>
               <div className="space-y-2 border-b border-border-subtle p-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <Select className="h-8 text-[13px]" aria-label="Batch" value={(batchId) || null} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="All batches" clearable options={(batches.data?.items ?? []).map((b) => ({ value: b.public_id, label: b.batch_code }))} />
+                  <BatchPicker className="h-8 text-[13px]" ariaLabel="Batch" value={(batchId) || null} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="All batches" clearable />
                   <Select className="h-8 text-[13px]" aria-label="Period" value={range} onValueChange={(next) => setRange((next ?? "") as Range)} options={[{ value: "today", label: "Today" }, { value: "week", label: "Last 7 days" }, { value: "month", label: "Last 30 days" }, { value: "all", label: "Any time" }]} />
                 </div>
                 {canPickTutor ? <UserPicker role="TUTOR" value={tutorId || null} onChange={(id) => setTutorId(id ?? "")} placeholder="Any tutor" /> : null}

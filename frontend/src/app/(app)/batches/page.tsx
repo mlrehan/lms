@@ -213,6 +213,7 @@ export default function BatchesPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="batches"
               caption="Batches"
               columns={columns}
               rows={data?.items ?? []}

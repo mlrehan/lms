@@ -318,6 +318,7 @@ export default function AuditPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="audit"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

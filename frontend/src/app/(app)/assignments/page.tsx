@@ -9,29 +9,22 @@ import { z } from "zod";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api, segment } from "@/lib/api/client";
-import type {
-  AssignmentResponse,
-  AssignmentSummary,
-  PageAssignmentSummary,
-  PageBatchSummary,
-  PageCourseSummary,
-  PageSessionSummary,
-} from "@/lib/api/types";
+import type { AssignmentResponse, AssignmentSummary, PageAssignmentSummary, PageSessionSummary } from "@/lib/api/types";
 import { SubmissionTypeValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
-import { FormCombobox, FormSelect } from "@/components/ui/form-controls";
+import { FormSelect } from "@/components/ui/form-controls";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { CoursePicker, FormBatchPicker, FormCoursePicker } from "@/components/domain/entity-pickers";
 
 const createSchema = z
   .object({
@@ -85,13 +78,6 @@ function CreateAssignmentDialog({
   const router = useRouter();
   const timeZone = useDisplayTimeZone();
   const [banner, setBanner] = useState<string | null>(null);
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open,
-    staleTime: 60_000,
-  });
 
   const {
     register,
@@ -172,14 +158,6 @@ function CreateAssignmentDialog({
   // Only the batches of the course that was chosen. Offering every batch on
   // the platform would let a tutor pick one from another course, which the API
   // refuses -- an error the form should never have allowed them to reach.
-  const batches = useQuery({
-    queryKey: ["batches", "for-course", courseId],
-    queryFn: () =>
-      api.get<PageBatchSummary>("/batches", { query: { course_id: courseId, limit: 200 } }),
-    enabled: open && Boolean(courseId) && scope !== "COURSE",
-    staleTime: 60_000,
-  });
-
   const batchId = watch("batch_id");
   const sessions = useQuery({
     queryKey: ["sessions", "for-batch", batchId],
@@ -204,17 +182,7 @@ function CreateAssignmentDialog({
           ) : null}
           <Field label="Course" error={errors.course_id?.message} required>
             {({ id }) => (
-              <FormCombobox
-                id={id}
-                control={control}
-                name="course_id"
-                placeholder="Choose a course"
-                emptyMessage="No courses match."
-                options={(courses.data?.items ?? []).map((course) => ({
-                  value: course.public_id,
-                  label: course.title,
-                }))}
-              />
+              <FormCoursePicker id={id} control={control} name="course_id" placeholder="Choose a course" />
             )}
           </Field>
           {/* §3's academic scope. Grouped and explained rather than left as a
@@ -243,19 +211,15 @@ function CreateAssignmentDialog({
             {scope !== "COURSE" ? (
               <Field label="Batch" error={errors.batch_id?.message} required>
                 {({ id }) => (
-                  <FormSelect
+                  <FormBatchPicker
                     id={id}
                     control={control}
                     name="batch_id"
                     disabled={!courseId}
                     clearable
-                    // A dependent select: the placeholder states the
+                    // A dependent picker: the placeholder states the
                     // precondition rather than offering an empty list.
                     placeholder={courseId ? "Choose a batch" : "Choose a course first"}
-                    options={(batches.data?.items ?? []).map((b) => ({
-                      value: b.public_id,
-                      label: b.batch_code,
-                    }))}
                   />
                 )}
               </Field>
@@ -398,13 +362,6 @@ export default function AssignmentsPage() {
   const [courseId, setCourseId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
 
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: permissions.has("course.read"),
-    staleTime: 60_000,
-  });
-
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["assignments", "list", courseId, limit, offset],
     queryFn: () =>
@@ -483,15 +440,10 @@ export default function AssignmentsPage() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Course" className="w-72">
             {({ id }) => (
-              <Select
-                id={id}
-                value={(courseId) || null}
-                disabled={!permissions.has("course.read")}
-                onValueChange={(next) => {
+              <CoursePicker id={id} value={(courseId) || null} disabled={!permissions.has("course.read")} onValueChange={(next) => {
                   setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
-                }}
-               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                }} placeholder="Every course" clearable />
             )}
           </Field>
         </div>
@@ -503,6 +455,7 @@ export default function AssignmentsPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="assignments"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

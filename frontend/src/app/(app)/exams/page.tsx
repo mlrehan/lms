@@ -9,7 +9,7 @@ import { z } from "zod";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api/client";
-import type { ExamResponse, ExamSummary, PageBatchSummary, PageCourseSummary, PageExamSummary } from "@/lib/api/types";
+import type { ExamResponse, ExamSummary, PageExamSummary } from "@/lib/api/types";
 import { ExamTypeValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
@@ -24,6 +24,7 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { FormBatchPicker, FormCoursePicker } from "@/components/domain/entity-pickers";
 
 const createSchema = z.object({
   title: z.string().trim().min(2, "Give the examination a title."),
@@ -43,22 +44,7 @@ type CreateValues = z.infer<typeof createSchema>;
 function CreateExamDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const router = useRouter();
   const timeZone = useDisplayTimeZone();
-  const { permissions } = useSession();
   const [banner, setBanner] = useState<string | null>(null);
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open && permissions.has("course.read"),
-    staleTime: 60_000,
-  });
-
-  const batches = useQuery({
-    queryKey: ["batches", "picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: open && permissions.has("batch.read"),
-    staleTime: 60_000,
-  });
 
   const {
     register,
@@ -159,12 +145,12 @@ function CreateExamDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             </Field>
             <Field label="Course" hint="Optional: scope the exam to one course.">
               {({ id }) => (
-                <FormSelect id={id}  control={control} name="course_id" placeholder="Not scoped" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                <FormCoursePicker id={id} control={control} name="course_id" placeholder="Not scoped" clearable />
               )}
             </Field>
             <Field label="Batch" hint="Optional: scope to one cohort.">
               {({ id }) => (
-                <FormSelect id={id}  control={control} name="batch_id" placeholder="Not scoped" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
+                <FormBatchPicker id={id} control={control} name="batch_id" placeholder="Not scoped" clearable />
               )}
             </Field>
           </FormGrid>
@@ -260,6 +246,7 @@ export default function ExamsPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="exams"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

@@ -9,18 +9,17 @@ import { z } from "zod";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api, segment } from "@/lib/api/client";
-import type { PageCourseSummary, PageQuizSummary, QuizResponse, QuizSummary } from "@/lib/api/types";
+import type { PageQuizSummary, QuizResponse, QuizSummary } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
-import { FormSelect } from "@/components/ui/form-controls";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
+import { CoursePicker, FormCoursePicker } from "@/components/domain/entity-pickers";
 
 const createSchema = z.object({
   course_id: z.string().min(1, "Choose the course this belongs to."),
@@ -38,13 +37,6 @@ type CreateValues = z.infer<typeof createSchema>;
 function CreateQuizDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const router = useRouter();
   const [banner, setBanner] = useState<string | null>(null);
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open,
-    staleTime: 60_000,
-  });
 
   const {
     register,
@@ -114,7 +106,7 @@ function CreateQuizDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           ) : null}
           <Field label="Course" error={errors.course_id?.message} required>
             {({ id }) => (
-              <FormSelect id={id}  control={control} name="course_id" placeholder="Choose a course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+              <FormCoursePicker id={id} control={control} name="course_id" placeholder="Choose a course" clearable />
             )}
           </Field>
           <Field label="Title" error={errors.title?.message} required>
@@ -168,13 +160,6 @@ export default function QuizzesPage() {
   const { limit, offset, setPage } = useListState();
   const [courseId, setCourseId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: permissions.has("course.read"),
-    staleTime: 60_000,
-  });
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["quizzes", "list", courseId, limit, offset],
@@ -242,15 +227,10 @@ export default function QuizzesPage() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Course" className="w-72">
             {({ id }) => (
-              <Select
-                id={id}
-                value={(courseId) || null}
-                disabled={!permissions.has("course.read")}
-                onValueChange={(next) => {
+              <CoursePicker id={id} value={(courseId) || null} disabled={!permissions.has("course.read")} onValueChange={(next) => {
                   setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
-                }}
-               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                }} placeholder="Every course" clearable />
             )}
           </Field>
         </div>
@@ -262,6 +242,7 @@ export default function QuizzesPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="quizzes"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

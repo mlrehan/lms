@@ -45,6 +45,56 @@ function SingleHarness({ initial = null }: { initial?: string | null }) {
 }
 
 describe("Combobox", () => {
+  /*
+   * A value that arrived from the server, whose row the *current* search no
+   * longer returns.
+   *
+   * This is the ordinary state of any server-backed field: the saved city on
+   * a profile is in the first page of results, and the moment anyone types
+   * something that does not match it, it is not. The field then rendered the
+   * raw value -- a live profile showed `bc94d2ff-a158-4ca3-...` where
+   * "London" belonged.
+   */
+  it("never falls back to showing a raw id once it has seen the label", async () => {
+    const user = userEvent.setup();
+    render(<SingleHarness initial="u1" />);
+
+    await waitFor(() => expect(screen.getByLabelText("Person")).toHaveValue("Ada Lovelace"));
+
+    // The server answers a search with a page that excludes the chosen row.
+    await user.click(screen.getByText("drop options"));
+    await user.click(screen.getByLabelText("Person"));
+    await user.keyboard("zzz");
+    await user.tab();
+
+    await waitFor(() => expect(screen.getByLabelText("Person")).toHaveValue("Ada Lovelace"));
+    expect(screen.getByLabelText("Person")).not.toHaveValue("u1");
+  });
+
+  it("tells the caller to drop its search filter when the field is left", async () => {
+    const user = userEvent.setup();
+    const onSearch = vi.fn();
+    render(
+      <Combobox
+        aria-label="Person"
+        value={null}
+        onValueChange={() => undefined}
+        options={PEOPLE}
+        onSearch={onSearch}
+      />,
+    );
+
+    await user.click(screen.getByLabelText("Person"));
+    await user.keyboard("Ada");
+    expect(onSearch).toHaveBeenCalledWith("Ada");
+
+    onSearch.mockClear();
+    await user.tab();
+    // Otherwise the caller's list stays filtered by a term nobody can see,
+    // and the next read of the field cannot find its own value in it.
+    expect(onSearch).toHaveBeenCalledWith("");
+  });
+
   it("renders the chosen option's label, not its id", async () => {
     const user = userEvent.setup();
     render(<SingleHarness />);
@@ -53,10 +103,15 @@ describe("Combobox", () => {
     await user.click(await screen.findByText("Ada Lovelace"));
 
     expect(screen.getByTestId("value")).toHaveTextContent("u1");
-    // The label survives as the input's own display text.
-    await waitFor(() =>
-      expect(screen.getByLabelText("Person")).toHaveAttribute("placeholder", "Ada Lovelace"),
-    );
+    /*
+     * The label is the input's *value*, not its placeholder.
+     *
+     * This assertion used to read `toHaveAttribute("placeholder", ...)`, which
+     * passed while the control showed its selection in placeholder styling --
+     * so an answered field looked unanswered. Asserting the value is what
+     * distinguishes "this field has an answer" from "this field is empty".
+     */
+    await waitFor(() => expect(screen.getByLabelText("Person")).toHaveValue("Ada Lovelace"));
   });
 
   it("keeps showing the label after the options list no longer contains it", async () => {
@@ -70,9 +125,7 @@ describe("Combobox", () => {
     await user.click(screen.getByText("drop options"));
 
     // Without the label cache this reads "u1".
-    await waitFor(() =>
-      expect(screen.getByLabelText("Person")).toHaveAttribute("placeholder", "Ada Lovelace"),
-    );
+    await waitFor(() => expect(screen.getByLabelText("Person")).toHaveValue("Ada Lovelace"));
   });
 
   it("reports the option alongside the value so callers need no second lookup", async () => {

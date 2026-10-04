@@ -142,6 +142,7 @@ export default function TeamPage() {
               </label>
             </div>
             <DataTable
+              columnsKey="team"
               columns={columns}
               rows={rows}
               rowKey={(m) => m.public_id}

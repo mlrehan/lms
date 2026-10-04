@@ -545,6 +545,7 @@ function AttemptsTab({ quiz }: { quiz: QuizResponse }) {
       ) : (
         <>
           <DataTable
+              columnsKey="quiz-attempts"
             columns={columns}
             rows={data?.items ?? []}
             rowKey={(row) => row.public_id}

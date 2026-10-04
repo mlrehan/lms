@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import {
   useTable,
   coreCellsFeature,
@@ -32,6 +33,7 @@ import { Skeleton } from "@/components/ui/primitives";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { TableColumnHeader, type SortState } from "@/components/ui/table-column-header";
 import { TableViewOptions, type ColumnToggle } from "@/components/ui/table-view-options";
+import { useTableView } from "@/components/ui/use-table-view";
 import { cn } from "@/lib/utils";
 
 export type { SortState } from "@/components/ui/table-column-header";
@@ -153,9 +155,31 @@ export interface DataTableProps<T> {
     hidden: readonly string[];
     onChange: (hidden: string[]) => void;
   };
+  /**
+   * Opt in to a "Columns" menu that remembers itself, by naming a storage key.
+   *
+   * The controlled `columnVisibility` prop above is the general form, but it
+   * needs state, a `ColumnToggle[]` and a toolbar to put the button in -- three
+   * things every page would write identically, which is why the capability
+   * went unused on all twenty-five tables. Naming a key does all of it, and
+   * `columnVisibility` still wins if a caller needs to drive it themselves.
+   */
+  columnsKey?: string;
+  /** With `columnsKey`: columns that may not be hidden. Defaults to the first. */
+  lockedColumns?: readonly string[];
+  /** With `columnsKey`: columns hidden until someone turns them on. */
+  initiallyHiddenColumns?: readonly string[];
+  /** Controls shown in the table's own toolbar, beside the Columns menu. */
+  toolbar?: ReactNode;
   /** Opt in to expandable rows. */
   expansion?: ExpansionOptions<T>;
-  /** Opt in to drag-to-resize column widths. */
+  /**
+   * Drag-to-resize column widths. **On by default**: a dense operational
+   * table whose columns cannot be widened is the first thing people complain
+   * about, and the handle is invisible until the header is hovered, so it
+   * costs nothing visually. Pass `false` for a narrow table where resizing
+   * would only let someone break the layout.
+   */
   resizable?: boolean;
   /** Column keys frozen to the left while the table scrolls sideways. */
   pinnedColumns?: readonly string[];
@@ -184,10 +208,24 @@ export function DataTable<T>({
   onRetry,
   selection,
   columnVisibility,
+  columnsKey,
+  lockedColumns,
+  initiallyHiddenColumns,
+  toolbar,
   expansion,
-  resizable = false,
+  resizable = true,
   pinnedColumns,
 }: DataTableProps<T>): ReactNode {
+  /*
+   * Called unconditionally -- a hook must be -- and inert without a key, so a
+   * table that did not ask for the menu reads no storage and registers no
+   * listener.
+   */
+  const ownView = useTableView(columnsKey, columns, {
+    locked: lockedColumns ?? (columns[0] ? [columns[0].key] : []),
+    initiallyHidden: initiallyHiddenColumns,
+  });
+  const visibilityState = columnVisibility ?? (columnsKey ? ownView.state : undefined);
   const pad = density === "compact" ? "px-3 py-1.5" : "px-4 py-2.5";
 
   /*
@@ -197,7 +235,7 @@ export function DataTable<T>({
    * console, of which there are twenty-seven.
    */
   const wantsSelection = !!selection;
-  const wantsVisibility = !!columnVisibility;
+  const wantsVisibility = !!visibilityState;
   const wantsExpansion = !!expansion;
   const wantsPinning = !!pinnedColumns;
 
@@ -211,7 +249,7 @@ export function DataTable<T>({
       coreTablesFeature,
       coreRowModel: createCoreRowModel(),
       ...(selection ? { rowSelectionFeature } : {}),
-      ...(columnVisibility ? { columnVisibilityFeature } : {}),
+      ...(visibilityState ? { columnVisibilityFeature } : {}),
       ...(expansion ? { rowExpandingFeature, expandedRowModel: createExpandedRowModel() } : {}),
       ...(resizable ? { columnResizingFeature, columnSizingFeature } : {}),
       ...(pinnedColumns ? { columnPinningFeature, columnSizingFeature } : {}),
@@ -240,7 +278,7 @@ export function DataTable<T>({
     [columns, features],
   );
 
-  const hidden = columnVisibility?.hidden ?? [];
+  const hidden = visibilityState?.hidden ?? [];
   const visibleColumns = useMemo(
     () => columns.filter((column) => column.alwaysVisible || !hidden.includes(column.key)),
     [columns, hidden],
@@ -258,9 +296,93 @@ export function DataTable<T>({
     columns: columnDefs,
     data: rows as unknown as Loose[],
     getRowId: (row) => rowKey(row as unknown as T),
+    // `onChange` so the column follows the pointer. The default (`onEnd`)
+    // leaves the header still until the mouse is released, which reads as a
+    // drag that is not working.
+    ...(resizable ? { columnResizeMode: "onChange" as const } : {}),
   });
 
   const modelRows = table.getRowModel().rows;
+
+  /*
+   * Column widths only mean anything under `table-layout: fixed`.
+   *
+   * Under the default `auto` layout a `width` on a `<th>` is a *suggestion*
+   * the browser is free to ignore, and it does: every column here rendered at
+   * its content width while the inline style said 150px, so dragging the
+   * handle updated TanStack's state and changed nothing on screen -- a resize
+   * handle that moved nothing.
+   *
+   * Switching every table to `fixed` unconditionally would be worse: it throws
+   * away the content-based widths that make these tables readable and replaces
+   * them with TanStack's uniform default. So the table stays `auto` until the
+   * pointer reaches the header, at which point the *current, measured* widths
+   * are handed to TanStack and the layout switches to `fixed`. Because the
+   * seeded widths are the ones already on screen, the switch is invisible --
+   * and from then on a drag moves a real column edge.
+   */
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [sized, setSized] = useState(false);
+
+  function beginResize(): void {
+    if (sized || !resizable || !tableRef.current) return;
+    const measured: Record<string, number> = {};
+    for (const cell of tableRef.current.querySelectorAll<HTMLElement>("thead th[data-column]")) {
+      const id = cell.dataset.column;
+      if (id) measured[id] = cell.getBoundingClientRect().width;
+    }
+    // A table that is laid out at zero width -- inside a closed tab panel, or
+    // a test environment with no layout engine -- would otherwise be pinned to
+    // a width of zero and never recover.
+    const total = Object.values(measured).reduce((sum, width) => sum + width, 0);
+    if (total <= 0) return;
+    /*
+     * `flushSync`, because the very next statement is TanStack's own
+     * mousedown handler and it reads the column's current width to anchor the
+     * drag against. Left to React's normal batching that read would still see
+     * the default width, so the column would snap to it before following the
+     * pointer.
+     *
+     * Seeding on hover instead would avoid this, and was tried: a pointer
+     * already resting on the header when the table mounts never fires an
+     * enter event, so the first drag after a reload silently did nothing.
+     */
+    flushSync(() => {
+      table.setColumnSizing(measured);
+      setSized(true);
+    });
+  }
+
+  /*
+   * Headers by column id, so the declarative render below can ask TanStack for
+   * a column's current width and its drag handler. Only built when resizing is
+   * on: `getHeaderGroups()` is work no other table needs to pay for.
+   */
+  const headerById = useMemo(() => {
+    if (!resizable) return new Map<string, ReturnType<typeof table.getHeaderGroups>[number]["headers"][number]>();
+    const map = new Map<string, ReturnType<typeof table.getHeaderGroups>[number]["headers"][number]>();
+    for (const group of table.getHeaderGroups()) {
+      for (const header of group.headers) map.set(header.column.id, header);
+    }
+    return map;
+  }, [resizable, table]);
+
+  /*
+   * The table's width is the sum of the columns it is actually showing.
+   *
+   * Not `table.getTotalSize()`: this component does its own column filtering
+   * rather than handing the visibility state to TanStack, so the instance
+   * still counts a hidden column at its default width. Using it made the table
+   * exactly 150px wider than its contents the moment one column was hidden --
+   * which read as the table jumping sideways when the header was hovered.
+   */
+  // Computed on every render rather than memoised: it changes on each frame of
+  // a drag, and a memo would need the sizing state as a dependency, which this
+  // table instance does not expose.
+  let sizedWidth = 0;
+  if (sized) {
+    for (const column of visibleColumns) sizedWidth += headerById.get(column.key)?.getSize() ?? 0;
+  }
 
   const selectable = useMemo(() => {
     if (!selection) return [] as string[];
@@ -317,6 +439,13 @@ export function DataTable<T>({
 
   return (
     <div className="w-full">
+      {columnsKey || toolbar ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border-subtle px-3 py-2">
+          {toolbar}
+          {columnsKey ? <TableViewOptions {...ownView.options} /> : null}
+        </div>
+      ) : null}
+
       {selection && selection.selected.length > 0 ? (
         <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle bg-accent/50 px-3 py-2 text-2xs">
           <span className="font-medium text-accent-foreground tabular-nums">
@@ -340,6 +469,34 @@ export function DataTable<T>({
         style={maxHeight ? { maxHeight } : undefined}
       >
         <table
+          ref={tableRef}
+          style={
+            sized
+              ? {
+                  tableLayout: "fixed",
+                  /*
+                   * The table is exactly as wide as its columns, and `w-full`
+                   * / `min-w-full` are overridden to keep it that way.
+                   *
+                   * Leaving the table at 100% looks harmless and is not: with
+                   * `fixed` layout the browser shares any difference between
+                   * the column total and the table width across every column,
+                   * so dragging one edge 150px moved it 519px and shrank its
+                   * neighbours. A drag that does not track the pointer is
+                   * worse than one that does nothing, because the person can
+                   * see it responding and still cannot land a width.
+                   *
+                   * The cost is that shrinking columns below the container
+                   * leaves space to the right of the table rather than
+                   * stretching them back. That is the usual behaviour for a
+                   * resizable table, and it is the price of the drag being
+                   * exact.
+                   */
+                  width: `${sizedWidth}px`,
+                  minWidth: 0,
+                }
+              : undefined
+          }
           className={cn(
             "w-full min-w-full border-separate border-spacing-0",
             density === "compact" ? "text-[13px]" : "text-sm",
@@ -367,10 +524,17 @@ export function DataTable<T>({
               {visibleColumns.map((column) => {
                 const key = column.sortKey ?? column.key;
                 const active = sort?.key === key;
+                // TanStack owns the width once resizing is on, so the drag and
+                // the rendered column cannot disagree.
+                const header = resizable ? headerById.get(column.key) : undefined;
+                // Before the hand-over the column keeps whatever width it was
+                // given -- usually none, so the browser sizes it to content.
+                const width = header && sized ? `${header.getSize()}px` : column.width;
                 return (
                   <th
                     key={column.key}
                     scope="col"
+                    data-column={column.key}
                     aria-sort={
                       column.sortable
                         ? active
@@ -380,7 +544,7 @@ export function DataTable<T>({
                           : "none"
                         : undefined
                     }
-                    style={column.width ? { width: column.width } : undefined}
+                    style={width ? { width } : undefined}
                     className={cn(
                       "group/th",
                       headCell,
@@ -399,6 +563,39 @@ export function DataTable<T>({
                     ) : (
                       column.header
                     )}
+                    {header ? (
+                      /*
+                       * The drag handle. `touch-none` matters: without it the
+                       * browser claims the gesture for scrolling and a drag on
+                       * a touch screen never reaches the handler.
+                       */
+                      <span
+                        // Hidden from assistive tech on purpose. It is a
+                        // pointer-only affordance with no keyboard path, so
+                        // exposing it buys a screen-reader user nothing — and
+                        // as a labelled child it polluted the column header's
+                        // own accessible name ("Role Resize Role") on every
+                        // table. Keyboard resizing is a real gap, recorded
+                        // rather than papered over.
+                        aria-hidden
+                        data-testid={`resize-${column.key}`}
+                        onMouseDown={(event) => {
+                          beginResize();
+                          header.getResizeHandler()(event);
+                        }}
+                        onTouchStart={(event) => {
+                          beginResize();
+                          header.getResizeHandler()(event);
+                        }}
+                        onDoubleClick={() => header.column.resetSize()}
+                        className={cn(
+                          "absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none select-none",
+                          "opacity-0 transition-opacity duration-150 group-hover/th:opacity-100",
+                          "after:absolute after:inset-y-1 after:right-0.5 after:w-px after:bg-border-strong",
+                          header.column.getIsResizing() && "opacity-100 after:bg-primary after:w-0.5",
+                        )}
+                      />
+                    ) : null}
                   </th>
                 );
               })}

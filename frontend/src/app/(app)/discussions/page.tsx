@@ -5,11 +5,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Lock, MessagesSquare, Pin, Plus } from "lucide-react";
 import { api } from "@/lib/api/client";
-import type { DiscussionResponse, PageCourseSummary, PageDiscussionResponse } from "@/lib/api/types";
+import type { DiscussionResponse, PageDiscussionResponse } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -18,6 +17,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale } from "@/lib/preferences";
 import { formatRelative } from "@/lib/format/datetime";
+import { CoursePicker } from "@/components/domain/entity-pickers";
 
 function NewDiscussionDialog({
   open,
@@ -26,17 +26,9 @@ function NewDiscussionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { permissions } = useSession();
   const [courseId, setCourseId] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: open && permissions.has("course.read"),
-    staleTime: 60_000,
-  });
 
   const create = useApiMutation<DiscussionResponse, void>({
     mutationFn: () =>
@@ -62,11 +54,7 @@ function NewDiscussionDialog({
         <div className="space-y-4">
           <Field label="Course" required>
             {({ id }) => (
-              <Select
-                id={id}
-                value={(courseId) || null}
-                onValueChange={(next) => setCourseId((next ?? ""))}
-               placeholder="Choose a course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+              <CoursePicker id={id} value={(courseId) || null} onValueChange={(next) => setCourseId((next ?? ""))} placeholder="Choose a course" clearable />
             )}
           </Field>
           <Field label="Title" required>
@@ -104,13 +92,6 @@ export default function DiscussionsPage() {
   const [courseId, setCourseId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
 
-  const courses = useQuery({
-    queryKey: ["courses", "picker"],
-    queryFn: () => api.get<PageCourseSummary>("/courses", { query: { limit: 200 } }),
-    enabled: permissions.has("course.read"),
-    staleTime: 60_000,
-  });
-
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["discussions", "list", courseId, debouncedSearch, limit, offset],
     queryFn: () =>
@@ -145,16 +126,10 @@ export default function DiscussionsPage() {
                 placeholder="Search discussions"
                 aria-label="Search discussions"
               />
-              <Select
-                className="w-56"
-                aria-label="Filter by course"
-                value={(courseId) || null}
-                disabled={!permissions.has("course.read")}
-                onValueChange={(next) => {
+              <CoursePicker className="w-56" ariaLabel="Filter by course" value={(courseId) || null} disabled={!permissions.has("course.read")} onValueChange={(next) => {
                   setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
-                }}
-               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
+                }} placeholder="Every course" clearable />
             </div>
           }
         />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,8 +13,9 @@ import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, Switch } from "@/components/ui/primitives";
 import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
-import { FormSelect } from "@/components/ui/form-controls";
-import { Select, optionsFromValues } from "@/components/ui/select";
+import { optionsFromValues } from "@/components/ui/select";
+import { FormCombobox, FormSelect } from "@/components/ui/form-controls";
+import { Combobox, useDebounced } from "@/components/ui/combobox";
 import { AvatarUploader } from "@/components/domain/avatar-uploader";
 import { CURRENT_USER_KEY } from "@/lib/auth/session";
 
@@ -151,15 +152,26 @@ export function ProfileForm({
     staleTime: 24 * 60 * 60 * 1000,
   });
 
-  const { data: cities } = useQuery({
-    queryKey: ["geo", "cities", countryId],
+  /*
+   * Cities are searched on the server, not pulled into the browser.
+   * `/geo/countries/{id}/cities` has always taken a `query`, and the previous
+   * version asked for `limit: 500` and filtered nothing: a country with more
+   * cities than that simply could not offer the rest, and the ones it did
+   * offer were an unsearchable list of five hundred items.
+   */
+  const [citySearch, setCitySearch] = useState("");
+  const debouncedCity = useDebounced(citySearch, 300);
+
+  const citiesQuery = useQuery({
+    queryKey: ["geo", "cities", countryId, debouncedCity],
     queryFn: () =>
       api.get<PageCitySummary>(`/geo/countries/${segment(countryId)}/cities`, {
-        query: { limit: 500 },
+        query: { query: debouncedCity || undefined, limit: 50 },
       }),
     enabled: Boolean(countryId),
     staleTime: 60 * 60 * 1000,
   });
+  const cities = citiesQuery.data;
 
   const save = useApiMutation<UserResponse, ProfileValues>({
     mutationFn: (values) => {
@@ -248,7 +260,7 @@ export function ProfileForm({
             </Field>
             <Field label="Gender">
               {({ id }) => (
-                <FormSelect id={id} disabled={disabled}  control={control} name="gender" placeholder="Not stated" clearable options={GendersValues.map((value) => ({ value: value, label: value }))} />
+                <FormSelect id={id} disabled={disabled}  control={control} name="gender" placeholder="Not stated" clearable options={optionsFromValues(GendersValues)} />
               )}
             </Field>
             <Field label="First name" error={errors.first_name?.message}>
@@ -268,7 +280,20 @@ export function ProfileForm({
               error={errors.timezone?.message}
             >
               {({ id }) => (
-                <Select id={id} disabled={disabled} value={(timezone) || null} onValueChange={(next) => setValue("timezone", (next ?? ""), { shouldDirty: true })} placeholder="Not set" clearable options={optionsFromValues(zones)} />
+                <Combobox
+                  id={id}
+                  disabled={disabled}
+                  value={timezone || null}
+                  placeholder="Search time zones"
+                  emptyMessage="No time zone matches that."
+                  onValueChange={(next) =>
+                    setValue("timezone", next ?? "", { shouldDirty: true })
+                  }
+                  // `Intl.supportedValuesOf` returns ~600 zones. They are a
+                  // local array, so this filters in the browser — but nobody
+                  // scrolls six hundred items to find "Europe/London".
+                  options={zones.map((zone) => ({ value: zone, label: zone }))}
+                />
               )}
             </Field>
           </FormGrid>
@@ -287,23 +312,47 @@ export function ProfileForm({
             </Field>
             <Field label="Country">
               {({ id }) => (
-                <Select
+                <Combobox
                   id={id}
                   disabled={disabled}
-                  value={(countryId) || null}
+                  value={countryId || null}
+                  placeholder="Search countries"
+                  emptyMessage="No country matches that."
                   onValueChange={(next) => {
-                    setValue("country_id", (next ?? ""), { shouldDirty: true });
+                    setValue("country_id", next ?? "", { shouldDirty: true });
                     // A city from the previous country would fail the API's own
                     // consistency check; clearing it means the form cannot
                     // submit a pair that is knowably wrong.
                     setValue("city_id", "", { shouldDirty: true });
+                    setCitySearch("");
                   }}
-                 placeholder="Not stated" clearable options={(countries ?? []).map((country) => ({ value: country.public_id, label: country.name }))} />
+                  // ~200 countries, fetched once and cached for a day, so this
+                  // one filters locally. Cities do not: see the query above.
+                  options={(countries ?? []).map((country) => ({
+                    value: country.public_id,
+                    label: country.name,
+                  }))}
+                />
               )}
             </Field>
             <Field label="City" error={errors.city_id?.message} hint={!countryId ? "Choose a country first." : undefined}>
               {({ id }) => (
-                <FormSelect id={id} disabled={disabled || !countryId}  control={control} name="city_id" placeholder="Not stated" clearable options={(cities?.items ?? []).map((city) => ({ value: city.public_id, label: city.name }))} />
+                <FormCombobox
+                  id={id}
+                  control={control}
+                  name="city_id"
+                  disabled={disabled || !countryId}
+                  placeholder={countryId ? "Search cities" : "Choose a country first"}
+                  emptyMessage={debouncedCity ? "No city matches that." : "Type to search cities."}
+                  loading={citiesQuery.isFetching}
+                  error={citiesQuery.error ? "Could not search cities." : null}
+                  onRetry={() => void citiesQuery.refetch()}
+                  onSearch={setCitySearch}
+                  options={(cities?.items ?? []).map((city) => ({
+                    value: city.public_id,
+                    label: city.name,
+                  }))}
+                />
               )}
             </Field>
             <Field label="Address">

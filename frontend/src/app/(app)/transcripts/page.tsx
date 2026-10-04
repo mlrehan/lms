@@ -5,16 +5,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileCheck2, FileText, Lock } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
-import type {
-  GenerateTranscriptsResponse,
-  PageBatchSummary,
-  PageTranscriptResponse,
-  TranscriptResponse,
-} from "@/lib/api/types";
+import type { GenerateTranscriptsResponse, PageTranscriptResponse, TranscriptResponse } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -24,6 +18,7 @@ import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime } from "@/lib/format/datetime";
+import { BatchPicker } from "@/components/domain/entity-pickers";
 
 export default function TranscriptsPage() {
   const { permissions } = useSession();
@@ -32,13 +27,6 @@ export default function TranscriptsPage() {
   const [batchId, setBatchId] = useState("");
   const [studentId, setStudentId] = useState<string | null>(null);
   const [finalising, setFinalising] = useState<TranscriptResponse | null>(null);
-
-  const batches = useQuery({
-    queryKey: ["batches", "picker"],
-    queryFn: () => api.get<PageBatchSummary>("/batches", { query: { limit: 200 } }),
-    enabled: permissions.has("batch.read"),
-    staleTime: 60_000,
-  });
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["transcripts", "list", batchId, studentId, limit, offset],
@@ -178,15 +166,10 @@ export default function TranscriptsPage() {
         <div className="flex flex-wrap items-end gap-3 p-3">
           <Field label="Batch" className="w-80">
             {({ id }) => (
-              <Select
-                id={id}
-                value={(batchId) || null}
-                disabled={!permissions.has("batch.read")}
-                onValueChange={(next) => {
+              <BatchPicker id={id} value={(batchId) || null} disabled={!permissions.has("batch.read")} onValueChange={(next) => {
                   setBatchId((next ?? ""));
                   setPage({ limit, offset: 0 });
-                }}
-               placeholder="Every batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
+                }} placeholder="Every batch" clearable />
             )}
           </Field>
           <Field label="Student" className="w-72">
@@ -213,6 +196,7 @@ export default function TranscriptsPage() {
         ) : (
           <>
             <DataTable
+              columnsKey="transcripts"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(row) => row.public_id}

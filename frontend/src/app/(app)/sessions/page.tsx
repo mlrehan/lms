@@ -158,6 +158,7 @@ export default function TimetablePage() {
         ) : (
           <>
             <DataTable
+              columnsKey="sessions"
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(session) => session.public_id}
