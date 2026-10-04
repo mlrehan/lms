@@ -1,24 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, X } from "lucide-react";
 import { api } from "@/lib/api/client";
 import type { PageUserSummary, UserSummary } from "@/lib/api/types";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog";
+import { Combobox, useDebounced } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/form";
-import { InlineSpinner } from "@/components/ui/states";
+import type { SelectOption } from "@/components/ui/select";
 import { useSession } from "@/lib/auth/session";
-import { cn } from "@/lib/utils";
 
 /**
  * Pick a person by name instead of pasting a UUID.
  *
  * `GET /users` supports a server-side `query` and a `role` filter, so this
  * searches the institution rather than filtering a page of results that were
- * already fetched -- the difference between finding someone in a roster of
+ * already fetched — the difference between finding someone in a roster of
  * 10,000 and finding them only if they happened to be in the first 25.
+ *
+ * **Now the console's `Combobox` rather than a bespoke dialog.** The dialog
+ * worked, but it was a second selection idiom: it opened a modal to choose a
+ * value, which is not what any other field in the console does, and it carried
+ * its own debounce, its own loading state and its own "remember the chosen
+ * label" logic. All three now live in one place, so the async-search behaviour
+ * is identical here, in the tenant picker and in anything added later.
  *
  * A caller without `user.read` cannot search at all. Rather than showing an
  * empty picker that looks broken, it degrades to a plain identifier field,
@@ -28,9 +32,8 @@ export function UserPicker({
   value,
   onChange,
   role,
-  placeholder = "Select a person",
+  placeholder = "Search by name, username or email",
   disabled,
-  allowClear = true,
   id,
 }: {
   value: string | null;
@@ -39,57 +42,69 @@ export function UserPicker({
   role?: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Kept for callers that still pass it; clearing is always offered. */
   allowClear?: boolean;
   id?: string;
 }): ReactNode {
   const { permissions } = useSession();
   const canSearch = permissions.has("user.read");
-  const [open, setOpen] = useState(false);
+
   const [term, setTerm] = useState("");
-  const [debounced, setDebounced] = useState("");
-  const [selected, setSelected] = useState<UserSummary | null>(null);
+  const debounced = useDebounced(term, 300);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(term.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [term]);
-
-  // Forget the remembered label when the caller clears the field from
-  // outside. Done during render rather than in an effect so the stale name is
-  // never painted after the value has already gone.
-  const [lastValue, setLastValue] = useState(value);
-  if (lastValue !== value) {
-    setLastValue(value);
-    if (!value) setSelected(null);
-  }
-
-  const { data, isFetching } = useQuery({
+  const search = useQuery({
     queryKey: ["users", "picker", debounced, role ?? null],
     queryFn: () =>
       api.get<PageUserSummary>("/users", {
         query: { query: debounced || undefined, role, limit: 20, status: "ACTIVE" },
       }),
-    enabled: open && canSearch,
+    enabled: canSearch,
     staleTime: 20_000,
   });
 
-  // A value that arrived from outside (a default tutor, an existing session) has no remembered name, so it is
-  // looked up. Showing the raw id there would put a UUID where a person's name belongs.
-  const needsLookup = canSearch && !!value && (!selected || selected.public_id !== value);
+  /*
+   * A value that arrived from outside — a default tutor, an existing session —
+   * has no label yet, so it is looked up once. Without this the field shows a
+   * UUID where a person's name belongs, which is the whole reason this control
+   * exists.
+   */
   const known = useQuery({
     queryKey: ["users", "label", value],
     queryFn: () => api.get<UserSummary>(`/users/${value}`),
-    enabled: needsLookup,
+    enabled: canSearch && !!value,
     staleTime: 5 * 60_000,
   });
 
-  // The selected person's name may not be in the current result page, so it
-  // is remembered from the moment of selection rather than looked up again.
-  const label = useMemo(() => {
-    if (selected && selected.public_id === value) return selected.full_name || selected.username;
-    if (value) return known.data ? known.data.full_name || known.data.username : "Loading…";
-    return null;
-  }, [selected, value, known.data]);
+  // Built inside the memo, not mutated after it: a render may be discarded or
+  // replayed, so accumulating into a memoised object during render is exactly
+  // the unsoundness the React Compiler rejects.
+  const byId = useMemo(() => {
+    const map = new Map<string, UserSummary>();
+    for (const person of search.data?.items ?? []) map.set(person.public_id, person);
+    if (known.data) map.set(known.data.public_id, known.data);
+    return map;
+  }, [search.data, known.data]);
+
+  const options = useMemo<SelectOption[]>(() => {
+    const items = search.data?.items ?? [];
+    const list = items.map((person) => ({
+      value: person.public_id,
+      label: person.full_name || person.username,
+      description: person.email ? `${person.username} · ${person.email}` : person.username,
+    }));
+    // The selected person is kept in the list even when the current search
+    // does not return them, so the combobox can always name its own value.
+    if (known.data && !items.some((person) => person.public_id === known.data!.public_id)) {
+      list.unshift({
+        value: known.data.public_id,
+        label: known.data.full_name || known.data.username,
+        description: known.data.email
+          ? `${known.data.username} · ${known.data.email}`
+          : known.data.username,
+      });
+    }
+    return list;
+  }, [search.data, known.data]);
 
   if (!canSearch) {
     return (
@@ -99,97 +114,24 @@ export function UserPicker({
         disabled={disabled}
         placeholder="User identifier"
         onChange={(event) => onChange(event.target.value || null, null)}
-        aria-describedby={id ? `${id}-no-search` : undefined}
       />
     );
   }
 
   return (
-    <>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          id={id}
-          disabled={disabled}
-          onClick={() => setOpen(true)}
-          className={cn(
-            "flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border-strong bg-surface px-3 text-left text-sm",
-            "disabled:cursor-not-allowed disabled:opacity-60",
-            !label && "text-muted-foreground",
-          )}
-        >
-          <span className="truncate">{label ?? placeholder}</span>
-          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-        </button>
-        {allowClear && value ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Clear selection"
-            onClick={() => {
-              setSelected(null);
-              onChange(null, null);
-            }}
-          >
-            <X />
-          </Button>
-        ) : null}
-      </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent size="md">
-          <DialogHeader
-            title="Select a person"
-            description={role ? `Only accounts holding the ${role} role are listed.` : undefined}
-          />
-          <Input
-            autoFocus
-            value={term}
-            onChange={(event) => setTerm(event.target.value)}
-            placeholder="Search by name, username or email"
-            aria-label="Search people"
-          />
-          <div className="mt-3 max-h-80 overflow-y-auto scrollbar-thin rounded-lg border border-border-subtle">
-            {isFetching && !data ? (
-              <div className="flex justify-center p-6">
-                <InlineSpinner />
-              </div>
-            ) : (data?.items.length ?? 0) === 0 ? (
-              <p className="p-6 text-center text-sm text-muted-foreground">No matching accounts.</p>
-            ) : (
-              <ul>
-                {data?.items.map((person) => (
-                  <li key={person.public_id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelected(person);
-                        onChange(person.public_id, person);
-                        setOpen(false);
-                      }}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">
-                          {person.full_name || person.username}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {person.username}
-                          {person.email ? ` · ${person.email}` : ""}
-                        </span>
-                      </span>
-                      {person.public_id === value ? (
-                        <Check className="size-4 shrink-0 text-primary" />
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+    <Combobox
+      id={id}
+      value={value}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={role ? `Search ${role.toLowerCase()} accounts` : "Search people"}
+      emptyMessage="No matching accounts."
+      options={options}
+      loading={search.isFetching}
+      error={search.error ? "Could not search accounts." : null}
+      onRetry={() => void search.refetch()}
+      onSearch={setTerm}
+      onValueChange={(next) => onChange(next, next ? (byId.get(next) ?? null) : null)}
+    />
   );
 }

@@ -22,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, CardHeader, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog, useConfirm } from "@/components/confirm-dialog";
-import { Input, NativeSelect } from "@/components/ui/form";
+import { Input } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -45,18 +46,18 @@ function Summary() {
         <label htmlFor="window" className="text-sm text-muted-foreground">
           Window
         </label>
-        <NativeSelect
+        <Select
           id="window"
           className="w-auto"
-          value={hours}
-          onChange={(event) => setHours(Number(event.target.value))}
-        >
-          {[1, 6, 24, 72, 168].map((value) => (
-            <option key={value} value={value}>
-              Last {value} hour{value === 1 ? "" : "s"}
-            </option>
-          ))}
-        </NativeSelect>
+          // The control's values are strings; the state is a number, so the
+          // conversion happens here rather than leaking `"24"` into the query.
+          value={String(hours)}
+          onValueChange={(next) => setHours(Number(next ?? hours))}
+          options={[1, 6, 24, 72, 168].map((value) => ({
+            value: String(value),
+            label: `Last ${value} hour${value === 1 ? "" : "s"}`,
+          }))}
+        />
       </div>
 
       <StatGrid>

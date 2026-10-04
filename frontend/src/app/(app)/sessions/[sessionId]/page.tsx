@@ -22,7 +22,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { ClassRecording } from "@/components/domain/sessions/class-recording";
 import { ClassPerformanceSheet } from "@/components/domain/sessions/class-performance-sheet";
-import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -386,17 +387,11 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               </Field>
               <Field label="Platform">
                 {({ id }) => (
-                  <NativeSelect
+                  <Select
                     id={id}
                     value={draft.platform}
-                    onChange={(event) => setDraft({ ...draft, platform: event.target.value })}
-                  >
-                    {PlatformsValues.map((platform) => (
-                      <option key={platform} value={platform}>
-                        {humanise(platform)}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                    onValueChange={(next) => setDraft({ ...draft, platform: (next ?? "") })}
+                   options={optionsFromValues(PlatformsValues, humanise)} />
                 )}
               </Field>
               <Field label="Classroom">

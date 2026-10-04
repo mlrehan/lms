@@ -11,7 +11,8 @@ import type { BatchResponse, PageBatchSummary, PageCourseSummary } from "@/lib/a
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Combobox } from "@/components/ui/combobox";
 import { humanise } from "@/lib/utils";
 
 const schema = z.object({
@@ -125,15 +126,20 @@ export function NewBatchDialog({ onCreated }: { onCreated?: (batch: BatchRespons
             ) : null}
             <Field label="Course" error={errors.course_id?.message} required hint={courses.isError ? "The course list could not be loaded." : undefined}>
               {({ id }) => (
-                <NativeSelect id={id} value={courseId} disabled={courses.isPending} onChange={(event) => void chooseCourse(event.target.value)}>
-                  <option value="">{courses.isPending ? "Loading courses…" : "Choose a course"}</option>
-                  {(courses.data?.items ?? []).map((c) => (
-                    <option key={c.public_id} value={c.public_id}>
-                      {c.title}
-                      {c.code ? ` (${c.code})` : ""} · {humanise(c.status)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <Combobox
+                  id={id}
+                  value={courseId || null}
+                  disabled={courses.isPending}
+                  loading={courses.isPending}
+                  placeholder={courses.isPending ? "Loading courses…" : "Choose a course"}
+                  emptyMessage="No courses match."
+                  onValueChange={(next) => void chooseCourse(next ?? "")}
+                  options={(courses.data?.items ?? []).map((c) => ({
+                    value: c.public_id,
+                    label: `${c.title}${c.code ? ` (${c.code})` : ""}`,
+                    description: humanise(c.status),
+                  }))}
+                />
               )}
             </Field>
             {course && course.status !== "PUBLISHED" && course.status !== "RUNNING" ? (

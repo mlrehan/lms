@@ -35,7 +35,8 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { BooleanBadge, StatusBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -498,19 +499,13 @@ export default function CourseDetailPage({ params }: { params: Promise<{ courseI
               </a>
             ) : null}
             {canPublish ? (
-              <NativeSelect
+              <Select
                 aria-label="Course status"
                 className="w-auto"
                 value={data.status}
                 disabled={setStatus.isPending}
-                onChange={(event) => setStatus.mutate(event.target.value)}
-              >
-                {CourseStatusValues.map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onValueChange={(next) => setStatus.mutate((next ?? ""))}
+               options={optionsFromValues(CourseStatusValues, humanise)} />
             ) : null}
             {permissions.has("course.delete") ? (
               <Button variant="ghost" size="icon" aria-label="Delete course" onClick={() => setConfirmDelete(true)}>

@@ -6,6 +6,7 @@ import { Activity, Database, Gauge, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   Badge,
   Card,
@@ -353,18 +354,16 @@ function DatabasePanel() {
               <label className="text-xs text-muted-foreground" htmlFor="ops-limit">
                 Show
               </label>
-              <select
+              <Select
                 id="ops-limit"
-                className="h-8 rounded-md border border-border-strong bg-surface px-2 text-xs"
-                value={limit}
-                onChange={(event) => setLimit(Number(event.target.value))}
-              >
-                {[10, 15, 25, 50].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+                className="h-8 w-20 px-2 text-xs"
+                value={String(limit)}
+                onValueChange={(next) => setLimit(Number(next ?? limit))}
+                options={[10, 15, 25, 50].map((value) => ({
+                  value: String(value),
+                  label: String(value),
+                }))}
+              />
               <Button variant="ghost" size="sm" loading={isFetching} onClick={() => void refetch()}>
                 <RefreshCw />
               </Button>

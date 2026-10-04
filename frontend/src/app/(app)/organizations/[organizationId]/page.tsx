@@ -30,7 +30,8 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input} from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { UserPicker } from "@/components/domain/user-picker";
@@ -291,21 +292,14 @@ function Members({ organization }: { organization: OrganizationResponse }) {
       align: "right",
       cell: (row) =>
         permissions.has("organization.invite") ? (
-          <NativeSelect
+          <Select
             className="ml-auto w-auto"
             aria-label={`Status for ${row.username}`}
             value={row.status}
             disabled={setStatusMutation.isPending}
-            onChange={(event) =>
-              setStatusMutation.mutate({ membershipId: row.public_id, status: event.target.value })
+            onValueChange={(next) => setStatusMutation.mutate({ membershipId: row.public_id, status: (next ?? "") })
             }
-          >
-            {OrganizationMembershipStatusValues.map((value) => (
-              <option key={value} value={value}>
-                {humanise(value)}
-              </option>
-            ))}
-          </NativeSelect>
+           options={optionsFromValues(OrganizationMembershipStatusValues, humanise)} />
         ) : null,
     },
   ];
@@ -317,22 +311,15 @@ function Members({ organization }: { organization: OrganizationResponse }) {
         description="A REMOVED membership is kept rather than deleted: historical enrollments must still show who sponsored them."
         actions={
           <div className="flex items-center gap-2">
-            <NativeSelect
+            <Select
               className="w-auto"
               aria-label="Filter by status"
-              value={status}
-              onChange={(event) => {
-                setStatus(event.target.value);
+              value={(status) || null}
+              onValueChange={(next) => {
+                setStatus((next ?? ""));
                 setPage({ limit, offset: 0 });
               }}
-            >
-              <option value="">Any status</option>
-              {OrganizationMembershipStatusValues.map((value) => (
-                <option key={value} value={value}>
-                  {humanise(value)}
-                </option>
-              ))}
-            </NativeSelect>
+             placeholder="Any status" clearable options={optionsFromValues(OrganizationMembershipStatusValues, humanise)} />
             {permissions.has("organization.invite") ? (
               <Button size="sm" onClick={() => setAdding(true)}>
                 <UserPlus /> Add employee

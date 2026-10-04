@@ -5,8 +5,9 @@ import { api } from "@/lib/api/client";
 import type { CategoryResponse, DepartmentResponse } from "@/lib/api/types";
 import { useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
 
 /**
  * "The category I want is not there" without leaving the course form.
@@ -65,14 +66,7 @@ export function AddCategoryDialog({
           </Field>
           <Field label="Parent category" hint="Optional. Leave empty for a top-level category.">
             {({ id }) => (
-              <NativeSelect id={id} value={parent} onChange={(e) => setParent(e.target.value)}>
-                <option value="">None (top level)</option>
-                {categories.map((c) => (
-                  <option key={c.public_id} value={c.public_id}>
-                    {c.name}
-                  </option>
-                ))}
-              </NativeSelect>
+              <Select id={id} value={(parent) || null} onValueChange={(next) => setParent((next ?? ""))} placeholder="None (top level)" clearable options={categories.map((c) => ({ value: c.public_id, label: c.name }))} />
             )}
           </Field>
           <DialogFooter>

@@ -9,7 +9,8 @@ import type { PlanResponse, ReplaceResponse } from "@/lib/api/types";
 import { PlatformsValues } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input} from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Badge } from "@/components/ui/primitives";
 import { InlineSpinner } from "@/components/ui/states";
 import { UserPicker } from "@/components/domain/user-picker";
@@ -338,14 +339,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
                 <Button type="button" variant="secondary" size="sm" disabled={!tutorForAll || rows.length === 0} onClick={() => { setRows((c) => c.map((r) => ({ ...r, tutorId: tutorForAll }))); setEdited(true); }}>
                   Apply
                 </Button>
-                <NativeSelect className="h-8 w-40" aria-label="Method for all sessions" value={platformForAll} onChange={(e) => { const p = e.target.value; setPlatformForAll(p); if (p) { setRows((c) => c.map((r) => ({ ...r, platform: p }))); setEdited(true); } }}>
-                  <option value="">Method for all…</option>
-                  {PlatformsValues.map((p) => (
-                    <option key={p} value={p}>
-                      {humanise(p)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <Select className="h-8 w-40" aria-label="Method for all sessions" value={(platformForAll) || null} onValueChange={(next) => { const p = (next ?? ""); setPlatformForAll(p); if (p) { setRows((c) => c.map((r) => ({ ...r, platform: p }))); setEdited(true); } }} placeholder="Method for all…" clearable options={optionsFromValues(PlatformsValues, humanise)} />
               </div>
             </div>
 
@@ -382,13 +376,7 @@ export function RecreateSessionsDialog({ batchId, batchCode, onClose }: { batchI
                           <UserPicker role="TUTOR" value={row.tutorId} onChange={(id) => patchRow(row.key, { tutorId: id })} placeholder="Choose a tutor" allowClear={false} />
                         </td>
                         <td className="px-2 py-1">
-                          <NativeSelect aria-label={`Session ${index + 1} method`} className="h-8" value={row.platform} onChange={(e) => patchRow(row.key, { platform: e.target.value })}>
-                            {PlatformsValues.map((p) => (
-                              <option key={p} value={p}>
-                                {humanise(p)}
-                              </option>
-                            ))}
-                          </NativeSelect>
+                          <Select aria-label={`Session ${index + 1} method`} className="h-8" value={row.platform} onValueChange={(next) => patchRow(row.key, { platform: (next ?? "") })} options={optionsFromValues(PlatformsValues, humanise)} />
                         </td>
                         <td className="px-2 py-1 text-right">
                           <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove session ${index + 1}`} onClick={() => { setRows((c) => c.filter((r) => r.key !== row.key)); setEdited(true); }}>

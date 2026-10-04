@@ -33,7 +33,8 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -119,21 +120,18 @@ function QuestionEditor({
           <FormGrid>
             <Field label="Type">
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
                   value={type}
-                  onChange={(event) => {
-                    const next = event.target.value as QuestionType;
-                    setType(next);
-                    if (next === "TRUE_FALSE") setTrueFalse();
+                  onValueChange={(value) => {
+                    // The question type is required, so a cleared value is
+                    // simply ignored rather than written back as null.
+                    if (!value) return;
+                    const chosen = value as QuestionType;
+                    setType(chosen);
+                    if (chosen === "TRUE_FALSE") setTrueFalse();
                   }}
-                >
-                  {QuestionTypeValues.map((value) => (
-                    <option key={value} value={value}>
-                      {humanise(value)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                 options={optionsFromValues(QuestionTypeValues, humanise)} />
               )}
             </Field>
             <Field label="Points">

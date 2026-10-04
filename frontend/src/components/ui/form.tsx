@@ -5,7 +5,6 @@ import {
   useId,
   type InputHTMLAttributes,
   type ReactNode,
-  type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
 import { cn } from "@/lib/utils";
@@ -20,7 +19,7 @@ import { cn } from "@/lib/utils";
  * is 3px and 18% opacity: unmistakable, without the "glowing" look that a
  * saturated ring gives.
  */
-const controlClasses = cn(
+export const controlClasses = cn(
   "w-full rounded-md border border-border-strong bg-surface px-2.5 py-2",
   "text-sm text-foreground placeholder:text-subtle-foreground",
   "shadow-xs transition-all duration-200 ease-out",
@@ -49,23 +48,6 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     );
   },
 );
-
-/**
- * A plain `<select>`, used wherever the options are a short static list.
- * The Base UI `Select` in `select.tsx` exists for the cases that need
- * searching, async options or rich item content; reaching for it for a
- * three-option enum buys nothing and loses native mobile behaviour.
- */
-export const NativeSelect = forwardRef<
-  HTMLSelectElement,
-  SelectHTMLAttributes<HTMLSelectElement>
->(function NativeSelect({ className, children, ...props }, ref) {
-  return (
-    <select ref={ref} className={cn(controlClasses, "h-9 cursor-pointer pr-8", className)} {...props}>
-      {children}
-    </select>
-  );
-});
 
 export interface FieldProps {
   label: ReactNode;

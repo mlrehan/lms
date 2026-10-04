@@ -10,7 +10,8 @@ import { AttendanceStatusValues } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { Card, CardHeader } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input} from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -111,21 +112,14 @@ export function AttendanceRecords() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Status" className="w-40">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value);
+                value={(status) || null}
+                onValueChange={(next) => {
+                  setStatus((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any status</option>
-                {AttendanceStatusValues.map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Any status" clearable options={optionsFromValues(AttendanceStatusValues, humanise)} />
             )}
           </Field>
           <Field label="Batch id" className="w-64">

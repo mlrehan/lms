@@ -14,6 +14,7 @@ import type {
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   Badge,
   Card,
@@ -27,7 +28,7 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormActions, Input, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
@@ -345,19 +346,15 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
               Publish results
             </Button>
           ) : null}
-          <NativeSelect
+          <Select
             className="w-auto"
             aria-label="Filter by grading state"
-            value={graded}
-            onChange={(event) => {
-              setGraded(event.target.value);
+            value={(graded) || null}
+            onValueChange={(next) => {
+              setGraded((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
-          >
-            <option value="">All submissions</option>
-            <option value="false">Awaiting grading</option>
-            <option value="true">Graded</option>
-          </NativeSelect>
+           placeholder="All submissions" clearable options={[{ value: "false", label: "Awaiting grading" }, { value: "true", label: "Graded" }]} />
           </span>
         }
       />

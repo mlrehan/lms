@@ -30,6 +30,7 @@ import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { GoogleCalendarPanel } from "@/components/domain/google-calendar-panel";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   Badge,
   Card,
@@ -44,7 +45,7 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, Input, Textarea } from "@/components/ui/form";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -173,22 +174,15 @@ function Deliveries({ webhook }: { webhook: WebhookEndpointResponse }) {
   return (
     <div className="border-t border-border-subtle">
       <div className="flex items-center gap-2 p-3">
-        <NativeSelect
+        <Select
           className="w-44"
           aria-label="Filter deliveries by status"
-          value={status}
-          onChange={(event) => {
-            setStatus(event.target.value);
+          value={(status) || null}
+          onValueChange={(next) => {
+            setStatus((next ?? ""));
             setPage({ limit, offset: 0 });
           }}
-        >
-          <option value="">Any status</option>
-          {["queued", "delivered", "failed", "retrying", "abandoned"].map((value) => (
-            <option key={value} value={value}>
-              {humanise(value)}
-            </option>
-          ))}
-        </NativeSelect>
+         placeholder="Any status" clearable options={["queued", "delivered", "failed", "retrying", "abandoned"].map((value) => ({ value: value, label: humanise(value) }))} />
       </div>
       {isPending ? (
         <LoadingState rows={3} />

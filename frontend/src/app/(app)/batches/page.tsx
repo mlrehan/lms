@@ -10,9 +10,10 @@ import type { BatchSummary, PageBatchSummary } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Badge, Card } from "@/components/ui/primitives";
+import { Select } from "@/components/ui/select";
 import { Column, DataTable, Pagination, type SortState } from "@/components/ui/data-table";
 import { TableToolbar } from "@/components/ui/table-toolbar";
-import { NativeSelect } from "@/components/ui/form";
+
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { BooleanBadge } from "@/components/domain/status-badge";
 import { LaitSyncControls } from "@/components/domain/lait-sync";
@@ -22,7 +23,6 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatCalendarDate, formatDateTime } from "@/lib/format/datetime";
 import { durationLabel, shortMethod } from "@/lib/format/batch";
-
 
 // FullCalendar measures the DOM, so it is drawn on the client only.
 const BatchCalendar = dynamic(() => import("@/components/domain/batch-calendar"), {
@@ -195,19 +195,15 @@ export default function BatchesPage() {
           }}
           searchPlaceholder="Search code, course, days or method"
           filters={
-            <NativeSelect
+            <Select
               className="h-8 w-auto text-[13px]"
               aria-label="Filter by state"
-              value={active}
-              onChange={(event) => {
-                setActive(event.target.value);
+              value={(active) || null}
+              onValueChange={(next) => {
+                setActive((next ?? ""));
                 setPage({ limit, offset: 0 });
               }}
-            >
-              <option value="">Any state</option>
-              <option value="true">Active only</option>
-              <option value="false">Closed only</option>
-            </NativeSelect>
+             placeholder="Any state" clearable options={[{ value: "true", label: "Active only" }, { value: "false", label: "Closed only" }]} />
           }
           summary={isFetching && !isPending ? "Updating…" : undefined}
         />

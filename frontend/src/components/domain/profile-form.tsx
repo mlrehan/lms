@@ -12,7 +12,9 @@ import { GendersValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, Switch } from "@/components/ui/primitives";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { FormSelect } from "@/components/ui/form-controls";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { AvatarUploader } from "@/components/domain/avatar-uploader";
 import { CURRENT_USER_KEY } from "@/lib/auth/session";
 
@@ -114,6 +116,7 @@ export function ProfileForm({
   const {
     register,
     handleSubmit,
+    control,
     reset,
     watch,
     setValue,
@@ -245,14 +248,7 @@ export function ProfileForm({
             </Field>
             <Field label="Gender">
               {({ id }) => (
-                <NativeSelect id={id} disabled={disabled} {...register("gender")}>
-                  <option value="">Not stated</option>
-                  {GendersValues.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id} disabled={disabled}  control={control} name="gender" placeholder="Not stated" clearable options={GendersValues.map((value) => ({ value: value, label: value }))} />
               )}
             </Field>
             <Field label="First name" error={errors.first_name?.message}>
@@ -272,14 +268,7 @@ export function ProfileForm({
               error={errors.timezone?.message}
             >
               {({ id }) => (
-                <NativeSelect id={id} disabled={disabled} value={timezone} onChange={(event) => setValue("timezone", event.target.value, { shouldDirty: true })}>
-                  <option value="">Not set</option>
-                  {zones.map((zone) => (
-                    <option key={zone} value={zone}>
-                      {zone}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <Select id={id} disabled={disabled} value={(timezone) || null} onValueChange={(next) => setValue("timezone", (next ?? ""), { shouldDirty: true })} placeholder="Not set" clearable options={optionsFromValues(zones)} />
               )}
             </Field>
           </FormGrid>
@@ -298,37 +287,23 @@ export function ProfileForm({
             </Field>
             <Field label="Country">
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
                   disabled={disabled}
-                  value={countryId}
-                  onChange={(event) => {
-                    setValue("country_id", event.target.value, { shouldDirty: true });
+                  value={(countryId) || null}
+                  onValueChange={(next) => {
+                    setValue("country_id", (next ?? ""), { shouldDirty: true });
                     // A city from the previous country would fail the API's own
                     // consistency check; clearing it means the form cannot
                     // submit a pair that is knowably wrong.
                     setValue("city_id", "", { shouldDirty: true });
                   }}
-                >
-                  <option value="">Not stated</option>
-                  {(countries ?? []).map((country) => (
-                    <option key={country.public_id} value={country.public_id}>
-                      {country.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                 placeholder="Not stated" clearable options={(countries ?? []).map((country) => ({ value: country.public_id, label: country.name }))} />
               )}
             </Field>
             <Field label="City" error={errors.city_id?.message} hint={!countryId ? "Choose a country first." : undefined}>
               {({ id }) => (
-                <NativeSelect id={id} disabled={disabled || !countryId} {...register("city_id")}>
-                  <option value="">Not stated</option>
-                  {(cities?.items ?? []).map((city) => (
-                    <option key={city.public_id} value={city.public_id}>
-                      {city.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id} disabled={disabled || !countryId}  control={control} name="city_id" placeholder="Not stated" clearable options={(cities?.items ?? []).map((city) => ({ value: city.public_id, label: city.name }))} />
               )}
             </Field>
             <Field label="Address">

@@ -18,7 +18,8 @@ import { Badge, Card, CardHeader, Switch } from "@/components/ui/primitives";
 import { Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -166,34 +167,20 @@ function AnnouncementDialog({
             <FormGrid>
               <Field label="Course" hint="Optional: narrow to one course.">
                 {({ id }) => (
-                  <NativeSelect
+                  <Select
                     id={id}
-                    value={draft.course_id}
-                    onChange={(event) => setDraft({ ...draft, course_id: event.target.value })}
-                  >
-                    <option value="">Everyone</option>
-                    {(courses.data?.items ?? []).map((course) => (
-                      <option key={course.public_id} value={course.public_id}>
-                        {course.title}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                    value={(draft.course_id) || null}
+                    onValueChange={(next) => setDraft({ ...draft, course_id: (next ?? "") })}
+                   placeholder="Everyone" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
                 )}
               </Field>
               <Field label="Batch" hint="Optional: narrow to one cohort.">
                 {({ id }) => (
-                  <NativeSelect
+                  <Select
                     id={id}
-                    value={draft.batch_id}
-                    onChange={(event) => setDraft({ ...draft, batch_id: event.target.value })}
-                  >
-                    <option value="">Everyone</option>
-                    {(batches.data?.items ?? []).map((batch) => (
-                      <option key={batch.public_id} value={batch.public_id}>
-                        {batch.batch_code}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                    value={(draft.batch_id) || null}
+                    onValueChange={(next) => setDraft({ ...draft, batch_id: (next ?? "") })}
+                   placeholder="Everyone" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
                 )}
               </Field>
             </FormGrid>
@@ -202,18 +189,11 @@ function AnnouncementDialog({
           <FormGrid columns={3}>
             <Field label="Role" hint="Optional: only this role sees it.">
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
-                  value={draft.role_scope}
-                  onChange={(event) => setDraft({ ...draft, role_scope: event.target.value })}
-                >
-                  <option value="">Every role</option>
-                  {RolesValues.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  value={(draft.role_scope) || null}
+                  onValueChange={(next) => setDraft({ ...draft, role_scope: (next ?? "") })}
+                 placeholder="Every role" clearable options={optionsFromValues(RolesValues)} />
               )}
             </Field>
             <Field label="Show from">

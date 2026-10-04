@@ -12,7 +12,8 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
-import { Input, NativeSelect } from "@/components/ui/form";
+import { Input } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { CreateUserDialog } from "@/components/domain/create-user-dialog";
@@ -120,38 +121,24 @@ export default function UsersPage() {
               className="pl-8"
             />
           </div>
-          <NativeSelect
-            value={status}
-            onChange={(event) => {
-              setStatus(event.target.value);
+          <Select
+            value={(status) || null}
+            onValueChange={(next) => {
+              setStatus((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
             aria-label="Filter by status"
             className="w-auto"
-          >
-            <option value="">Any status</option>
-            {UserStatusValues.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            value={role}
-            onChange={(event) => {
-              setRole(event.target.value);
+           placeholder="Any status" clearable options={optionsFromValues(UserStatusValues)} />
+          <Select
+            value={(role) || null}
+            onValueChange={(next) => {
+              setRole((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
             aria-label="Filter by role"
             className="w-auto"
-          >
-            <option value="">Any role</option>
-            {(roles ?? []).map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.name}
-              </option>
-            ))}
-          </NativeSelect>
+           placeholder="Any role" clearable options={(roles ?? []).map((item) => ({ value: item.name, label: item.name }))} />
         </div>
 
         {isPending ? (

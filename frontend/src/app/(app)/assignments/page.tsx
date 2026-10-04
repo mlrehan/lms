@@ -21,10 +21,12 @@ import { SubmissionTypeValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { FormCombobox, FormSelect } from "@/components/ui/form-controls";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
@@ -94,6 +96,7 @@ function CreateAssignmentDialog({
   const {
     register,
     handleSubmit,
+    control,
     reset,
     watch,
     setValue,
@@ -201,14 +204,17 @@ function CreateAssignmentDialog({
           ) : null}
           <Field label="Course" error={errors.course_id?.message} required>
             {({ id }) => (
-              <NativeSelect id={id} {...register("course_id")}>
-                <option value="">Choose a course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+              <FormCombobox
+                id={id}
+                control={control}
+                name="course_id"
+                placeholder="Choose a course"
+                emptyMessage="No courses match."
+                options={(courses.data?.items ?? []).map((course) => ({
+                  value: course.public_id,
+                  label: course.title,
+                }))}
+              />
             )}
           </Field>
           {/* §3's academic scope. Grouped and explained rather than left as a
@@ -221,27 +227,36 @@ function CreateAssignmentDialog({
             </legend>
             <Field label="Set for" error={errors.scope?.message}>
               {({ id }) => (
-                <NativeSelect id={id} {...register("scope")}>
-                  <option value="COURSE">Everyone on the course</option>
-                  <option value="BATCH">One batch</option>
-                  <option value="SESSION">One class</option>
-                </NativeSelect>
+                <FormSelect
+                  id={id}
+                  control={control}
+                  name="scope"
+                  options={[
+                    { value: "COURSE", label: "Everyone on the course" },
+                    { value: "BATCH", label: "One batch" },
+                    { value: "SESSION", label: "One class" },
+                  ]}
+                />
               )}
             </Field>
 
             {scope !== "COURSE" ? (
               <Field label="Batch" error={errors.batch_id?.message} required>
                 {({ id }) => (
-                  <NativeSelect id={id} {...register("batch_id")} disabled={!courseId}>
-                    <option value="">
-                      {courseId ? "Choose a batch" : "Choose a course first"}
-                    </option>
-                    {(batches.data?.items ?? []).map((b) => (
-                      <option key={b.public_id} value={b.public_id}>
-                        {b.batch_code}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect
+                    id={id}
+                    control={control}
+                    name="batch_id"
+                    disabled={!courseId}
+                    clearable
+                    // A dependent select: the placeholder states the
+                    // precondition rather than offering an empty list.
+                    placeholder={courseId ? "Choose a batch" : "Choose a course first"}
+                    options={(batches.data?.items ?? []).map((b) => ({
+                      value: b.public_id,
+                      label: b.batch_code,
+                    }))}
+                  />
                 )}
               </Field>
             ) : null}
@@ -249,16 +264,18 @@ function CreateAssignmentDialog({
             {scope === "SESSION" ? (
               <Field label="Class" error={errors.session_id?.message} required>
                 {({ id }) => (
-                  <NativeSelect id={id} {...register("session_id")} disabled={!batchId}>
-                    <option value="">
-                      {batchId ? "Choose a class" : "Choose a batch first"}
-                    </option>
-                    {(sessions.data?.items ?? []).map((sess) => (
-                      <option key={sess.public_id} value={sess.public_id}>
-                        {formatDateTime(sess.session_start_time, { timeZone })}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect
+                    id={id}
+                    control={control}
+                    name="session_id"
+                    disabled={!batchId}
+                    clearable
+                    placeholder={batchId ? "Choose a class" : "Choose a batch first"}
+                    options={(sessions.data?.items ?? []).map((sess) => ({
+                      value: sess.public_id,
+                      label: formatDateTime(sess.session_start_time, { timeZone }),
+                    }))}
+                  />
                 )}
               </Field>
             ) : null}
@@ -284,13 +301,7 @@ function CreateAssignmentDialog({
             </Field>
             <Field label="Submission type">
               {({ id }) => (
-                <NativeSelect id={id} {...register("submission_type")}>
-                  {SubmissionTypeValues.map((value) => (
-                    <option key={value} value={value}>
-                      {humanise(value)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id}  control={control} name="submission_type" options={SubmissionTypeValues.map((value) => ({ value: value, label: humanise(value) }))} />
               )}
             </Field>
           </FormGrid>
@@ -362,10 +373,7 @@ function CreateAssignmentDialog({
               nobody and accepts no submissions, which is the point of it. */}
           <Field label="On save">
             {({ id }) => (
-              <NativeSelect id={id} {...register("state")}>
-                <option value="PUBLISHED">Publish now — students are notified</option>
-                <option value="DRAFT">Save as draft — nobody is notified</option>
-              </NativeSelect>
+              <FormSelect id={id}  control={control} name="state" options={[{ value: "PUBLISHED", label: "Publish now — students are notified" }, { value: "DRAFT", label: "Save as draft — nobody is notified" }]} />
             )}
           </Field>
           <DialogFooter>
@@ -475,22 +483,15 @@ export default function AssignmentsPage() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Course" className="w-72">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={courseId}
+                value={(courseId) || null}
                 disabled={!permissions.has("course.read")}
-                onChange={(event) => {
-                  setCourseId(event.target.value);
+                onValueChange={(next) => {
+                  setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Every course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
             )}
           </Field>
         </div>

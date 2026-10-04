@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -177,24 +178,21 @@ export default function EnrollmentsPage() {
         <div className="flex items-center justify-end gap-1">
           {permissions.has("enrollment.update") ? (
             <>
-              <NativeSelect
+              <Select
                 className="w-auto"
                 aria-label={`Status for ${row.student_username ?? "student"}`}
                 value={row.status}
                 disabled={setEnrollmentStatus.isPending}
-                onChange={(event) =>
-                  setEnrollmentStatus.mutate({
-                    enrollmentId: row.public_id,
-                    status: event.target.value,
-                  })
-                }
-              >
-                {EnrollmentStatusValues.map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onValueChange={(next) => {
+                  if (next) {
+                    setEnrollmentStatus.mutate({
+                      enrollmentId: row.public_id,
+                      status: next,
+                    });
+                  }
+                }}
+                options={optionsFromValues(EnrollmentStatusValues, humanise)}
+              />
               <Button
                 variant="ghost"
                 size="sm"
@@ -221,21 +219,19 @@ export default function EnrollmentsPage() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Status" className="w-44">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value);
+                value={status || null}
+                placeholder="Any status"
+                clearable
+                onValueChange={(next) => {
+                  // `null` is the cleared state and means "any status", which
+                  // is the empty string the query already sends.
+                  setStatus(next ?? "");
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any status</option>
-                {EnrollmentStatusValues.map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+                options={optionsFromValues(EnrollmentStatusValues, humanise)}
+              />
             )}
           </Field>
           <Field label="Batch id" className="w-64">

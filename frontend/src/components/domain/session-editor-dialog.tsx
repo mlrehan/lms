@@ -10,7 +10,8 @@ import { PlatformsValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormGrid, Input } from "@/components/ui/form";
+import { FormSelect } from "@/components/ui/form-controls";
 import { UserPicker } from "@/components/domain/user-picker";
 import { fromLocalInputValue, toLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
@@ -54,6 +55,7 @@ export function SessionEditorDialog({
   const {
     register,
     handleSubmit,
+    control,
     setValue,
     setError,
     watch,
@@ -118,18 +120,28 @@ export function SessionEditorDialog({
           ) : null}
           <Field label="Batch" error={errors.batch_id?.message} required>
             {({ id }) => (
-              <NativeSelect id={id} disabled={Boolean(editing)} {...register("batch_id")}>
-                <option value="">Choose a batch</option>
-                {batches.map((b) => (
-                  <option key={b.public_id} value={b.public_id}>
-                    {b.batch_code}
-                  </option>
-                ))}
-                {!editing && selected && !batches.some((b) => b.public_id === selected.public_id) ? (
-                  <option value={selected.public_id}>{selected.batch_code}</option>
-                ) : null}
-                {editing && !batches.some((b) => b.public_id === editing.batch_id) ? <option value={editing.batch_id}>{editing.batch_code}</option> : null}
-              </NativeSelect>
+              <FormSelect
+                id={id}
+                control={control}
+                name="batch_id"
+                disabled={Boolean(editing)}
+                placeholder="Choose a batch"
+                clearable
+                /*
+                 * The current batch is appended when the loaded page does not
+                 * contain it, so an existing session can always name its own
+                 * batch rather than showing a blank field.
+                 */
+                options={[
+                  ...batches.map((b) => ({ value: b.public_id, label: b.batch_code })),
+                  ...(!editing && selected && !batches.some((b) => b.public_id === selected.public_id)
+                    ? [{ value: selected.public_id, label: selected.batch_code }]
+                    : []),
+                  ...(editing && !batches.some((b) => b.public_id === editing.batch_id)
+                    ? [{ value: editing.batch_id, label: editing.batch_code }]
+                    : []),
+                ]}
+              />
             )}
           </Field>
           <Field label="Tutor" error={errors.tutor_id?.message} required>
@@ -146,13 +158,7 @@ export function SessionEditorDialog({
             </Field>
             <Field label="Platform">
               {({ id }) => (
-                <NativeSelect id={id} {...register("platform")}>
-                  {PlatformsValues.map((p) => (
-                    <option key={p} value={p}>
-                      {humanise(p)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id}  control={control} name="platform" options={PlatformsValues.map((p) => ({ value: p, label: humanise(p) }))} />
               )}
             </Field>
             <Field label="Classroom">{({ id }) => <Input id={id} {...register("classroom")} />}</Field>

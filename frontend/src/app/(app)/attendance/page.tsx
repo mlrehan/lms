@@ -5,7 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Card, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
-import { NativeSelect } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
+
 import { LoadingState } from "@/components/ui/states";
 import { AttendanceRecords } from "@/components/domain/attendance/records-view";
 import { AttendanceSheetPanel } from "@/components/domain/attendance/sheet-panel";
@@ -75,20 +76,8 @@ function AttendanceWorkspace() {
             <Card className={cn("flex min-h-[28rem] flex-col overflow-hidden lg:max-h-[calc(100dvh-14rem)]", sessionId && "hidden lg:flex")}>
               <div className="space-y-2 border-b border-border-subtle p-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <NativeSelect className="h-8 text-[13px]" aria-label="Batch" value={batchId} onChange={(event) => setBatchId(event.target.value)}>
-                    <option value="">All batches</option>
-                    {(batches.data?.items ?? []).map((b) => (
-                      <option key={b.public_id} value={b.public_id}>
-                        {b.batch_code}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                  <NativeSelect className="h-8 text-[13px]" aria-label="Period" value={range} onChange={(event) => setRange(event.target.value as Range)}>
-                    <option value="today">Today</option>
-                    <option value="week">Last 7 days</option>
-                    <option value="month">Last 30 days</option>
-                    <option value="all">Any time</option>
-                  </NativeSelect>
+                  <Select className="h-8 text-[13px]" aria-label="Batch" value={(batchId) || null} onValueChange={(next) => setBatchId((next ?? ""))} placeholder="All batches" clearable options={(batches.data?.items ?? []).map((b) => ({ value: b.public_id, label: b.batch_code }))} />
+                  <Select className="h-8 text-[13px]" aria-label="Period" value={range} onValueChange={(next) => setRange((next ?? "") as Range)} options={[{ value: "today", label: "Today" }, { value: "week", label: "Last 7 days" }, { value: "month", label: "Last 30 days" }, { value: "all", label: "Any time" }]} />
                 </div>
                 {canPickTutor ? <UserPicker role="TUTOR" value={tutorId || null} onChange={(id) => setTutorId(id ?? "")} placeholder="Any tutor" /> : null}
                 <div role="group" aria-label="Show" className="flex gap-1">

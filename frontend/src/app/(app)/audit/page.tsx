@@ -10,10 +10,11 @@ import type { AuditCatalogResponse, AuditLogResponse, PageAuditLogResponse } fro
 import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
@@ -246,56 +247,38 @@ export default function AuditPage() {
           </Field>
           <Field label="Action">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={action}
-                onChange={(event) => {
-                  setAction(event.target.value);
+                value={(action) || null}
+                onValueChange={(next) => {
+                  setAction((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any action</option>
-                {(catalog.data?.actions ?? []).map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Any action" clearable options={(catalog.data?.actions ?? []).map((value) => ({ value: value, label: humanise(value) }))} />
             )}
           </Field>
           <Field label="Entity type">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={entityType}
-                onChange={(event) => {
-                  setEntityType(event.target.value);
+                value={(entityType) || null}
+                onValueChange={(next) => {
+                  setEntityType((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any entity</option>
-                {(catalog.data?.entity_types ?? []).map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Any entity" clearable options={(catalog.data?.entity_types ?? []).map((value) => ({ value: value, label: humanise(value) }))} />
             )}
           </Field>
           <Field label="Outcome">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={success}
-                onChange={(event) => {
-                  setSuccess(event.target.value);
+                value={(success) || null}
+                onValueChange={(next) => {
+                  setSuccess((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any outcome</option>
-                <option value="true">Succeeded</option>
-                <option value="false">Failed</option>
-              </NativeSelect>
+               placeholder="Any outcome" clearable options={[{ value: "true", label: "Succeeded" }, { value: "false", label: "Failed" }]} />
             )}
           </Field>
           <Field label="From" hint="Interpreted by the server in UTC.">

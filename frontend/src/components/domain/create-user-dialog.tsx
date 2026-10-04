@@ -13,7 +13,8 @@ import { GendersValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormGrid, Input } from "@/components/ui/form";
+import { FormSelect } from "@/components/ui/form-controls";
 import { Switch } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
@@ -142,6 +143,7 @@ export function CreateUserDialog({
   const {
     register,
     handleSubmit,
+    control,
     reset,
     setValue,
     setError,
@@ -311,13 +313,7 @@ export function CreateUserDialog({
               </Field>
               <Field label="Gender">
                 {({ id }) => (
-                  <NativeSelect id={id} {...register("gender")}>
-                    {GendersValues.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect id={id}  control={control} name="gender" options={GendersValues.map((value) => ({ value: value, label: value }))} />
                 )}
               </Field>
               <Field label="First name" error={errors.first_name?.message}>

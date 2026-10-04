@@ -9,10 +9,11 @@ import type { DiscussionResponse, PageCourseSummary, PageDiscussionResponse } fr
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, Input, Textarea } from "@/components/ui/form";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale } from "@/lib/preferences";
@@ -61,18 +62,11 @@ function NewDiscussionDialog({
         <div className="space-y-4">
           <Field label="Course" required>
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={courseId}
-                onChange={(event) => setCourseId(event.target.value)}
-              >
-                <option value="">Choose a course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+                value={(courseId) || null}
+                onValueChange={(next) => setCourseId((next ?? ""))}
+               placeholder="Choose a course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
             )}
           </Field>
           <Field label="Title" required>
@@ -151,23 +145,16 @@ export default function DiscussionsPage() {
                 placeholder="Search discussions"
                 aria-label="Search discussions"
               />
-              <NativeSelect
+              <Select
                 className="w-56"
                 aria-label="Filter by course"
-                value={courseId}
+                value={(courseId) || null}
                 disabled={!permissions.has("course.read")}
-                onChange={(event) => {
-                  setCourseId(event.target.value);
+                onValueChange={(next) => {
+                  setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Every course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
             </div>
           }
         />

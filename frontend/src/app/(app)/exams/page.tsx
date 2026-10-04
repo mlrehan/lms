@@ -17,7 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { FormSelect } from "@/components/ui/form-controls";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -62,6 +63,7 @@ function CreateExamDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   const {
     register,
     handleSubmit,
+    control,
     reset,
     setError,
     formState: { errors },
@@ -137,13 +139,7 @@ function CreateExamDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           <FormGrid columns={3}>
             <Field label="Type">
               {({ id }) => (
-                <NativeSelect id={id} {...register("exam_type")}>
-                  {ExamTypeValues.map((value) => (
-                    <option key={value} value={value}>
-                      {humanise(value)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id}  control={control} name="exam_type" options={ExamTypeValues.map((value) => ({ value: value, label: humanise(value) }))} />
               )}
             </Field>
             <Field label="Scheduled" error={errors.scheduled_at?.message} required>
@@ -163,26 +159,12 @@ function CreateExamDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             </Field>
             <Field label="Course" hint="Optional: scope the exam to one course.">
               {({ id }) => (
-                <NativeSelect id={id} {...register("course_id")}>
-                  <option value="">Not scoped</option>
-                  {(courses.data?.items ?? []).map((course) => (
-                    <option key={course.public_id} value={course.public_id}>
-                      {course.title}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id}  control={control} name="course_id" placeholder="Not scoped" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
               )}
             </Field>
             <Field label="Batch" hint="Optional: scope to one cohort.">
               {({ id }) => (
-                <NativeSelect id={id} {...register("batch_id")}>
-                  <option value="">Not scoped</option>
-                  {(batches.data?.items ?? []).map((batch) => (
-                    <option key={batch.public_id} value={batch.public_id}>
-                      {batch.batch_code}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <FormSelect id={id}  control={control} name="batch_id" placeholder="Not scoped" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
               )}
             </Field>
           </FormGrid>

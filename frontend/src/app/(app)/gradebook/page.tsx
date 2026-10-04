@@ -31,7 +31,8 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { UserPicker } from "@/components/domain/user-picker";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -365,21 +366,14 @@ function EntriesTab({ batchId }: { batchId: string }) {
       <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
         <Field label="Component" className="w-52">
           {({ id }) => (
-            <NativeSelect
+            <Select
               id={id}
-              value={componentType}
-              onChange={(event) => {
-                setComponentType(event.target.value);
+              value={(componentType) || null}
+              onValueChange={(next) => {
+                setComponentType((next ?? ""));
                 setPage({ limit, offset: 0 });
               }}
-            >
-              <option value="">Every component</option>
-              {GradeComponentTypeValues.map((value) => (
-                <option key={value} value={value}>
-                  {humanise(value)}
-                </option>
-              ))}
-            </NativeSelect>
+             placeholder="Every component" clearable options={optionsFromValues(GradeComponentTypeValues, humanise)} />
           )}
         </Field>
         <Field label="Student" className="w-72">
@@ -443,17 +437,11 @@ function EntriesTab({ batchId }: { batchId: string }) {
             <FormGrid>
               <Field label="Component">
                 {({ id }) => (
-                  <NativeSelect
+                  <Select
                     id={id}
                     value={draft.component_type}
-                    onChange={(event) => setDraft({ ...draft, component_type: event.target.value })}
-                  >
-                    {GradeComponentTypeValues.map((value) => (
-                      <option key={value} value={value}>
-                        {humanise(value)}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                    onValueChange={(next) => setDraft({ ...draft, component_type: (next ?? "") })}
+                   options={optionsFromValues(GradeComponentTypeValues, humanise)} />
                 )}
               </Field>
               <Field label="Weight" hint="Relative weight in the batch average.">
@@ -642,19 +630,12 @@ function GradebookContent() {
         <div className="flex flex-wrap items-end gap-3 p-3">
           <Field label="Batch" className="w-80">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={batchId}
+                value={(batchId) || null}
                 disabled={!permissions.has("batch.read")}
-                onChange={(event) => setBatchId(event.target.value)}
-              >
-                <option value="">Every batch</option>
-                {(batches.data?.items ?? []).map((batch) => (
-                  <option key={batch.public_id} value={batch.public_id}>
-                    {batch.batch_code}
-                  </option>
-                ))}
-              </NativeSelect>
+                onValueChange={(next) => setBatchId((next ?? ""))}
+               placeholder="Every batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
             )}
           </Field>
         </div>

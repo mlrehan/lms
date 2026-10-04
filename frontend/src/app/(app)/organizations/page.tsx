@@ -10,10 +10,11 @@ import type { OrganizationResponse, OrganizationSummary, PageOrganizationSummary
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormGrid, Input } from "@/components/ui/form";
 import { BooleanBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -110,19 +111,15 @@ export default function OrganizationsPage() {
               aria-label="Search organizations"
             />
           </div>
-          <NativeSelect
+          <Select
             className="w-auto"
             aria-label="Filter by state"
-            value={active}
-            onChange={(event) => {
-              setActive(event.target.value);
+            value={(active) || null}
+            onValueChange={(next) => {
+              setActive((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
-          >
-            <option value="">Any state</option>
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
-          </NativeSelect>
+           placeholder="Any state" clearable options={[{ value: "true", label: "Active" }, { value: "false", label: "Inactive" }]} />
         </div>
 
         {isPending ? (

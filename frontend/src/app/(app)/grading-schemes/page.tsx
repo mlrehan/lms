@@ -13,10 +13,11 @@ import type {
 import { useApiMutation } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { cn } from "@/lib/utils";
@@ -104,10 +105,7 @@ function CreateDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v:
             </Field>
             <Field label="Work with no mark yet">
               {({ id }) => (
-                <NativeSelect id={id} value={policy} onChange={(e) => setPolicy(e.target.value)}>
-                  <option value="EXCLUDE">Leave out of the total</option>
-                  <option value="ZERO">Count as zero</option>
-                </NativeSelect>
+                <Select id={id} value={policy} onValueChange={(next) => setPolicy((next ?? ""))} options={[{ value: "EXCLUDE", label: "Leave out of the total" }, { value: "ZERO", label: "Count as zero" }]} />
               )}
             </Field>
           </FormGrid>

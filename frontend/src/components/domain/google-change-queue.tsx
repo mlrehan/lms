@@ -8,8 +8,9 @@ import { api, segment } from "@/lib/api/client";
 import type { GoogleChangeRequestResponse, PageGoogleChangeRequestResponse } from "@/lib/api/types";
 import { useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
-import { NativeSelect } from "@/components/ui/form";
+
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -64,15 +65,12 @@ export function GoogleChangeQueue() {
         title="Changes from Google"
         description="Guests added to or removed from an event in Google Calendar. Nothing changes until a person approves it here."
         actions={
-          <NativeSelect
+          <Select
             className="w-auto"
-            value={filter}
+            value={(filter) || null}
             aria-label="Show"
-            onChange={(event) => setFilter(event.target.value as "PENDING" | "")}
-          >
-            <option value="PENDING">Awaiting a decision</option>
-            <option value="">Everything</option>
-          </NativeSelect>
+            onValueChange={(next) => setFilter((next ?? "") as "PENDING" | "")}
+           placeholder="Everything" clearable options={[{ value: "PENDING", label: "Awaiting a decision" }]} />
         }
       />
       <CardBody>

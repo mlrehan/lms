@@ -22,8 +22,9 @@ import {
 } from "@/lib/api/types";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardBody, CardHeader, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
-import { Field, Input, NativeSelect } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -109,17 +110,11 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Group by">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
                 value={groupBy}
-                onChange={(event) => setGroupBy(event.target.value)}
-              >
-                {GROUPS[kind].map((value) => (
-                  <option key={value} value={value}>
-                    {humanise(value)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onValueChange={(next) => setGroupBy((next ?? ""))}
+               options={GROUPS[kind].map((value) => ({ value: value, label: humanise(value) }))} />
             )}
           </Field>
           {supportsDates ? (

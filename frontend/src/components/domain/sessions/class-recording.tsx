@@ -5,7 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ExternalLink, Film, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { NativeSelect } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
+
 import { EmptyState } from "@/components/ui/states";
 import { api, apiPath, segment } from "@/lib/api/client";
 import type { PageResourceSummary, SessionRecordingResponse } from "@/lib/api/types";
@@ -50,19 +51,12 @@ function PublishControls({ sessionId, attached }: { sessionId: string; attached:
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <NativeSelect
+      <Select
         aria-label="Recording to publish"
-        value={choice}
-        onChange={(event) => setChoice(event.target.value)}
+        value={(choice) || null}
+        onValueChange={(next) => setChoice((next ?? ""))}
         className="h-8 max-w-64 text-xs"
-      >
-        <option value="">Choose a file from the library…</option>
-        {(data ?? []).map((item) => (
-          <option key={item.public_id} value={item.public_id}>
-            {item.name ?? "Untitled"}
-          </option>
-        ))}
-      </NativeSelect>
+       placeholder="Choose a file from the library…" clearable options={(data ?? []).map((item) => ({ value: item.public_id, label: item.name ?? "Untitled" }))} />
       <Button
         type="button"
         size="xs"

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileCheck2, Lock } from "lucide-react";
+import { FileCheck2, FileText, Lock } from "lucide-react";
 import { api, segment } from "@/lib/api/client";
 import type {
   GenerateTranscriptsResponse,
@@ -14,10 +14,11 @@ import type {
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Field, NativeSelect } from "@/components/ui/form";
+import { Field } from "@/components/ui/form";
 import { UserPicker } from "@/components/domain/user-picker";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -134,12 +135,23 @@ export default function TranscriptsPage() {
       key: "actions",
       header: <span className="sr-only">Actions</span>,
       align: "right",
-      cell: (row) =>
-        permissions.has("grade.publish") && !row.is_final ? (
-          <Button variant="secondary" size="sm" onClick={() => setFinalising(row)}>
-            Finalise
-          </Button>
-        ) : null,
+      cell: (row) => (
+        <div className="flex items-center justify-end gap-2">
+          {/* The official document. Open to anybody who can already see the
+              row -- the backend scopes the fetch, so this link cannot reveal
+              a transcript the list would not have shown. */}
+          <Link href={`/transcripts/${row.public_id}`}>
+            <Button variant="ghost" size="sm">
+              <FileText className="size-4" aria-hidden /> View
+            </Button>
+          </Link>
+          {permissions.has("grade.publish") && !row.is_final ? (
+            <Button variant="secondary" size="sm" onClick={() => setFinalising(row)}>
+              Finalise
+            </Button>
+          ) : null}
+        </div>
+      ),
     },
   ];
 
@@ -166,22 +178,15 @@ export default function TranscriptsPage() {
         <div className="flex flex-wrap items-end gap-3 p-3">
           <Field label="Batch" className="w-80">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={batchId}
+                value={(batchId) || null}
                 disabled={!permissions.has("batch.read")}
-                onChange={(event) => {
-                  setBatchId(event.target.value);
+                onValueChange={(next) => {
+                  setBatchId((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Every batch</option>
-                {(batches.data?.items ?? []).map((batch) => (
-                  <option key={batch.public_id} value={batch.public_id}>
-                    {batch.batch_code}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Every batch" clearable options={(batches.data?.items ?? []).map((batch) => ({ value: batch.public_id, label: batch.batch_code }))} />
             )}
           </Field>
           <Field label="Student" className="w-72">

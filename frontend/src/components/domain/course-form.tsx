@@ -20,7 +20,9 @@ import type {
 import { LevelsValues } from "@/lib/api/types";
 import { applyFieldErrors, useApiMutation } from "@/lib/api/hooks";
 import { Button } from "@/components/ui/button";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Select } from "@/components/ui/select";
+import { FormSelect } from "@/components/ui/form-controls";
 import { CourseImagePicker, type StagedImage } from "@/components/domain/course-image-picker";
 import { AddCategoryDialog, AddDepartmentDialog } from "@/components/domain/course-reference-dialogs";
 import { useSession } from "@/lib/auth/session";
@@ -103,7 +105,7 @@ export function CourseForm({
   const canAddReference = permissions.has("academic.create");
 
   const {
-    register, handleSubmit, reset, setValue, setError, getValues, watch,
+    register, handleSubmit, control, reset, setValue, setError, getValues, watch,
     formState: { errors, isDirty, dirtyFields },
   } = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(course) });
 
@@ -348,13 +350,7 @@ export function CourseForm({
 
           <Field label="Level">
             {({ id }) => (
-              <NativeSelect id={id} disabled={disabled} {...register("level")}>
-                {LevelsValues.map((level) => (
-                  <option key={level} value={level}>
-                    {humanise(level)}
-                  </option>
-                ))}
-              </NativeSelect>
+              <FormSelect id={id} disabled={disabled}  control={control} name="level" options={LevelsValues.map((level) => ({ value: level, label: humanise(level) }))} />
             )}
           </Field>
           <Field label="Duration (hours)" error={errors.duration_hours?.message}>
@@ -386,44 +382,42 @@ export function CourseForm({
 
           <Field label="Category" error={errors.category_id?.message}>
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
                 disabled={disabled || !canReadAcademic}
-                value={categoryId}
-                onChange={(event) => {
-                  if (event.target.value === ADD) return setAddCategory(true);
-                  setValue("category_id", event.target.value, { shouldDirty: true });
+                value={categoryId || null}
+                placeholder="Uncategorised"
+                clearable
+                onValueChange={(next) => {
+                  // `ADD` is a sentinel option that opens a dialog rather than
+                  // selecting a value, so it must never reach form state.
+                  if (next === ADD) return setAddCategory(true);
+                  setValue("category_id", next ?? "", { shouldDirty: true });
                 }}
-              >
-                <option value="">Uncategorised</option>
-                {categoryOptions.map((c) => (
-                  <option key={c.public_id} value={c.public_id}>
-                    {c.name}
-                  </option>
-                ))}
-                {canAddReference ? <option value={ADD}>+ Add a new category…</option> : null}
-              </NativeSelect>
+                options={[
+                  ...categoryOptions.map((c) => ({ value: c.public_id, label: c.name })),
+                  ...(canAddReference ? [{ value: ADD, label: "+ Add a new category…" }] : []),
+                ]}
+              />
             )}
           </Field>
           <Field label="Department" error={errors.department_id?.message}>
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
                 disabled={disabled || !canReadAcademic}
-                value={departmentId}
-                onChange={(event) => {
-                  if (event.target.value === ADD) return setAddDepartment(true);
-                  setValue("department_id", event.target.value, { shouldDirty: true });
+                value={departmentId || null}
+                placeholder="None"
+                clearable
+                onValueChange={(next) => {
+                  if (next === ADD) return setAddDepartment(true);
+                  setValue("department_id", next ?? "", { shouldDirty: true });
                 }}
-              >
-                <option value="">None</option>
-                {departmentOptions.map((d) => (
-                  <option key={d.public_id} value={d.public_id}>
-                    {d.name}
-                  </option>
-                ))}
-                {canAddReference ? <option value={ADD}>+ Add a new department…</option> : null}
-              </NativeSelect>
+                options={[
+                  ...departmentOptions.map((d) => ({ value: d.public_id, label: d.name })),
+                  ...(canAddReference ? [{ value: ADD, label: "+ Add a new department…" }] : []),
+                ]}
+              />
             )}
           </Field>
         </FormGrid>

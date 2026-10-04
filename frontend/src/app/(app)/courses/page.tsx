@@ -18,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog";
-import { Input, NativeSelect } from "@/components/ui/form";
+import { Input } from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { LaitSyncControls } from "@/components/domain/lait-sync";
@@ -149,56 +150,35 @@ export default function CoursesPage() {
               className="pl-8"
             />
           </div>
-          <NativeSelect
+          <Select
             className="w-auto"
-            value={status}
+            value={(status) || null}
             aria-label="Filter by status"
-            onChange={(event) => {
-              setStatus(event.target.value);
+            onValueChange={(next) => {
+              setStatus((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
-          >
-            <option value="">Any status</option>
-            {CourseStatusValues.map((value) => (
-              <option key={value} value={value}>
-                {humanise(value)}
-              </option>
-            ))}
-          </NativeSelect>
-          <NativeSelect
+           placeholder="Any status" clearable options={optionsFromValues(CourseStatusValues, humanise)} />
+          <Select
             className="w-auto"
-            value={level}
+            value={(level) || null}
             aria-label="Filter by level"
-            onChange={(event) => {
-              setLevel(event.target.value);
+            onValueChange={(next) => {
+              setLevel((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
-          >
-            <option value="">Any level</option>
-            {LevelsValues.map((value) => (
-              <option key={value} value={value}>
-                {humanise(value)}
-              </option>
-            ))}
-          </NativeSelect>
+           placeholder="Any level" clearable options={optionsFromValues(LevelsValues, humanise)} />
           {canReadAcademic ? (
             <>
-              <NativeSelect
+              <Select
                 className="w-auto"
-                value={categoryId}
+                value={(categoryId) || null}
                 aria-label="Filter by category"
-                onChange={(event) => {
-                  setCategoryId(event.target.value);
+                onValueChange={(next) => {
+                  setCategoryId((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Any category</option>
-                {(categories.data?.items ?? []).map((category) => (
-                  <option key={category.public_id} value={category.public_id}>
-                    {category.name}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Any category" clearable options={(categories.data?.items ?? []).map((category) => ({ value: category.public_id, label: category.name }))} />
             </>
           ) : null}
           {canFilterByPerson ? (

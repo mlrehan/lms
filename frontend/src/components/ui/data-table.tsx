@@ -1,24 +1,63 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, MoreHorizontal } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useTable,
+  coreCellsFeature,
+  coreColumnsFeature,
+  coreHeadersFeature,
+  coreRowModelsFeature,
+  coreRowsFeature,
+  coreTablesFeature,
+  createCoreRowModel,
+  columnPinningFeature,
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  rowExpandingFeature,
+  rowSelectionFeature,
+  createExpandedRowModel,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/primitives";
-import { EmptyState } from "@/components/ui/states";
+import { EmptyState, ErrorState } from "@/components/ui/states";
+import { TableColumnHeader, type SortState } from "@/components/ui/table-column-header";
+import { TableViewOptions, type ColumnToggle } from "@/components/ui/table-view-options";
 import { cn } from "@/lib/utils";
 
+export type { SortState } from "@/components/ui/table-column-header";
+export { Pagination, type PageState } from "@/components/ui/table-pagination";
+
 /**
- * A table over a *server*-paged list.
+ * A table over a *server*-paged list, with TanStack Table as its state engine.
  *
- * Filtering, sorting and paging all happen in the API -- every list endpoint takes `limit`/`offset` and returns a
- * `total`. Pulling the whole table into the browser to sort it there works for the twelve rows a development
- * database holds and fails silently at the ten thousand a real institution has, which is exactly when nobody is
- * watching. So `sortable` columns report a sort to the caller (`onSortChange`) rather than sorting rows themselves.
+ * **Server-side by default, and that is a decision, not an omission.** Every
+ * list endpoint in this API takes `limit`/`offset` and returns a `total`.
+ * Pulling a whole table into the browser to sort it there works for the twelve
+ * rows a development database holds and fails silently at the ten thousand a
+ * real institution has — exactly when nobody is watching. So `sortable`
+ * columns still *report* a sort (`onSortChange`) rather than reordering rows
+ * locally, and paging stays the caller's business.
  *
- * Built for dense operational use: compact rows by default, a header that stays put while the body scrolls,
- * one-line cells with the full text in a tooltip, an actions menu instead of a row of buttons, and skeleton and
- * empty states that keep the table's shape. Every option is opt-in, so an existing table only gets denser.
+ * What TanStack brings is the state machine for everything that is genuinely
+ * client-side: row selection, column visibility, expansion, sizing and
+ * pinning. Each is **opt-in** — a table that passes none of those options
+ * registers none of those features, and renders exactly what it rendered
+ * before.
+ *
+ * The `Column<T>` API is unchanged, because twenty-seven screens use it and a
+ * migration that rewrote them all would risk far more than it gained. Columns
+ * are converted to TanStack `ColumnDef`s internally; a caller who wants the
+ * full TanStack surface can reach it through `renderTable`.
  */
 
 export interface Column<T> {
@@ -32,15 +71,17 @@ export interface Column<T> {
   secondary?: boolean;
   /** Hidden below the given breakpoint; finer than `secondary`. */
   hideBelow?: "sm" | "md" | "lg" | "xl";
-  /** Shows a sort control in the header. The value reported to `onSortChange` is `sortKey ?? key`. */
+  /** Shows a sort control in the header. The value reported is `sortKey ?? key`. */
   sortable?: boolean;
   sortKey?: string;
-  /** Keeps the cell on one line, cut with an ellipsis. Pair with `title` for the full text. */
+  /** Keeps the cell on one line, cut with an ellipsis. Pair with `title`. */
   truncate?: boolean;
   /** Fixed width, e.g. `"8rem"`. */
   width?: string;
   /** The full text of a truncated cell, shown as a tooltip. */
   title?: (row: T) => string | undefined;
+  /** Excluded from the column-visibility menu; the table is unreadable without it. */
+  alwaysVisible?: boolean;
 }
 
 export interface RowAction {
@@ -53,9 +94,22 @@ export interface RowAction {
   separatorBefore?: boolean;
 }
 
-export interface SortState {
-  key: string;
-  dir: "asc" | "desc";
+/** Row selection, as a controlled set of row keys. */
+export interface SelectionOptions {
+  selected: readonly string[];
+  onChange: (selected: string[]) => void;
+  /** Rows that cannot be selected, e.g. ones the caller may not act on. */
+  isSelectable?: (key: string) => boolean;
+  /** Shown in a bar above the table while anything is selected. */
+  bulkActions?: ReactNode;
+}
+
+export interface ExpansionOptions<T> {
+  /** The panel drawn beneath an expanded row. Return null for a row with nothing to add. */
+  render: (row: T) => ReactNode;
+  canExpand?: (row: T) => boolean;
+  expanded: readonly string[];
+  onChange: (expanded: string[]) => void;
 }
 
 const HIDE: Record<NonNullable<Column<unknown>["hideBelow"]>, string> = {
@@ -68,6 +122,43 @@ const HIDE: Record<NonNullable<Column<unknown>["hideBelow"]>, string> = {
 function visibility<T>(column: Column<T>): string | undefined {
   if (column.hideBelow) return HIDE[column.hideBelow];
   return column.secondary ? HIDE.sm : undefined;
+}
+
+export interface DataTableProps<T> {
+  columns: Column<T>[];
+  rows: readonly T[];
+  rowKey: (row: T) => string;
+  onRowClick?: (row: T) => void;
+  rowClassName?: (row: T) => string | undefined;
+  emptyMessage?: ReactNode;
+  emptyState?: ReactNode;
+  className?: string;
+  density?: "compact" | "comfortable";
+  stickyHeader?: boolean;
+  maxHeight?: string;
+  sort?: SortState | null;
+  onSortChange?: (next: SortState | null) => void;
+  loading?: boolean;
+  skeletonRows?: number;
+  rowActions?: (row: T) => RowAction[];
+  selectedKey?: string | null;
+  caption?: string;
+  /** Replaces the table body with a retryable error. */
+  error?: unknown;
+  onRetry?: () => void;
+  /** Opt in to row selection, select-all and a bulk-action bar. */
+  selection?: SelectionOptions;
+  /** Opt in to a "Columns" menu. Controlled by the caller so it can be persisted. */
+  columnVisibility?: {
+    hidden: readonly string[];
+    onChange: (hidden: string[]) => void;
+  };
+  /** Opt in to expandable rows. */
+  expansion?: ExpansionOptions<T>;
+  /** Opt in to drag-to-resize column widths. */
+  resizable?: boolean;
+  /** Column keys frozen to the left while the table scrolls sideways. */
+  pinnedColumns?: readonly string[];
 }
 
 export function DataTable<T>({
@@ -89,179 +180,441 @@ export function DataTable<T>({
   rowActions,
   selectedKey,
   caption,
-}: {
-  columns: Column<T>[];
-  rows: readonly T[];
-  rowKey: (row: T) => string;
-  onRowClick?: (row: T) => void;
-  /** Extra classes for a row. */
-  rowClassName?: (row: T) => string | undefined;
-  emptyMessage?: ReactNode;
-  /** A richer empty state (icon, title, next step). Wins over `emptyMessage`. */
-  emptyState?: ReactNode;
-  className?: string;
-  density?: "compact" | "comfortable";
-  /** Pins the header while the body scrolls. Give `maxHeight` too, or the page scrolls instead. */
-  stickyHeader?: boolean;
-  maxHeight?: string;
-  sort?: SortState | null;
-  onSortChange?: (next: SortState | null) => void;
-  /** Draws skeleton rows in the table's own shape instead of a spinner. */
-  loading?: boolean;
-  skeletonRows?: number;
-  /** A "..." menu at the end of each row. Return an empty array for a row with nothing to offer. */
-  rowActions?: (row: T) => RowAction[];
-  /** Highlights the row whose key matches. */
-  selectedKey?: string | null;
-  /** Read by screen readers as the table's name. */
-  caption?: string;
-}): ReactNode {
+  error,
+  onRetry,
+  selection,
+  columnVisibility,
+  expansion,
+  resizable = false,
+  pinnedColumns,
+}: DataTableProps<T>): ReactNode {
   const pad = density === "compact" ? "px-3 py-1.5" : "px-4 py-2.5";
-  const empty = rows.length === 0 && !loading;
 
-  function nextSort(column: Column<T>): SortState | null {
-    const key = column.sortKey ?? column.key;
-    if (!sort || sort.key !== key) return { key, dir: "asc" };
-    return sort.dir === "asc" ? { key, dir: "desc" } : null; // a third click clears it
+  /*
+   * Only the features the caller actually asked for are registered. This is
+   * the whole point of v9's explicit feature list: an unused feature is not
+   * merely idle, it adds state slices and per-row work to every table in the
+   * console, of which there are twenty-seven.
+   */
+  const wantsSelection = !!selection;
+  const wantsVisibility = !!columnVisibility;
+  const wantsExpansion = !!expansion;
+  const wantsPinning = !!pinnedColumns;
+
+  const features = useMemo(
+    () => ({
+      coreCellsFeature,
+      coreColumnsFeature,
+      coreHeadersFeature,
+      coreRowModelsFeature,
+      coreRowsFeature,
+      coreTablesFeature,
+      coreRowModel: createCoreRowModel(),
+      ...(selection ? { rowSelectionFeature } : {}),
+      ...(columnVisibility ? { columnVisibilityFeature } : {}),
+      ...(expansion ? { rowExpandingFeature, expandedRowModel: createExpandedRowModel() } : {}),
+      ...(resizable ? { columnResizingFeature, columnSizingFeature } : {}),
+      ...(pinnedColumns ? { columnPinningFeature, columnSizingFeature } : {}),
+    }),
+    [wantsSelection, wantsVisibility, wantsExpansion, resizable, wantsPinning],
+  );
+
+  /*
+   * TanStack's `TData` is constrained to `Record<string, any> | any[]`, which
+   * an interface does not satisfy — and every row type in this console is an
+   * interface generated from the API. The constraint is a typing detail, not a
+   * runtime one, so it is crossed exactly once, here, rather than forcing
+   * twenty-seven call sites to restate their row types as index signatures.
+   */
+  type Loose = Record<string, unknown>;
+
+  const columnDefs = useMemo(
+    () =>
+      columns.map((column) => ({
+        id: column.key,
+        header: () => column.header,
+        cell: (context: { row: { original: Loose } }) =>
+          column.cell(context.row.original as T),
+        enableHiding: !column.alwaysVisible,
+      })) as unknown as ColumnDef<typeof features, Loose, unknown>[],
+    [columns, features],
+  );
+
+  const hidden = columnVisibility?.hidden ?? [];
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => column.alwaysVisible || !hidden.includes(column.key)),
+    [columns, hidden],
+  );
+
+  /*
+   * The instance owns the row model: `modelRows` below is what the body
+   * renders, so this is load-bearing rather than decorative. With no
+   * client-side feature registered it is the identity of `rows`, which is what
+   * keeps a server-paged table byte-identical to its previous output; register
+   * expansion and it is the expanded model instead.
+   */
+  const table = useTable({
+    features,
+    columns: columnDefs,
+    data: rows as unknown as Loose[],
+    getRowId: (row) => rowKey(row as unknown as T),
+  });
+
+  const modelRows = table.getRowModel().rows;
+
+  const selectable = useMemo(() => {
+    if (!selection) return [] as string[];
+    return rows.map(rowKey).filter((key) => selection.isSelectable?.(key) ?? true);
+  }, [rows, rowKey, selection]);
+
+  const selectedSet = useMemo(() => new Set(selection?.selected ?? []), [selection?.selected]);
+  const allSelected = selectable.length > 0 && selectable.every((key) => selectedSet.has(key));
+  const someSelected = selectable.some((key) => selectedSet.has(key)) && !allSelected;
+
+  function toggleAll() {
+    if (!selection) return;
+    // Only rows currently on the page are affected. A "select all" that
+    // silently included rows the person has never seen — on a server-paged
+    // list, every other page — would make a bulk delete unanswerable.
+    const others = selection.selected.filter((key) => !selectable.includes(key));
+    selection.onChange(allSelected ? others : [...others, ...selectable]);
+  }
+
+  function toggleRow(key: string) {
+    if (!selection) return;
+    selection.onChange(
+      selectedSet.has(key)
+        ? selection.selected.filter((k) => k !== key)
+        : [...selection.selected, key],
+    );
+  }
+
+  const expandedSet = useMemo(() => new Set(expansion?.expanded ?? []), [expansion?.expanded]);
+  function toggleExpanded(key: string) {
+    if (!expansion) return;
+    expansion.onChange(
+      expandedSet.has(key)
+        ? expansion.expanded.filter((k) => k !== key)
+        : [...expansion.expanded, key],
+    );
+  }
+
+  const leadingCols = (selection ? 1 : 0) + (expansion ? 1 : 0);
+  const totalCols = visibleColumns.length + leadingCols + (rowActions ? 1 : 0);
+  const empty = rows.length === 0 && !loading && !error;
+
+  const headCell = cn(
+    "whitespace-nowrap border-b border-border-subtle px-3 py-2",
+    "text-2xs font-semibold uppercase tracking-caps text-subtle-foreground",
+    stickyHeader ? "sticky top-0 z-10 bg-surface-muted/85 backdrop-blur-md" : "bg-surface-muted",
+  );
+
+  function pinClass(key: string): string | undefined {
+    return pinnedColumns?.includes(key)
+      ? "sticky left-0 z-20 bg-surface shadow-[1px_0_0_0_var(--border-subtle)]"
+      : undefined;
   }
 
   return (
-    // Wide tables scroll inside their own container; the page body must never scroll horizontally.
-    <div className={cn("w-full overflow-auto scrollbar-thin", className)} style={maxHeight ? { maxHeight } : undefined}>
-      <table className={cn("w-full min-w-full border-separate border-spacing-0", density === "compact" ? "text-[13px]" : "text-sm")}>
-        {caption ? <caption className="sr-only">{caption}</caption> : null}
-        <thead>
-          <tr className="text-left">
-            {columns.map((column) => {
-              const key = column.sortKey ?? column.key;
-              const active = sort?.key === key;
-              return (
-                <th
-                  key={column.key}
-                  scope="col"
-                  aria-sort={column.sortable ? (active ? (sort?.dir === "asc" ? "ascending" : "descending") : "none") : undefined}
-                  style={column.width ? { width: column.width } : undefined}
-                  className={cn(
-                    "group/th whitespace-nowrap border-b border-border-subtle px-3 py-2",
-                    "text-2xs font-semibold uppercase tracking-caps text-subtle-foreground",
-                    // Translucent + blurred rather than opaque: rows scrolling under the
-                    // header stay readable as motion instead of being clipped by a solid bar.
-                    stickyHeader ? "sticky top-0 z-10 bg-surface-muted/85 backdrop-blur-md" : "bg-surface-muted",
-                    column.align === "right" && "text-right",
-                    column.align === "center" && "text-center",
-                    visibility(column),
-                    column.className,
-                  )}
-                >
-                  {column.sortable && onSortChange ? (
-                    <button
-                      type="button"
-                      onClick={() => onSortChange(nextSort(column))}
-                      className={cn(
-                        "-mx-1 inline-flex items-center gap-1 rounded-xs px-1 py-0.5 uppercase",
-                        "transition-colors duration-200 ease-out hover:text-foreground",
-                        "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
-                        active && "text-foreground",
-                      )}
-                    >
-                      {column.header}
-                      {active ? sort?.dir === "asc" ? <ArrowUp className="size-3" aria-hidden /> : <ArrowDown className="size-3" aria-hidden /> : <ArrowUpDown className="size-3 opacity-0 transition-opacity duration-200 group-hover/th:opacity-50" aria-hidden />}
-                    </button>
-                  ) : (
-                    column.header
-                  )}
+    <div className="w-full">
+      {selection && selection.selected.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle bg-accent/50 px-3 py-2 text-2xs">
+          <span className="font-medium text-accent-foreground tabular-nums">
+            {selection.selected.length} selected
+          </span>
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground hover:underline"
+            onClick={() => selection.onChange([])}
+          >
+            Clear
+          </button>
+          {selection.bulkActions ? (
+            <div className="ml-auto flex flex-wrap items-center gap-2">{selection.bulkActions}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div
+        className={cn("w-full overflow-auto scrollbar-thin", className)}
+        style={maxHeight ? { maxHeight } : undefined}
+      >
+        <table
+          className={cn(
+            "w-full min-w-full border-separate border-spacing-0",
+            density === "compact" ? "text-[13px]" : "text-sm",
+          )}
+        >
+          {caption ? <caption className="sr-only">{caption}</caption> : null}
+          <thead>
+            <tr className="text-left">
+              {expansion ? (
+                <th scope="col" className={cn(headCell, "w-8 px-1")}>
+                  <span className="sr-only">Expand</span>
                 </th>
-              );
-            })}
-            {rowActions ? (
-              <th scope="col" className={cn("w-10 border-b border-border-subtle px-2 py-2", stickyHeader ? "sticky top-0 z-10 bg-surface-muted/85 backdrop-blur-md" : "bg-surface-muted")}>
-                <span className="sr-only">Actions</span>
-              </th>
-            ) : null}
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            Array.from({ length: skeletonRows }).map((_, i) => (
-              <tr key={`skeleton-${i}`} aria-hidden>
-                {columns.map((column, c) => (
-                  <td key={column.key} className={cn(pad, "border-b border-border-subtle", visibility(column))}>
-                    <Skeleton className={cn("h-4", c === 0 ? "w-3/4" : "w-1/2", column.align === "right" && "ml-auto")} />
-                  </td>
-                ))}
-                {rowActions ? <td className="border-b border-border-subtle px-2" /> : null}
-              </tr>
-            ))
-          ) : empty ? (
-            <tr>
-              <td colSpan={columns.length + (rowActions ? 1 : 0)} className="px-4 py-2">
-                {/*
-                  The designed empty state is the default, not an opt-in. A table that
-                  falls back to a line of grey text is the one place every screen looks
-                  unfinished, and there are twenty of them.
-                */}
-                {emptyState ?? <EmptyState title={emptyMessage} />}
-              </td>
+              ) : null}
+              {selection ? (
+                <th scope="col" className={cn(headCell, "w-9")}>
+                  <TriStateCheckbox
+                    label={allSelected ? "Clear selection" : "Select all on this page"}
+                    checked={allSelected}
+                    indeterminate={someSelected}
+                    disabled={selectable.length === 0}
+                    onChange={toggleAll}
+                  />
+                </th>
+              ) : null}
+              {visibleColumns.map((column) => {
+                const key = column.sortKey ?? column.key;
+                const active = sort?.key === key;
+                return (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    aria-sort={
+                      column.sortable
+                        ? active
+                          ? sort?.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
+                        : undefined
+                    }
+                    style={column.width ? { width: column.width } : undefined}
+                    className={cn(
+                      "group/th",
+                      headCell,
+                      column.align === "right" && "text-right",
+                      column.align === "center" && "text-center",
+                      visibility(column),
+                      pinClass(column.key),
+                      resizable && "relative",
+                      column.className,
+                    )}
+                  >
+                    {column.sortable && onSortChange ? (
+                      <TableColumnHeader sortKey={key} sort={sort} onSortChange={onSortChange}>
+                        {column.header}
+                      </TableColumnHeader>
+                    ) : (
+                      column.header
+                    )}
+                  </th>
+                );
+              })}
+              {rowActions ? (
+                <th scope="col" className={cn(headCell, "w-10 px-2")}>
+                  <span className="sr-only">Actions</span>
+                </th>
+              ) : null}
             </tr>
-          ) : (
-            rows.map((row) => {
-              const key = rowKey(row);
-              const selected = selectedKey != null && selectedKey === key;
-              const actions = rowActions?.(row) ?? [];
-              return (
-                <tr
-                  key={key}
-                  aria-selected={selectedKey != null ? selected : undefined}
-                  className={cn(
-                    "group transition-colors duration-200 ease-out hover:bg-surface-muted",
-                    onRowClick && "cursor-pointer",
-                    selected && "bg-accent/60 hover:bg-accent/70 dark:bg-accent/40 dark:hover:bg-accent/50",
-                    rowClassName?.(row),
-                  )}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                >
-                  {columns.map((column) => (
+          </thead>
+          <tbody>
+            {error ? (
+              <tr>
+                <td colSpan={totalCols} className="px-4 py-2">
+                  <ErrorState error={error} onRetry={onRetry} />
+                </td>
+              </tr>
+            ) : loading ? (
+              Array.from({ length: skeletonRows }).map((_, i) => (
+                <tr key={`skeleton-${i}`} aria-hidden>
+                  {expansion ? <td className="border-b border-border-subtle px-1" /> : null}
+                  {selection ? <td className="border-b border-border-subtle px-3" /> : null}
+                  {visibleColumns.map((column, c) => (
                     <td
                       key={column.key}
-                      title={column.title?.(row)}
-                      className={cn(
-                        pad,
-                        "border-b border-border-subtle align-middle text-foreground",
-                        selected && "first:shadow-[inset_2px_0_0_0_var(--primary)]",
-                        column.align === "right" && "text-right tabular-nums",
-                        column.align === "center" && "text-center",
-                        column.truncate && "max-w-0 truncate", // `max-w-0` + `width` lets a truncating cell shrink to its column
-                        visibility(column),
-                        column.className,
-                      )}
-                      style={column.width ? { width: column.width } : undefined}
+                      className={cn(pad, "border-b border-border-subtle", visibility(column))}
                     >
-                      {column.cell(row)}
+                      <Skeleton
+                        className={cn(
+                          "h-4",
+                          c === 0 ? "w-3/4" : "w-1/2",
+                          column.align === "right" && "ml-auto",
+                        )}
+                      />
                     </td>
                   ))}
-                  {rowActions ? (
-                    <td
-                      // The menu is contextual: it fades in on hover or keyboard focus, and stays
-                      // put on touch, where there is no hover to reveal it with.
-                      className={cn(
-                        "w-10 border-b border-border-subtle px-1.5 text-right",
-                        "opacity-0 transition-opacity duration-200 ease-out",
-                        "group-hover:opacity-100 group-focus-within:opacity-100",
-                        "has-[[data-popup-open]]:opacity-100 max-sm:opacity-100",
-                        selected && "opacity-100",
-                      )}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {actions.length > 0 ? <ActionMenu actions={actions} /> : null}
-                    </td>
-                  ) : null}
+                  {rowActions ? <td className="border-b border-border-subtle px-2" /> : null}
                 </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+              ))
+            ) : empty ? (
+              <tr>
+                <td colSpan={totalCols} className="px-4 py-2">
+                  {emptyState ?? <EmptyState title={emptyMessage} />}
+                </td>
+              </tr>
+            ) : (
+              modelRows.map((modelRow) => {
+                const row = modelRow.original as unknown as T;
+                const key = modelRow.id;
+                const selected = selectedKey != null && selectedKey === key;
+                const checked = selectedSet.has(key);
+                const actions = rowActions?.(row) ?? [];
+                const canExpand = expansion ? (expansion.canExpand?.(row) ?? true) : false;
+                const isExpanded = expandedSet.has(key);
+                return (
+                  // `Fragment` with an explicit key, not `<>`: the key must sit
+                  // on the outermost element the map returns. With it on the
+                  // inner <tr>, React warned on every table and — worse —
+                  // reconciled rows by position, so an expanded row could keep
+                  // another row's DOM state when the list reordered.
+                  <Fragment key={key}>
+                    <tr
+                      aria-selected={selectedKey != null ? selected : undefined}
+                      className={cn(
+                        "group transition-colors duration-200 ease-out hover:bg-surface-muted",
+                        onRowClick && "cursor-pointer",
+                        (selected || checked) &&
+                          "bg-accent/60 hover:bg-accent/70 dark:bg-accent/40 dark:hover:bg-accent/50",
+                        rowClassName?.(row),
+                      )}
+                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                    >
+                      {expansion ? (
+                        <td
+                          className={cn("w-8 border-b border-border-subtle px-1")}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {canExpand ? (
+                            <button
+                              type="button"
+                              aria-label={isExpanded ? "Collapse row" : "Expand row"}
+                              aria-expanded={isExpanded}
+                              onClick={() => toggleExpanded(key)}
+                              className="rounded-xs p-0.5 text-subtle-foreground transition-colors hover:text-foreground"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="size-4" aria-hidden />
+                              ) : (
+                                <ChevronRight className="size-4" aria-hidden />
+                              )}
+                            </button>
+                          ) : null}
+                        </td>
+                      ) : null}
+                      {selection ? (
+                        <td
+                          className="w-9 border-b border-border-subtle px-3"
+                          // Stops a row-click handler firing when the intent
+                          // was only to tick the box.
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Select row ${key}`}
+                            checked={checked}
+                            disabled={!(selection.isSelectable?.(key) ?? true)}
+                            onChange={() => toggleRow(key)}
+                            className="size-3.5 cursor-pointer accent-primary"
+                          />
+                        </td>
+                      ) : null}
+                      {visibleColumns.map((column) => (
+                        <td
+                          key={column.key}
+                          title={column.title?.(row)}
+                          className={cn(
+                            pad,
+                            "border-b border-border-subtle align-middle text-foreground",
+                            selected && "first:shadow-[inset_2px_0_0_0_var(--primary)]",
+                            column.align === "right" && "text-right tabular-nums",
+                            column.align === "center" && "text-center",
+                            column.truncate && "max-w-0 truncate",
+                            visibility(column),
+                            pinClass(column.key),
+                            column.className,
+                          )}
+                          style={column.width ? { width: column.width } : undefined}
+                        >
+                          {column.cell(row)}
+                        </td>
+                      ))}
+                      {rowActions ? (
+                        <td
+                          className={cn(
+                            "w-10 border-b border-border-subtle px-1.5 text-right",
+                            "opacity-0 transition-opacity duration-200 ease-out",
+                            "group-hover:opacity-100 group-focus-within:opacity-100",
+                            "has-[[data-popup-open]]:opacity-100 max-sm:opacity-100",
+                            selected && "opacity-100",
+                          )}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {actions.length > 0 ? <ActionMenu actions={actions} /> : null}
+                        </td>
+                      ) : null}
+                    </tr>
+                    {expansion && isExpanded ? (
+                      <tr className="bg-surface-muted/40">
+                        <td colSpan={totalCols} className="border-b border-border-subtle px-4 py-3">
+                          {expansion.render(row)}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+/** The "Columns" menu for a table, built from its own column list. */
+export function columnToggles<T>(
+  columns: Column<T>[],
+  hidden: readonly string[],
+): ColumnToggle[] {
+  return columns.map((column) => ({
+    id: column.key,
+    label: typeof column.header === "string" ? column.header : column.key,
+    visible: column.alwaysVisible || !hidden.includes(column.key),
+    locked: column.alwaysVisible,
+  }));
+}
+
+export { TableViewOptions };
+
+
+/**
+ * A checkbox that can show "some, but not all".
+ *
+ * `indeterminate` is a DOM property with no HTML attribute, so it has to be
+ * assigned to the node. Doing that from a callback ref runs *during* render,
+ * which React may discard or replay — so it is set in an effect instead, which
+ * is the only point the node is guaranteed to exist and the render is
+ * guaranteed to have been committed.
+ */
+function TriStateCheckbox({
+  label,
+  checked,
+  indeterminate,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  indeterminate: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}): ReactNode {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label={label}
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className="size-3.5 cursor-pointer accent-primary"
+    />
   );
 }
 
@@ -288,8 +641,12 @@ function ActionMenu({ actions }: { actions: RowAction[] }): ReactNode {
         {actions.map((action) => (
           <div key={action.label}>
             {action.separatorBefore ? <DropdownMenuSeparator /> : null}
-            {/* Base UI menu items fire `onClick`; there is no `onSelect` (see components/ui/dropdown-menu.tsx). */}
-            <DropdownMenuItem disabled={action.disabled} onClick={action.onSelect} className={cn("gap-2", action.destructive && "text-danger")}>
+            {/* Base UI menu items fire `onClick`; there is no `onSelect`. */}
+            <DropdownMenuItem
+              disabled={action.disabled}
+              onClick={action.onSelect}
+              className={cn("gap-2", action.destructive && "text-danger")}
+            >
               {action.icon}
               {action.label}
             </DropdownMenuItem>
@@ -300,83 +657,4 @@ function ActionMenu({ actions }: { actions: RowAction[] }): ReactNode {
   );
 }
 
-export interface PageState {
-  limit: number;
-  offset: number;
-}
-
-const PAGE_SIZES = [10, 25, 50, 100];
-
-export function Pagination({
-  total,
-  limit,
-  offset,
-  onChange,
-  label = "records",
-  pageSizes = PAGE_SIZES,
-}: {
-  total: number;
-  limit: number;
-  offset: number;
-  onChange: (next: PageState) => void;
-  label?: string;
-  pageSizes?: number[];
-}): ReactNode {
-  const first = total === 0 ? 0 : offset + 1;
-  const last = Math.min(offset + limit, total);
-  const pages = Math.max(1, Math.ceil(total / limit));
-  const page = Math.floor(offset / limit) + 1;
-  const canPrevious = offset > 0;
-  const canNext = offset + limit < total;
-  const go = (p: number) => onChange({ limit, offset: (Math.min(Math.max(p, 1), pages) - 1) * limit });
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border-subtle bg-surface px-3 py-2 text-2xs">
-      <p className="text-muted-foreground" aria-live="polite">
-        {total === 0 ? (
-          <>No {label}</>
-        ) : (
-          <>
-            <span className="font-medium text-foreground tabular-nums">
-              {first.toLocaleString()}–{last.toLocaleString()}
-            </span>{" "}
-            of <span className="tabular-nums">{total.toLocaleString()}</span> {label}
-          </>
-        )}
-      </p>
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-1.5 text-muted-foreground">
-          Rows per page
-          <select
-            className="h-7 cursor-pointer rounded-md border border-border-strong bg-surface px-1.5 text-2xs text-foreground transition-colors duration-200 ease-out hover:border-slate-400/70"
-            value={limit}
-            onChange={(event) => onChange({ limit: Number(event.target.value), offset: 0 })}
-          >
-            {(pageSizes.includes(limit) ? pageSizes : [...pageSizes, limit].sort((a, b) => a - b)).map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="hidden text-muted-foreground tabular-nums sm:inline">
-          Page {page} of {pages}
-        </span>
-        <div className="flex items-center gap-1">
-          <Button variant="secondary" size="icon" className="hidden size-7 sm:inline-flex" aria-label="First page" disabled={!canPrevious} onClick={() => go(1)}>
-            <ChevronsLeft />
-          </Button>
-          <Button variant="secondary" size="icon" className="size-7" aria-label="Previous page" disabled={!canPrevious} onClick={() => go(page - 1)}>
-            <ChevronLeft />
-          </Button>
-          <Button variant="secondary" size="icon" className="size-7" aria-label="Next page" disabled={!canNext} onClick={() => go(page + 1)}>
-            <ChevronRight />
-          </Button>
-          <Button variant="secondary" size="icon" className="hidden size-7 sm:inline-flex" aria-label="Last page" disabled={!canNext} onClick={() => go(pages)}>
-            <ChevronsRight />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+export { Button as _TableButton };

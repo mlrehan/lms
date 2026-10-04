@@ -38,7 +38,9 @@ import {
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { FormSelect } from "@/components/ui/form-controls";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { UserPicker } from "@/components/domain/user-picker";
@@ -135,6 +137,7 @@ function OverviewTab({ batch, canEdit }: { batch: BatchResponse; canEdit: boolea
   const {
     register,
     handleSubmit,
+    control,
     reset,
     watch,
     setValue,
@@ -259,38 +262,24 @@ function OverviewTab({ batch, canEdit }: { batch: BatchResponse; canEdit: boolea
             </Field>
             <Field label="Academic year">
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
                   disabled={!canEdit || !canReadAcademic}
-                  value={academicYearId}
-                  onChange={(event) => {
-                    setValue("academic_year_id", event.target.value, { shouldDirty: true });
+                  value={(academicYearId) || null}
+                  onValueChange={(next) => {
+                    setValue("academic_year_id", (next ?? ""), { shouldDirty: true });
                     setValue("semester_id", "", { shouldDirty: true });
                   }}
-                >
-                  <option value="">Not scheduled</option>
-                  {(years.data?.items ?? []).map((year) => (
-                    <option key={year.public_id} value={year.public_id}>
-                      {year.label}
-                    </option>
-                  ))}
-                </NativeSelect>
+                 placeholder="Not scheduled" clearable options={(years.data?.items ?? []).map((year) => ({ value: year.public_id, label: year.label }))} />
               )}
             </Field>
             <Field label="Semester" error={errors.semester_id?.message}>
               {({ id }) => (
-                <NativeSelect
+                <FormSelect
                   id={id}
                   disabled={!canEdit || !canReadAcademic || !academicYearId}
-                  {...register("semester_id")}
-                >
-                  <option value="">Not scheduled</option>
-                  {(semesters.data?.items ?? []).map((semester) => (
-                    <option key={semester.public_id} value={semester.public_id}>
-                      {semester.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  
+                 control={control} name="semester_id" placeholder="Not scheduled" clearable options={(semesters.data?.items ?? []).map((semester) => ({ value: semester.public_id, label: semester.name }))} />
               )}
             </Field>
           </FormGrid>
@@ -363,6 +352,7 @@ function SessionsTab({ batch }: { batch: BatchResponse }) {
   const {
     register,
     handleSubmit,
+    control: sessionControl,
     reset,
     watch,
     setValue,
@@ -546,13 +536,7 @@ function SessionsTab({ batch }: { batch: BatchResponse }) {
               </Field>
               <Field label="Platform">
                 {({ id }) => (
-                  <NativeSelect id={id} {...register("platform")}>
-                    {PlatformsValues.map((platform) => (
-                      <option key={platform} value={platform}>
-                        {humanise(platform)}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <FormSelect id={id} control={sessionControl} name="platform" options={PlatformsValues.map((platform) => ({ value: platform, label: humanise(platform) }))} />
                 )}
               </Field>
               <Field label="Classroom">
@@ -668,24 +652,17 @@ function EnrollmentsTab({ batch }: { batch: BatchResponse }) {
       align: "right",
       cell: (row) =>
         permissions.has("enrollment.update") ? (
-          <NativeSelect
+          <Select
             className="ml-auto w-auto"
             aria-label={`Status for ${row.student_username ?? "student"}`}
             value={row.status}
             disabled={setEnrollmentStatus.isPending}
-            onChange={(event) =>
-              setEnrollmentStatus.mutate({
+            onValueChange={(next) => setEnrollmentStatus.mutate({
                 enrollmentId: row.public_id,
-                status: event.target.value,
+                status: (next ?? ""),
               })
             }
-          >
-            {EnrollmentStatusValues.map((value) => (
-              <option key={value} value={value}>
-                {humanise(value)}
-              </option>
-            ))}
-          </NativeSelect>
+           options={optionsFromValues(EnrollmentStatusValues, humanise)} />
         ) : null,
     },
   ];
@@ -701,22 +678,15 @@ function EnrollmentsTab({ batch }: { batch: BatchResponse }) {
         }
         actions={
           <div className="flex items-center gap-2">
-            <NativeSelect
+            <Select
               className="w-auto"
               aria-label="Filter by status"
-              value={status}
-              onChange={(event) => {
-                setStatus(event.target.value);
+              value={(status) || null}
+              onValueChange={(next) => {
+                setStatus((next ?? ""));
                 setPage({ limit, offset: 0 });
               }}
-            >
-              <option value="">Any status</option>
-              {EnrollmentStatusValues.map((value) => (
-                <option key={value} value={value}>
-                  {humanise(value)}
-                </option>
-              ))}
-            </NativeSelect>
+             placeholder="Any status" clearable options={optionsFromValues(EnrollmentStatusValues, humanise)} />
             {permissions.has("enrollment.create") ? (
               <Button size="sm" onClick={() => setEnrollOpen(true)}>
                 <UserPlus /> Enroll

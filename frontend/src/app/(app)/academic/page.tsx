@@ -19,6 +19,7 @@ import type {
 import { useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   Badge,
   Card,
@@ -32,7 +33,7 @@ import {
 } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Field, FormActions, FormGrid, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormActions, FormGrid, Input } from "@/components/ui/form";
 import { UserPicker } from "@/components/domain/user-picker";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -316,22 +317,15 @@ function Semesters() {
         title="Semesters"
         description="Terms inside an academic year. A batch can be scheduled into one."
         actions={
-          <NativeSelect
+          <Select
             className="w-52"
             aria-label="Filter by academic year"
-            value={yearFilter}
-            onChange={(event) => {
-              setYearFilter(event.target.value);
+            value={(yearFilter) || null}
+            onValueChange={(next) => {
+              setYearFilter((next ?? ""));
               setPage({ limit, offset: 0 });
             }}
-          >
-            <option value="">Every year</option>
-            {(years.data?.items ?? []).map((year) => (
-              <option key={year.public_id} value={year.public_id}>
-                {year.label}
-              </option>
-            ))}
-          </NativeSelect>
+           placeholder="Every year" clearable options={(years.data?.items ?? []).map((year) => ({ value: year.public_id, label: year.label }))} />
         }
       />
       {isPending ? (
@@ -361,18 +355,11 @@ function Semesters() {
           <FormGrid>
             <Field label="Academic year" required>
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
-                  value={draft.academic_year_id}
-                  onChange={(event) => setDraft({ ...draft, academic_year_id: event.target.value })}
-                >
-                  <option value="">Choose a year</option>
-                  {(years.data?.items ?? []).map((year) => (
-                    <option key={year.public_id} value={year.public_id}>
-                      {year.label}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  value={(draft.academic_year_id) || null}
+                  onValueChange={(next) => setDraft({ ...draft, academic_year_id: (next ?? "") })}
+                 placeholder="Choose a year" clearable options={(years.data?.items ?? []).map((year) => ({ value: year.public_id, label: year.label }))} />
               )}
             </Field>
             <Field label="Name" hint="e.g. Fall, Spring. Unique within its year.">
@@ -722,18 +709,11 @@ function Categories() {
             </Field>
             <Field label="Parent" hint="Leave blank for a top-level category.">
               {({ id }) => (
-                <NativeSelect
+                <Select
                   id={id}
-                  value={draft.parent_id}
-                  onChange={(event) => setDraft({ ...draft, parent_id: event.target.value })}
-                >
-                  <option value="">Top level</option>
-                  {(all.data?.items ?? []).map((category) => (
-                    <option key={category.public_id} value={category.public_id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  value={(draft.parent_id) || null}
+                  onValueChange={(next) => setDraft({ ...draft, parent_id: (next ?? "") })}
+                 placeholder="Top level" clearable options={(all.data?.items ?? []).map((category) => ({ value: category.public_id, label: category.name }))} />
               )}
             </Field>
           </FormGrid>

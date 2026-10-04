@@ -13,10 +13,12 @@ import type { PageCourseSummary, PageQuizSummary, QuizResponse, QuizSummary } fr
 import { applyFieldErrors, useApiMutation, useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
+import { FormSelect } from "@/components/ui/form-controls";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, NativeSelect, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 
@@ -47,6 +49,7 @@ function CreateQuizDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   const {
     register,
     handleSubmit,
+    control,
     reset,
     watch,
     setValue,
@@ -111,14 +114,7 @@ function CreateQuizDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           ) : null}
           <Field label="Course" error={errors.course_id?.message} required>
             {({ id }) => (
-              <NativeSelect id={id} {...register("course_id")}>
-                <option value="">Choose a course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+              <FormSelect id={id}  control={control} name="course_id" placeholder="Choose a course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
             )}
           </Field>
           <Field label="Title" error={errors.title?.message} required>
@@ -246,22 +242,15 @@ export default function QuizzesPage() {
         <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle p-3">
           <Field label="Course" className="w-72">
             {({ id }) => (
-              <NativeSelect
+              <Select
                 id={id}
-                value={courseId}
+                value={(courseId) || null}
                 disabled={!permissions.has("course.read")}
-                onChange={(event) => {
-                  setCourseId(event.target.value);
+                onValueChange={(next) => {
+                  setCourseId((next ?? ""));
                   setPage({ limit, offset: 0 });
                 }}
-              >
-                <option value="">Every course</option>
-                {(courses.data?.items ?? []).map((course) => (
-                  <option key={course.public_id} value={course.public_id}>
-                    {course.title}
-                  </option>
-                ))}
-              </NativeSelect>
+               placeholder="Every course" clearable options={(courses.data?.items ?? []).map((course) => ({ value: course.public_id, label: course.title }))} />
             )}
           </Field>
         </div>

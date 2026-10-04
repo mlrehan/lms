@@ -17,7 +17,8 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardBody, CardHeader, Switch, Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Field, FormActions, Input, NativeSelect } from "@/components/ui/form";
+import { Field, FormActions, Input} from "@/components/ui/form";
+import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ProfileForm } from "@/components/domain/profile-form";
@@ -202,18 +203,12 @@ function SecurityTab({ user }: { user: UserResponse }) {
             <div className="flex flex-wrap items-end gap-2">
               <Field label="Set status" className="min-w-40">
                 {({ id }) => (
-                  <NativeSelect
+                  <Select
                     id={id}
                     value={user.status}
                     disabled={setStatus.isPending}
-                    onChange={(event) => setStatus.mutate(event.target.value)}
-                  >
-                    {UserStatusValues.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                    onValueChange={(next) => setStatus.mutate((next ?? ""))}
+                   options={optionsFromValues(UserStatusValues)} />
                 )}
               </Field>
               {isSelf ? (
