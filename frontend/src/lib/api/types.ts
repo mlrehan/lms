@@ -2095,7 +2095,7 @@ export interface PartyRef {
 }
 
 export type PerformanceGroupBy = "course" | "batch" | "component" | "student";
-export const PerformanceGroupByValues = ["course", "batch", "component", "student"] as const;
+export const PerformanceGroupByValues = ["course", "batch", "component", "student", "month"] as const;
 export const CourseworkGroupByValues = ["course", "batch", "assignment", "student"] as const;
 
 export type PerformanceLevel = "poor" | "below_average" | "average" | "good" | "excellent";

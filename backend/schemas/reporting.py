@@ -48,6 +48,9 @@ class PerformanceGroupBy(str, Enum):
     BATCH = "batch"
     COMPONENT = "component"
     STUDENT = "student"
+    #: §35's performance trend. Keyed on when a mark was *recorded*, which is
+    #: the only date a grade-book entry has -- see `performance_by`.
+    MONTH = "month"
 
 
 class CourseworkGroupBy(str, Enum):

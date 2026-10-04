@@ -37,6 +37,7 @@ from backend.models.batch import Batch
 from backend.models.course import Course
 from backend.models.identity.user import User
 from backend.repositories.coursework_reporting import CourseworkReportingRepository
+from backend.repositories.distribution_reporting import DistributionReportingRepository
 from backend.repositories.reporting import MAX_GROUPS, ReportingRepository
 from backend.schemas.reporting import (
     AttendanceGroupBy,
@@ -47,6 +48,7 @@ from backend.schemas.reporting import (
     ReportRow,
 )
 from backend.services.metrics import attendance_rate, percentage
+from backend.services.grading_scheme_service import GradingSchemeService
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import AttendanceStatus, EnrollmentStatus
 
@@ -67,6 +69,7 @@ class ReportService:
         self.session = session
         self.reports = ReportingRepository(session)
         self.coursework_reports = CourseworkReportingRepository(session)
+        self.distribution_reports = DistributionReportingRepository(session)
         self.scopes = ScopeResolver(session)
 
     # -- attendance ----------------------------------------------------------
@@ -280,6 +283,94 @@ class ReportService:
             ],
             rows=rows,
             truncated=len(groups) > MAX_GROUPS,
+        )
+
+    async def distribution(
+        self,
+        *,
+        actor: User,
+        course_id: uuid.UUID | None = None,
+        batch_id: uuid.UUID | None = None,
+    ) -> ReportResponse:
+        """How a cohort is spread across its grading scheme's bands.
+
+        **A course or a batch is required, and that is not a convenience.**
+        Bands belong to a grading scheme, a course may override the
+        institution's (§13), and two schemes can both define an "A" over
+        different ranges. A distribution drawn across incompatible schemes
+        would add those together and present the result as one shape, which is
+        worse than refusing: it is wrong in a way nobody can see from the
+        output. So the scope is narrowed to one scheme first, and the error
+        says why.
+        """
+        course_pk = await self._course_pk(course_id)
+        batch_pk = await self._batch_pk(batch_id)
+
+        if course_pk is None and batch_pk is None:
+            raise ValidationError(
+                "Choose a course or a batch for a grade distribution.",
+                details={
+                    "reason": (
+                        "Grade bands belong to a grading scheme, and a course may use its "
+                        "own. Counting students across schemes would add together bands "
+                        "that do not mean the same thing."
+                    )
+                },
+            )
+
+        if batch_pk is not None and course_pk is None:
+            batch = await self.session.get(Batch, batch_pk)
+            course_pk = batch.course_id if batch is not None else None
+
+        schemes = GradingSchemeService(self.session)
+        scheme = await schemes.for_course(course_pk) if course_pk is not None else None
+        if scheme is None:
+            raise ValidationError(
+                "No grading scheme applies to that course.",
+                details={"reason": "Set a course scheme, or mark one scheme as the institution default."},
+            )
+
+        visibility = await self.scopes.work_visibility(actor)
+        bands, unassessed = await self.distribution_reports.distribution(
+            visibility=visibility,
+            scheme_id=scheme.id,
+            course_id=course_pk,
+            batch_id=batch_pk,
+        )
+
+        counted = sum(students for _letter, _label, students in bands)
+        rows = [
+            ReportRow(
+                key=letter,
+                label=label,
+                metrics={
+                    "students": students,
+                    "percent_of_assessed": percentage(students, counted),
+                },
+            )
+            for letter, label, students in bands
+        ]
+
+        if unassessed:
+            # Its own row rather than a footnote: a distribution describing
+            # half a cohort should say so where the numbers are read, and
+            # `percent_of_assessed` is deliberately null here because these
+            # students are not part of that denominator.
+            rows.append(
+                ReportRow(
+                    key="__unassessed__",
+                    label="Not yet assessed",
+                    metrics={"students": unassessed, "percent_of_assessed": None},
+                )
+            )
+
+        return ReportResponse(
+            report="distribution",
+            group_by=scheme.name,
+            generated_at=_now(),
+            columns=["students", "percent_of_assessed"],
+            rows=rows,
+            truncated=False,
         )
 
     @staticmethod

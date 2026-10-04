@@ -143,6 +143,16 @@ async def performance_report(
     A group with no assessable marks reports `average_percent: null`, never
     `0`: "nothing graded yet" and "scored nothing" are different facts and
     only one of them belongs at the bottom of a distribution.
+
+    `lowest`, `median` and `highest` are taken across *students*, each first
+    reduced to their own weighted percentage, so they will not agree with the
+    mark-weighted average — and that disagreement is the useful part. An
+    average of 68% over a cohort whose median is 81% is a cohort with a few
+    students in serious trouble.
+
+    `group_by=month` keys on when a mark was **recorded**, the only date a
+    grade-book entry carries. A term's marking entered in one sitting shows as
+    one month; reading that as a sudden improvement would be wrong.
     """
     report = await ReportService(session).performance(
         actor=actor, group_by=group_by, course_id=course_id, batch_id=batch_id
@@ -180,5 +190,39 @@ async def coursework_report(
     """
     report = await ReportService(session).coursework(
         actor=actor, group_by=group_by, course_id=course_id, batch_id=batch_id
+    )
+    return _render(report, format, actor)
+
+
+@router.get(
+    "/distribution",
+    response_model=ReportResponse,
+    summary="Grade distribution across a cohort",
+)
+async def distribution_report(
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(_READ)],
+    course_id: Annotated[uuid.UUID | None, Query()] = None,
+    batch_id: Annotated[uuid.UUID | None, Query()] = None,
+    format: Annotated[ReportFormat, Query()] = ReportFormat.JSON,
+):  # type: ignore[no-untyped-def]
+    """The shape an average cannot show.
+
+    A cohort averaging 68% might be thirty students clustered at 68, or
+    fifteen at 85 and fifteen at 50 — the same mean, and completely different
+    teaching problems.
+
+    **A course or batch is required.** Grade bands belong to a grading scheme
+    and a course may override the institution's (§13), so a distribution drawn
+    across two schemes would add together bands that do not mean the same
+    thing. That is refused rather than rendered.
+
+    Counted against the enrolled roster, so students nobody has assessed
+    appear as their own row instead of silently shrinking the cohort the
+    shape describes. Bands nobody reached are reported as zero rather than
+    omitted — a gap in the middle of a distribution is the interesting part.
+    """
+    report = await ReportService(session).distribution(
+        actor=actor, course_id=course_id, batch_id=batch_id
     )
     return _render(report, format, actor)

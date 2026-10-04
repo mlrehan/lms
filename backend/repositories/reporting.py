@@ -246,6 +246,20 @@ class ReportingRepository:
         elif group == "student":
             base = base.join(User, GradeBookEntry.student_id == User.id)
             key_col, label_col = User.public_id, User.username
+        elif group == "month":
+            # §35's performance trend.
+            #
+            # Keyed on `recorded_at` -- when the mark was *entered* -- because
+            # that is the only date a grade-book entry carries. Unlike the
+            # attendance report, which can range on the session it describes,
+            # there is no "when the work was done" here: `reference_id` points
+            # at a submission, attempt or result depending on the component,
+            # and they are different tables.
+            #
+            # So this is "marks recorded in month X", and the API says so. A
+            # term's worth of marking entered in one sitting will show as one
+            # month, and reading that as a sudden improvement would be wrong.
+            key_col = label_col = _month(GradeBookEntry.recorded_at)
         else:  # pragma: no cover
             raise ValueError(f"Unsupported grouping: {group}")
 
