@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Sequence
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Numeric, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.assignment import Assignment, AssignmentSubmission
@@ -52,6 +52,11 @@ if TYPE_CHECKING:
 # reads. The cap is applied in the query and reported back as `truncated`,
 # rather than silently returning a prefix that looks complete.
 MAX_GROUPS = 500
+
+
+def _round(value: Any) -> float | None:
+    """Two decimal places, or None. Percentages are read, not recomputed from."""
+    return None if value is None else round(float(value), 2)
 
 
 def _month(column: Any) -> Any:
@@ -244,22 +249,60 @@ class ReportingRepository:
         else:  # pragma: no cover
             raise ValueError(f"Unsupported grouping: {group}")
 
-        stmt = (
+        # Per student first, then across students (spec §35).
+        #
+        # The group's *average* is deliberately mark-weighted -- `SUM(score) /
+        # SUM(max_score)` over every entry -- because a 1-mark quiz and a
+        # 100-mark exam are not equal halves of anyone's performance. But
+        # "lowest", "median" and "highest" are questions about *people*, not
+        # about marks, so each student is first reduced to their own weighted
+        # percentage and the spread is taken across those.
+        #
+        # The two therefore answer different questions and will not agree, and
+        # that is the point: an average of 68% over a cohort whose median is
+        # 81% is a cohort with a few students in serious trouble, which is
+        # exactly what a single mean hides.
+        per_student = (
             base.with_only_columns(
                 key_col.label("key"),
                 label_col.label("label"),
+                GradeBookEntry.student_id.label("student_id"),
                 func.count().label("entries"),
-                func.count(func.distinct(GradeBookEntry.student_id)).label("students"),
                 func.sum(GradeBookEntry.score).label("scored"),
                 func.sum(GradeBookEntry.max_score).label("available"),
             )
-            .group_by(key_col, label_col)
-            .order_by(label_col)
+            .group_by(key_col, label_col, GradeBookEntry.student_id)
+            .subquery("per_student")
+        )
+
+        # A student with no marks available cannot have a percentage; NULL
+        # keeps them out of the spread rather than entering it as a zero,
+        # which would drag a median down with somebody who was never assessed.
+        pct = (
+            100.0
+            * func.cast(per_student.c.scored, Numeric)
+            / func.nullif(func.cast(per_student.c.available, Numeric), 0)
+        )
+
+        stmt = (
+            select(
+                per_student.c.key,
+                per_student.c.label,
+                func.sum(per_student.c.entries).label("entries"),
+                func.count().label("students"),
+                func.sum(per_student.c.scored).label("scored"),
+                func.sum(per_student.c.available).label("available"),
+                func.min(pct).label("lowest"),
+                func.max(pct).label("highest"),
+                func.percentile_cont(0.5).within_group(pct.asc()).label("median"),
+            )
+            .group_by(per_student.c.key, per_student.c.label)
+            .order_by(per_student.c.label)
             .limit(MAX_GROUPS + 1)
         )
 
         out: list[tuple[str, str, dict[str, float | int | None]]] = []
-        for key, label, entries, students, scored, available in (
+        for key, label, entries, students, scored, available, lowest, highest, median in (
             await self.session.execute(stmt)
         ).all():
             out.append(
@@ -271,6 +314,9 @@ class ReportingRepository:
                         "students": int(students),
                         "scored": float(scored) if scored is not None else None,
                         "available": float(available) if available is not None else None,
+                        "lowest_percent": _round(lowest),
+                        "median_percent": _round(median),
+                        "highest_percent": _round(highest),
                     },
                 )
             )

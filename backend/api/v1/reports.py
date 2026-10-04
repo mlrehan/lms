@@ -23,6 +23,7 @@ from backend.models.identity.user import User
 from backend.schemas.reporting import (
     AttendanceGroupBy,
     EnrollmentGroupBy,
+    CourseworkGroupBy,
     PerformanceGroupBy,
     ReportFormat,
     ReportResponse,
@@ -144,6 +145,40 @@ async def performance_report(
     only one of them belongs at the bottom of a distribution.
     """
     report = await ReportService(session).performance(
+        actor=actor, group_by=group_by, course_id=course_id, batch_id=batch_id
+    )
+    return _render(report, format, actor)
+
+
+@router.get(
+    "/coursework",
+    response_model=ReportResponse,
+    summary="Submission, lateness and grading status, grouped",
+)
+async def coursework_report(
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(_READ)],
+    group_by: Annotated[CourseworkGroupBy, Query()] = CourseworkGroupBy.ASSIGNMENT,
+    course_id: Annotated[uuid.UUID | None, Query()] = None,
+    batch_id: Annotated[uuid.UUID | None, Query()] = None,
+    format: Annotated[ReportFormat, Query()] = ReportFormat.JSON,
+):  # type: ignore[no-untyped-def]
+    """Measured against **eligible students**, not submission rows.
+
+    Counting over submissions gives a submission rate of 100% by
+    construction, because a student who never handed anything in has no row
+    to count. The population comes from the same scope rule that decides who
+    an assignment was set for, so `missing` is a real number and the three
+    reports §34 asks for -- submission, missing work, grading status -- are
+    three readings of one query rather than three endpoints that can drift.
+
+    Draft assignments are excluded: a draft has been set for nobody, so its
+    "missing submissions" would be work nobody was asked to do.
+
+    A rate over an empty population is `null`, never `0` — "no coursework has
+    been set" is not "nobody submitted".
+    """
+    report = await ReportService(session).coursework(
         actor=actor, group_by=group_by, course_id=course_id, batch_id=batch_id
     )
     return _render(report, format, actor)

@@ -7,8 +7,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.errors import NotFoundError
@@ -20,7 +21,8 @@ from backend.models.assignment import Assignment
 from backend.models.batch import Batch, BatchSession
 from backend.models.exam import Exam
 from backend.models.quiz import Quiz
-from backend.utils.enums import AssessmentScope, AssessmentState
+from backend.services.assessment_scope import covers_batch
+from backend.utils.enums import AssessmentState
 from backend.models.enrollment import Enrollments
 from backend.models.course import Course
 from backend.schemas.base import Page, PageParams
@@ -457,21 +459,20 @@ async def _assessment_events(
     my_batches = enrolled_batches.union(taught_batches).subquery()
     batch_ids = select(my_batches.c[0])
 
-    my_courses = select(Batch.course_id).where(Batch.id.in_(batch_ids))
-    my_sessions = select(BatchSession.id).where(BatchSession.batch_id.in_(batch_ids))
-
     def in_scope(model) -> object:  # type: ignore[no-untyped-def]
-        """`scope` decides which id to match, rather than which id is non-null.
+        """Does this assessment reach any batch this person is part of?
 
-        A batch-scoped assessment also carries its course id, so matching on
-        "whichever column is populated" would hand a course-wide audience
-        something set for one batch -- the exact confusion `AssessmentScope`
-        exists to remove.
+        Delegates to `covers_batch`, the one definition of what a scope
+        selects. This used to be a second copy of that rule written out here,
+        which is how the exam service once lost `Batch.is_active` and put a
+        closed cohort on a live mark sheet.
         """
-        return or_(
-            and_(model.scope == AssessmentScope.COURSE, model.course_id.in_(my_courses)),
-            and_(model.scope == AssessmentScope.BATCH, model.batch_id.in_(batch_ids)),
-            and_(model.scope == AssessmentScope.SESSION, model.session_id.in_(my_sessions)),
+        mine = aliased(Batch)
+        return (
+            select(literal(1))
+            .select_from(mine)
+            .where(mine.id.in_(batch_ids), covers_batch(model, mine))
+            .exists()
         )
 
     base = get_settings().mail.app_url.rstrip("/")

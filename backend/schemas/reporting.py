@@ -50,6 +50,20 @@ class PerformanceGroupBy(str, Enum):
     STUDENT = "student"
 
 
+class CourseworkGroupBy(str, Enum):
+    """How the coursework report is cut.
+
+    `assignment` and `student` are the two that drive action -- which piece of
+    work is not coming in, and which person is not handing it in -- so both
+    are offered rather than only the management cuts.
+    """
+
+    COURSE = "course"
+    BATCH = "batch"
+    ASSIGNMENT = "assignment"
+    STUDENT = "student"
+
+
 class ReportRow(APIModel):
     key: str = Field(description="Stable identifier for the group (a public_id, a status, or a month).")
     label: str

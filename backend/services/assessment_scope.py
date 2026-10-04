@@ -31,9 +31,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ValidationError
@@ -92,6 +92,46 @@ def validate(target: AssessmentTarget) -> None:
         raise ValidationError(
             "A course-wide assessment cannot also name a batch or session."
         )
+
+
+def covers_batch(model: Any, batch: Any = Batch) -> ColumnElement[bool]:
+    """True when `batch` falls inside the population `model`'s scope selects.
+
+    **The same rule as `AssessmentScopeResolver.eligible_student_ids_stmt`,
+    written once more only because the two are needed in opposite
+    directions** -- that one starts from a single assessment and finds its
+    students, this one starts from an assessment *row in a query* and asks
+    which batches it reaches. An aggregate over hundreds of assignments cannot
+    use the first without resolving each one separately, which is the N+1 §33
+    forbids.
+
+    They are kept in the same module, adjacent, because this codebase has
+    already paid for the alternative: the exam service once carried its own
+    copy of the eligibility join and quietly omitted `Batch.is_active`, so a
+    course-wide exam put last year's closed cohort on this year's mark sheet.
+    `tests/integration/test_assessment_scope.py` asserts the two agree for
+    every scope, so a change to one that is not made to the other fails.
+
+    Matching is on `scope`, never on "whichever id is non-null": a
+    batch-scoped assessment also carries its course id, so the lazy version
+    hands a course-wide population something set for one batch.
+    """
+    return or_(
+        and_(
+            model.scope == AssessmentScope.COURSE,
+            batch.course_id == model.course_id,
+            # §3: "all *active* Batches of that Course".
+            batch.is_active.is_(True),
+        ),
+        and_(model.scope == AssessmentScope.BATCH, batch.id == model.batch_id),
+        and_(
+            model.scope == AssessmentScope.SESSION,
+            batch.id
+            == select(BatchSession.batch_id)
+            .where(BatchSession.id == model.session_id)
+            .scalar_subquery(),
+        ),
+    )
 
 
 class AssessmentScopeResolver:

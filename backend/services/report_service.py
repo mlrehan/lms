@@ -36,9 +36,11 @@ from backend.core.errors import NotFoundError, ValidationError
 from backend.models.batch import Batch
 from backend.models.course import Course
 from backend.models.identity.user import User
+from backend.repositories.coursework_reporting import CourseworkReportingRepository
 from backend.repositories.reporting import MAX_GROUPS, ReportingRepository
 from backend.schemas.reporting import (
     AttendanceGroupBy,
+    CourseworkGroupBy,
     EnrollmentGroupBy,
     PerformanceGroupBy,
     ReportResponse,
@@ -64,6 +66,7 @@ class ReportService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.reports = ReportingRepository(session)
+        self.coursework_reports = CourseworkReportingRepository(session)
         self.scopes = ScopeResolver(session)
 
     # -- attendance ----------------------------------------------------------
@@ -202,6 +205,9 @@ class ReportService:
                     "average_percent": percentage(
                         metrics["scored"], metrics["available"]
                     ),
+                    "lowest_percent": metrics["lowest_percent"],
+                    "median_percent": metrics["median_percent"],
+                    "highest_percent": metrics["highest_percent"],
                 },
             )
             for key, label, metrics in groups[:MAX_GROUPS]
@@ -211,12 +217,70 @@ class ReportService:
             report="performance",
             group_by=group_by.value,
             generated_at=_now(),
-            columns=["students", "entries", "average_percent"],
+            # Average first because it is what people look for, then the
+            # spread that tells them whether the average means anything.
+            columns=[
+                "students",
+                "entries",
+                "average_percent",
+                "lowest_percent",
+                "median_percent",
+                "highest_percent",
+            ],
             rows=rows,
             truncated=len(groups) > MAX_GROUPS,
         )
 
     # -- export --------------------------------------------------------------
+
+    async def coursework(
+        self,
+        *,
+        actor: User,
+        group_by: CourseworkGroupBy,
+        course_id: uuid.UUID | None = None,
+        batch_id: uuid.UUID | None = None,
+    ) -> ReportResponse:
+        """Who has handed work in, who has not, and what is waiting to be marked.
+
+        Scoped through the same `WorkVisibility` the submission listings use,
+        so a tutor's chase list covers the courses they teach. A report that
+        quietly widened would be the most valuable thing in the API to attack:
+        one request, whole institution, and a plausible reason to be calling
+        it.
+        """
+        visibility = await self.scopes.work_visibility(actor)
+
+        groups = await self.coursework_reports.coursework_by(
+            group_by.value,
+            visibility=visibility,
+            course_id=await self._course_pk(course_id),
+            batch_id=await self._batch_pk(batch_id),
+        )
+
+        rows = [
+            ReportRow(key=key, label=label, metrics=metrics)
+            for key, label, metrics in groups[:MAX_GROUPS]
+        ]
+
+        return ReportResponse(
+            report="coursework",
+            group_by=group_by.value,
+            generated_at=_now(),
+            # `missing` sits beside `submitted` rather than at the end: it is
+            # the column anybody opening this report is actually here for.
+            columns=[
+                "expected",
+                "submitted",
+                "missing",
+                "late",
+                "awaiting_grading",
+                "submission_rate",
+                "pass_rate",
+            ],
+            rows=rows,
+            truncated=len(groups) > MAX_GROUPS,
+        )
 
     @staticmethod
     def to_csv(report: ReportResponse) -> str:

@@ -18,6 +18,7 @@ import type { ReportResponse } from "@/lib/api/types";
 import {
   AttendanceGroupByValues,
   EnrollmentGroupByValues,
+  CourseworkGroupByValues,
   PerformanceGroupByValues,
 } from "@/lib/api/types";
 import { PageHeader } from "@/components/page-header";
@@ -31,18 +32,24 @@ import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
-type ReportKind = "attendance" | "enrollment" | "performance";
+type ReportKind = "attendance" | "enrollment" | "performance" | "coursework";
 
 const GROUPS: Record<ReportKind, readonly string[]> = {
   attendance: AttendanceGroupByValues,
   enrollment: EnrollmentGroupByValues,
   performance: PerformanceGroupByValues,
+  coursework: CourseworkGroupByValues,
 };
 
 const DESCRIPTIONS: Record<ReportKind, string> = {
   attendance: "Present, late, absent and excused counts, and the resulting rate.",
   enrollment: "How many enrollments exist, grouped as you choose.",
-  performance: "Scores and pass rates across the grade book.",
+  // Was "Scores and pass rates", which the report did not compute -- it
+  // returned an average and nothing else.
+  performance: "Grade-book averages, and the spread they hide.",
+  coursework:
+    "Who has handed work in, who has not, and what is waiting to be marked. " +
+    "Counted against the students the work was set for, so missing submissions are visible.",
 };
 
 /** Colours are read from the theme so the chart follows light/dark. */
@@ -58,7 +65,7 @@ function ReportPanel({ kind }: { kind: ReportKind }) {
   const [batchId, setBatchId] = useState("");
   const [exporting, setExporting] = useState(false);
 
-  const supportsDates = kind !== "performance";
+  const supportsDates = kind === "attendance" || kind === "enrollment";
   const supportsBatch = kind !== "enrollment";
 
   const filters: QueryParams = {
@@ -321,8 +328,9 @@ export default function ReportsPage() {
           <TabsTab value="attendance">Attendance</TabsTab>
           <TabsTab value="enrollment">Enrollment</TabsTab>
           <TabsTab value="performance">Performance</TabsTab>
+          <TabsTab value="coursework">Coursework</TabsTab>
         </TabsList>
-        {(["attendance", "enrollment", "performance"] as const).map((kind) => (
+        {(["attendance", "enrollment", "performance", "coursework"] as const).map((kind) => (
           <TabsPanel key={kind} value={kind}>
             <p className="mb-3 text-sm text-muted-foreground">{DESCRIPTIONS[kind]}</p>
             <ReportPanel kind={kind} />
