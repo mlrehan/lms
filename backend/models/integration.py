@@ -141,8 +141,12 @@ class CalendarFeed(Base, PublicIdMixin):
     link *is* the credential: anyone holding it reads that person's
     timetable. Mitigated rather than pretended away -- the token is 32 random
     bytes, stored hashed so the table is not a list of working URLs, revocable
-    in one click, and the feed exposes only session times and titles, never
-    grades, messages or anything else the person can see in the product.
+    in one click, and the feed carries only what a calendar entry needs: the
+    titles and times of this person's sessions, assignment deadlines, quiz
+    windows and exam sittings. **Never grades, messages, instructions, exam
+    content or joining links** -- the detail lives behind `url`, which still
+    asks who you are. An online exam's joining link is deliberately excluded
+    for the same reason: it is a way in, and this link can be forwarded.
     """
 
     __tablename__ = "calendar_feeds"

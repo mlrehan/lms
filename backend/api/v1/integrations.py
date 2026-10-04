@@ -7,14 +7,20 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.errors import NotFoundError
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession, commit_before_responding
 from backend.integrations.icalendar import build_calendar
+from backend.core.config import get_settings
+from backend.models.assignment import Assignment
 from backend.models.batch import Batch, BatchSession
+from backend.models.exam import Exam
+from backend.models.quiz import Quiz
+from backend.utils.enums import AssessmentScope, AssessmentState
 from backend.models.enrollment import Enrollments
 from backend.models.course import Course
 from backend.schemas.base import Page, PageParams
@@ -395,6 +401,16 @@ async def calendar_feed(
         if s.session_start_time is not None
     ]
 
+    events.extend(
+        await _assessment_events(
+            session,
+            user_id=feed.user_id,
+            window_start=window_start,
+            window_end=window_end,
+        )
+    )
+    events.sort(key=lambda e: e["start"])
+
     body = build_calendar(name=feed.name, events=events)
     await commit_before_responding(session)  # the access counter
     return Response(
@@ -407,3 +423,162 @@ async def calendar_feed(
             "Cache-Control": "private, max-age=300",
         },
     )
+
+
+async def _assessment_events(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict]:
+    """Assignment deadlines, quiz windows and exam sittings for this person (§26).
+
+    **Scoped the same way the sessions above are, and for the same reason.**
+    The caller is a token in a URL, not a request actor, so `ScopeResolver` is
+    the wrong tool: it answers "everything this user may see", which for a
+    tutor or an administrator would put other people's cohorts into a link
+    that can be forwarded. The population here is exactly "batches I am
+    enrolled in or teach", and an assessment is included only when its own
+    scope lands inside it.
+
+    **Unpublished assessments are never included.** A calendar feed is read by
+    software the institution does not control, cached by it, and often mirrored
+    to a phone -- so a draft leaking here leaks further than a draft leaking on
+    a screen, and cannot be withdrawn.
+
+    One query per assessment type with `IN` clauses, not a scope resolution per
+    row: a 90-day window on a busy course is hundreds of assessments, and
+    asking the eligibility resolver about each would be the N+1 §33 forbids.
+    """
+    # The two memberships this person has, resolved once.
+    enrolled_batches = select(Enrollments.batch_id).where(Enrollments.student_id == user_id)
+    taught_batches = select(BatchSession.batch_id).where(BatchSession.tutor_id == user_id)
+    my_batches = enrolled_batches.union(taught_batches).subquery()
+    batch_ids = select(my_batches.c[0])
+
+    my_courses = select(Batch.course_id).where(Batch.id.in_(batch_ids))
+    my_sessions = select(BatchSession.id).where(BatchSession.batch_id.in_(batch_ids))
+
+    def in_scope(model) -> object:  # type: ignore[no-untyped-def]
+        """`scope` decides which id to match, rather than which id is non-null.
+
+        A batch-scoped assessment also carries its course id, so matching on
+        "whichever column is populated" would hand a course-wide audience
+        something set for one batch -- the exact confusion `AssessmentScope`
+        exists to remove.
+        """
+        return or_(
+            and_(model.scope == AssessmentScope.COURSE, model.course_id.in_(my_courses)),
+            and_(model.scope == AssessmentScope.BATCH, model.batch_id.in_(batch_ids)),
+            and_(model.scope == AssessmentScope.SESSION, model.session_id.in_(my_sessions)),
+        )
+
+    base = get_settings().mail.app_url.rstrip("/")
+
+    def link(path: str) -> str | None:
+        # No invented host. Without a configured console URL the event simply
+        # carries no link, which is what the email templates already do.
+        return f"{base}{path}" if base else None
+
+    out: list[dict] = []
+
+    # -- assignments: a deadline is a moment, drawn as a short event ---------
+    assignments = (
+        await db.execute(
+            select(Assignment)
+            .where(
+                Assignment.state == AssessmentState.PUBLISHED,
+                Assignment.due_date >= window_start,
+                Assignment.due_date <= window_end,
+                in_scope(Assignment),
+            )
+            .order_by(Assignment.due_date)
+        )
+    ).scalars().all()
+    for a in assignments:
+        out.append(
+            {
+                "uid": f"assignment-{a.public_id}@lms",
+                "start": a.due_date,
+                "end": a.due_date,
+                "summary": f"Assignment due: {a.title}",
+                # No description, instructions or venue free-text anywhere in
+                # this helper. The feed is a capability URL -- the link *is*
+                # the credential -- so it carries what a calendar needs to
+                # show an entry (a title and a time) and nothing a forwarded
+                # link should not disclose. Anyone needing the detail follows
+                # `url` and authenticates.
+                "description": None,
+                "location": None,
+                "url": link(f"/assignments/{a.public_id}"),
+            }
+        )
+
+    # -- quizzes: the window it is open for, when one is set ----------------
+    quizzes = (
+        await db.execute(
+            select(Quiz)
+            .where(
+                Quiz.is_published.is_(True),
+                Quiz.available_from.is_not(None),
+                Quiz.available_from >= window_start,
+                Quiz.available_from <= window_end,
+                in_scope(Quiz),
+            )
+            .order_by(Quiz.available_from)
+        )
+    ).scalars().all()
+    for q in quizzes:
+        start = q.available_from
+        if start is None:  # pragma: no cover - excluded by the query above
+            continue
+        out.append(
+            {
+                "uid": f"quiz-{q.public_id}@lms",
+                "start": start,
+                # An always-open quiz has no close time; a zero-length event
+                # says "available from here" rather than inventing a deadline.
+                "end": q.available_until or start,
+                "summary": f"Quiz opens: {q.title}",
+                "description": None,
+                "location": None,
+                "url": link(f"/quizzes/{q.public_id}"),
+            }
+        )
+
+    # -- exams: a real sitting, with a duration -----------------------------
+    exams = (
+        await db.execute(
+            select(Exam)
+            .where(
+                Exam.is_published.is_(True),
+                Exam.scheduled_at >= window_start,
+                Exam.scheduled_at <= window_end,
+                in_scope(Exam),
+            )
+            .order_by(Exam.scheduled_at)
+        )
+    ).scalars().all()
+    for e in exams:
+        end = (
+            e.scheduled_at + timedelta(minutes=e.duration_minutes)
+            if e.duration_minutes
+            else e.scheduled_at
+        )
+        out.append(
+            {
+                "uid": f"exam-{e.public_id}@lms",
+                "start": e.scheduled_at,
+                "end": end,
+                "summary": f"Exam: {e.title}",
+                "description": None,
+                # A venue is an address a person must travel to, so it stays;
+                # an online exam's joining link does not, because it is a way
+                # *in* and this link can be forwarded.
+                "location": e.venue_or_link if not e.is_online else None,
+                "url": link(f"/exams/{e.public_id}"),
+            }
+        )
+
+    return out
