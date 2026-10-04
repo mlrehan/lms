@@ -2740,3 +2740,129 @@ One false alarm, recorded because the reasoning matters: the Staff only switch
 appeared to go stale after a toggle. It had not -- the reading was taken while
 the invalidation was still in flight. A reload showed server and UI agreeing.
 
+
+## Selection and table systems — built, then actually wired in
+
+A Staff-Frontend-Architect brief asked for an enterprise selection system
+(Select / multi / Combobox / async Combobox; `DropdownMenu` for **actions
+only**) and a TanStack-backed table with ~25 **opt-in** capabilities. The
+first pass built all of it and migrated 81 selectors. The user's review was
+blunt and correct: *"go to any table like /users, Can I resize the column???
+check any of the dropdown/select, for example country, can I search or
+filter, check the city? ... you haven't done anything I asked you"*.
+
+They were right, and the system/application gap was the whole problem — the
+components existed, the screens barely used them, and **two capabilities did
+not work at all**.
+
+### Column resizing was a prop that did nothing
+
+The handle rendered, `header.getResizeHandler()` fired, TanStack's state
+updated — and no column ever changed width. Under the default
+`table-layout: auto` a `width` on a `<th>` is a *suggestion* the browser is
+free to discard, and it did: every column sat at its content width while the
+inline style said `150px`.
+
+The fix is two parts, and **the first attempt at the second part was wrong in
+a way that was worse than the bug**:
+
+1. **`table-layout: fixed`, adopted at the start of a drag.** Switching every
+   table to `fixed` unconditionally would throw away the content-based widths
+   that make these tables readable. So on `mousedown` the table measures its
+   own rendered columns, hands those widths to TanStack and switches to
+   `fixed`. Because the widths adopted are the ones already on screen, the
+   hand-over is invisible. `flushSync`, deliberately: the very next statement
+   is TanStack's own handler, which reads the column's current width to anchor
+   the drag, and under normal batching it would still see the default.
+2. **The table is sized to its columns, not its container.** Left at
+   `width: 100%`, `fixed` layout shares any difference between the column
+   total and the table width across every column — so a 150px drag moved the
+   edge **519px** and shrank its neighbours. A drag that does not track the
+   pointer is worse than one that does nothing, because the person can see it
+   responding and still cannot land a width.
+
+Seeding on hover was tried first and abandoned: a pointer already resting on
+the header when the table mounts never fires an enter event, so the first drag
+after a reload silently did nothing.
+
+**`getTotalSize()` is the wrong number here.** This component does its own
+column filtering rather than handing visibility state to TanStack, so the
+instance still counts a hidden column at its default width — the table
+rendered exactly 150px wider than its contents the moment one column was
+hidden. Summed over the visible columns instead.
+
+### Column visibility shipped and no screen used it
+
+It existed as a controlled `{hidden, onChange}` prop, which meant state, a
+`ColumnToggle[]` and a toolbar in every page — identical boilerplate 25 times,
+so it was written nowhere. `columnsKey="users"` now does all of it, and 17 list
+pages name one.
+
+`useTableView` reads the stored choice through **`useSyncExternalStore`**, not
+state seeded in an effect: `localStorage` does not exist during the server
+render, and the effect version both renders twice and is what the React
+Compiler rules reject. `getSnapshot` must return a stable reference, so the
+parse is cached against the raw string it came from.
+
+### Batch and course pickers: `limit: 200` into an unsearchable list
+
+Twenty call sites built their own option list that way — unreadable at 200
+rows, and silently missing the 201st. `BatchPicker` / `CoursePicker`
+(`components/domain/entity-pickers.tsx`) search server-side and absorb the
+API's inconsistent parameter names (`/batches?q=` vs `/courses?query=`) so no
+screen has to know about it. They also carry the `batch.read` / `course.read`
+check each page used to make for itself — folding the gate into the control
+keeps it in one place instead of nine, and means a new caller cannot forget it
+and add a request that 403s.
+
+### Three combobox defects the browser found and nothing else could
+
+1. **The selection was rendered as the `placeholder`**, in muted
+   "nothing-selected" styling — a form with five answered fields looked like a
+   form with five empty ones. It is now the input's real value, with the typed
+   term taking over only while it is being typed, derived from events rather
+   than synced in an effect.
+2. **The field fell back to the raw value** once a search returned a page not
+   containing the selection — a live profile showed
+   `bc94d2ff-a158-4ca3-...` where "London" belonged. Controlling `inputValue`
+   was not enough: Base UI *also* derives display text through
+   `itemToStringLabel`, which saw only `options`. The selected option is now
+   part of the list the control resolves against.
+3. **Leaving a field never reset the caller's search**, so the list stayed
+   filtered by a term nobody could see, and the next read could not find its
+   own value in it.
+
+Also: gender rendered as `MALE`. `optionsFromValues` has existed for exactly
+this since the system was built.
+
+### A test that could not fail, and one that could
+
+jsdom has no layout engine, so **the resizing tests passed throughout the
+period when resizing did not work** — they asserted the handle existed. The
+replacement stubs `getBoundingClientRect` and pins the two things that made
+widths take effect: `fixed` layout, and a width in pixels rather than `100%`.
+Mutation-tested 4/4, including reintroducing the original bug.
+
+A second trap cost an hour: four new menu tests failed in the suite and passed
+in isolation, which looked exactly like cross-test pollution. It was not —
+Base UI's menu popup mounts a tick after the click, so `getByRole` is simply
+too early and `findByRole` is required. Pointer-event shims were added to the
+test setup on that false diagnosis, then **removed after a mutation showed
+they changed nothing**.
+
+### Still not built, from the brief
+
+Enabled nowhere, though built: row selection + bulk actions, expandable rows,
+column pinning. Deliberate — checkboxes with no bulk action behind them are
+the decorative-capability problem again.
+
+Not built at all: global search, per-column filtering, faceted/date/range
+filters, column ordering UI, grouping/aggregation, export, density toggle UI,
+URL/query-state sync, virtualisation.
+
+**Keyboard column resizing is a real gap.** The handle is `aria-hidden` and
+pointer-only, because a labelled handle inside the `<th>` made every header
+read "Role Resize Role" to a screen reader.
+
+**There is still no frontend test runner for the BFF proxy**, so its fixes
+are guarded by live proof only.
