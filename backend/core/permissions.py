@@ -92,6 +92,11 @@ class Action:
     SYNC: Final = "sync"
     ALLOW_LOGIN: Final = "allow_login"
     VIEW_CONTACT: Final = "view_contact"
+    #: See commercial terms -- what a course costs. Separate from `read`
+    #: because teaching a course and pricing it are different jobs: a tutor
+    #: needs the syllabus and has no business knowing the margin, while a
+    #: corporate manager buying training for employees needs exactly that.
+    VIEW_PRICING: Final = "view_pricing"
     #: Reach material whose audience is staff. Not a level on the file and not
     #: a role check: an institution will eventually want a REGISTRAR or an
     #: external examiner who may see restricted media and little else, and
@@ -148,6 +153,7 @@ def _register(
         Action.SYNC: f"Synchronise {noun} from the external LAIT system",
         Action.ALLOW_LOGIN: f"Allow or block sign-in for {noun}",
         Action.VIEW_CONTACT: f"See other people's email addresses, phone numbers and login names in {noun}",
+        Action.VIEW_PRICING: f"See the price of {noun}",
         Action.OVERRIDE: f"Take or correct {noun} on behalf of the assigned tutor",
     }
     if phrasing:
@@ -173,7 +179,18 @@ _register(
 _register(Module.TEAM, (Action.READ,), "the progress of the people in your care")
 _register(Module.ROLE, _CRUD, "roles")
 _register(Module.PERMISSION, (Action.READ, Action.MANAGE), "permissions")
-_register(Module.COURSE, _CRUD + (Action.PUBLISH, Action.SYNC), "courses")
+_register(
+    Module.COURSE,
+    _CRUD + (Action.PUBLISH, Action.SYNC, Action.VIEW_ALL, Action.VIEW_PRICING),
+    "courses",
+    phrasing={
+        # The catalogue is browsable by design -- a corporate manager must be
+        # able to find a course to enrol employees into -- so `course.read`
+        # alone cannot mean "every course". This is the grant that widens it
+        # from "the ones assigned to me" to the whole catalogue.
+        Action.VIEW_ALL: "Browse the whole course catalogue, not only assigned courses",
+    },
+)
 _register(Module.BATCH, _CRUD, "batches")
 # `session.override` is the authorised bypass of the join window: the link is
 # withheld until thirty minutes before the class, and this is who may have it
@@ -429,6 +446,10 @@ _ADMIN: set[str] = (
 # tutor_courses / batch_sessions rows. These grants say what a tutor may do
 # at all; the service says which rows they may do it to.
 _TUTOR: set[str] = {
+    # `course.read` without `course.view_all`: a tutor reads the courses
+    # assigned to them and the catalogue stops there. Deliberately no
+    # `view_pricing` either -- teaching a course and pricing it are different
+    # jobs, and a tutor has no business knowing the margin.
     perm(Module.COURSE, Action.READ),
     perm(Module.BATCH, Action.READ),
     perm(Module.SESSION, Action.READ),
@@ -514,6 +535,10 @@ _TUTOR: set[str] = {
 # --- Student ---------------------------------------------------------------
 _STUDENT: set[str] = {
     perm(Module.COURSE, Action.READ),
+    # The catalogue, and what it costs: both are on the public website, and a
+    # student who cannot browse courses cannot see what is on offer.
+    perm(Module.COURSE, Action.VIEW_ALL),
+    perm(Module.COURSE, Action.VIEW_PRICING),
     perm(Module.BATCH, Action.READ),
     perm(Module.SESSION, Action.READ),
     perm(Module.ENROLLMENT, Action.READ),
@@ -564,6 +589,11 @@ _CORPORATE_MANAGER: set[str] = {
     perm(Module.ORGANIZATION, Action.ENROLL),
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),
+    # Browsing is how a manager finds a course to enrol employees into -- the
+    # reason the catalogue is open at all -- and the price is what they are
+    # committing to.
+    perm(Module.COURSE, Action.VIEW_ALL),
+    perm(Module.COURSE, Action.VIEW_PRICING),
     perm(Module.BATCH, Action.READ),
     # Attendance records reference a session, so without `session.read` a
     # manager could see that an employee missed a class but not look the
@@ -604,6 +634,8 @@ _GUARDIAN: set[str] = {
     perm(Module.TEAM, Action.READ),
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),
+    perm(Module.COURSE, Action.VIEW_ALL),
+    perm(Module.COURSE, Action.VIEW_PRICING),
     # A guardian can already see which batch their ward is in via the
     # enrollment record; without `batch.read` they could see the batch's name
     # but not open it, which is an inconsistency rather than a safeguard.

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 CONTACT_PERMISSION = "user.view_contact"
+PRICING_PERMISSION = "course.view_pricing"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class Viewer:
     user_id: int
     public_id: uuid.UUID
     can_view_contact: bool
+    can_view_pricing: bool = False
 
 
 _viewer: ContextVar[Viewer | None] = ContextVar("privacy_viewer", default=None)
@@ -39,7 +41,14 @@ _viewer: ContextVar[Viewer | None] = ContextVar("privacy_viewer", default=None)
 def set_viewer(user: Any) -> None:
     """Record who is making this request. `user.roles[*].permissions` must be loaded."""
     held = {p.name for role in (user.roles or []) for p in (role.permissions or [])}
-    _viewer.set(Viewer(user_id=user.id, public_id=user.public_id, can_view_contact=CONTACT_PERMISSION in held))
+    _viewer.set(
+        Viewer(
+            user_id=user.id,
+            public_id=user.public_id,
+            can_view_contact=CONTACT_PERMISSION in held,
+            can_view_pricing=PRICING_PERMISSION in held,
+        )
+    )
 
 
 def clear_viewer() -> None:
@@ -79,3 +88,24 @@ def visible_email(user: Any) -> str | None:
 
 def visible_phone(user: Any, value: str | None) -> str | None:
     return value if user is not None and may_see_contact(user.public_id, user.id) else None
+
+
+def may_see_pricing() -> bool:
+    """May the current viewer see commercial terms?
+
+    Nothing to own here, unlike contact details: a course price belongs to
+    the institution, not to the person reading it, so there is no "your own"
+    exception. Same fail-closed default -- no recorded viewer means no.
+    """
+    viewer = _viewer.get()
+    return viewer is not None and viewer.can_view_pricing
+
+
+def visible_price(value: Any) -> Any:
+    """A course price for a viewer entitled to it, otherwise `None`.
+
+    `None` rather than `0`: a course that costs nothing and a course whose
+    price you may not see are different facts, and only one of them should
+    read as "free".
+    """
+    return value if may_see_pricing() else None

@@ -27,6 +27,7 @@ from backend.services.audit_service import AuditAction
 from backend.integrations import lait_academic as academic
 from backend.integrations.lait_pages import PageFetcher
 from backend.services.images import CONTENT_TYPE as IMAGE_CONTENT_TYPE, process_course_image
+from backend.core.permissions import Action, Module, perm
 from backend.services.scope import ScopeResolver
 from backend.storage import get_storage
 from backend.storage.base import build_key
@@ -87,6 +88,7 @@ class CourseService:
             params,
             unrestricted=ScopeResolver.is_unrestricted(actor),
             tutor_course_ids=await self.scopes.tutor_course_ids(actor),
+            may_browse=self._may_browse(actor),
             query=query,
             status=status,
             level=level,
@@ -103,6 +105,17 @@ class CourseService:
             raise NotFoundError(f"{label} not found.")
         return int(row[0])
 
+    @staticmethod
+    def _may_browse(actor: User) -> bool:
+        """Does this caller reach the whole catalogue, or only their own courses?
+
+        `course.read` is held by tutors, students, guardians and corporate
+        managers alike, so it cannot answer this on its own -- which is how a
+        tutor came to list every course in the institution while teaching
+        four. `course.view_all` is the grant that widens it.
+        """
+        return perm(Module.COURSE, Action.VIEW_ALL) in ScopeResolver.held_permissions(actor)
+
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Course:
         course = await self.courses.get_by_public_id_full(public_id)
         if course is None:
@@ -112,7 +125,16 @@ class CourseService:
             from backend.repositories.course import PUBLIC_STATUSES
 
             taught = await self.scopes.tutor_course_ids(actor)
-            if course.status not in PUBLIC_STATUSES and course.id not in taught:
+            assigned = course.id in taught
+
+            # The same rule as the listing, applied at the other door. Scoping
+            # the list alone would have been theatre: the course it hides is
+            # one guessable id away, and that is precisely how a tutor reached
+            # a course they do not teach -- and its price -- in the console.
+            if not assigned and not self._may_browse(actor):
+                raise NotFoundError("Course not found.")
+
+            if course.status not in PUBLIC_STATUSES and not assigned:
                 # A draft course is not merely unreadable, it is not yet
                 # something the institution admits to having -- 404, not 403.
                 raise NotFoundError("Course not found.")

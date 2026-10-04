@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import false, Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.models.administration import CourseTag
@@ -43,20 +43,37 @@ class CourseRepository(BaseRepository[Course]):
         *,
         unrestricted: bool,
         tutor_course_ids: set[int],
+        may_browse: bool = True,
     ) -> Select[tuple[Course]]:
         """Apply catalogue visibility.
 
-        Note this is *status* visibility, not row-ownership scoping: the
-        catalogue is deliberately browsable by anyone with `course.read`, or
-        a Corporate Manager could never find a course to enrol employees
-        into. The only thing hidden is what is not ready to be seen -- plus
-        an exception so an assigned tutor can still see their own course
-        while it is still a draft.
+        Two separate questions, and conflating them was the bug:
+
+        * **Which courses may this person reach at all?** `course.view_all`
+          answers it. The catalogue is deliberately browsable by a Corporate
+          Manager -- they could not otherwise find a course to enrol
+          employees into -- and by students and guardians, for whom it is
+          already public on the institution's website. A **tutor** holds
+          `course.read` without it, so they reach the courses assigned to
+          them and no others. Previously every holder of `course.read` could
+          list all 28 courses while teaching four.
+        * **Which of those are ready to be seen?** The status filter, which
+          still applies, with an exception so an assigned tutor can open
+          their own course while it is still a draft.
         """
         if unrestricted:
             return stmt
 
         public = Course.status.in_(PUBLIC_STATUSES)
+
+        if not may_browse:
+            # No catalogue: assigned courses only, at any status. A tutor with
+            # no assignments sees nothing, which is the honest answer rather
+            # than a silently empty-looking catalogue.
+            if not tutor_course_ids:
+                return stmt.where(false())
+            return stmt.where(Course.id.in_(tutor_course_ids))
+
         if tutor_course_ids:
             return stmt.where(or_(public, Course.id.in_(tutor_course_ids)))
         return stmt.where(public)
@@ -85,6 +102,7 @@ class CourseRepository(BaseRepository[Course]):
         *,
         unrestricted: bool,
         tutor_course_ids: set[int],
+        may_browse: bool = True,
         query: str | None = None,
         status: CourseStatus | None = None,
         level: str | None = None,
@@ -95,7 +113,10 @@ class CourseRepository(BaseRepository[Course]):
         student_user_id: int | None = None,
     ) -> tuple[Sequence[Course], int]:
         stmt = self._visible(
-            self._base(), unrestricted=unrestricted, tutor_course_ids=tutor_course_ids
+            self._base(),
+            unrestricted=unrestricted,
+            tutor_course_ids=tutor_course_ids,
+            may_browse=may_browse,
         )
 
         if status is not None:

@@ -18,8 +18,9 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_serializer, field_validator
 
+from backend.core.privacy import visible_price
 from backend.schemas.base import APIModel, RequestModel
 from backend.utils.enums import CourseStatus, Levels
 
@@ -27,7 +28,27 @@ CourseTitle = Annotated[str, Field(min_length=3, max_length=255)]
 CourseCode = Annotated[str, Field(min_length=2, max_length=30, pattern=r"^[A-Za-z0-9._-]+$")]
 
 
-class CourseSummary(APIModel):
+class _PriceGated:
+    """Withhold a course price from a viewer who may not see it.
+
+    A **field serialiser**, not a mapper, because the catalogue response is
+    built with `CourseSummary.model_validate(course)` straight off the ORM
+    row -- there is no mapper to intercept, and the next schema built that way
+    would quietly reintroduce the leak. Here the gate travels with the field.
+
+    `course.view_pricing` is held by administrators, students, guardians and
+    corporate managers; a tutor is not one of them. The viewer comes from the
+    request-scoped context var `privacy.set_viewer` already records for
+    contact details, and with no viewer the answer is `None` -- a background
+    job that forgets to set one hides the price, it never reveals it.
+    """
+
+    @field_serializer("price")
+    def _serialise_price(self, value: float | None) -> float | None:
+        return visible_price(value)
+
+
+class CourseSummary(_PriceGated, APIModel):
     public_id: uuid.UUID
     title: str
     code: str | None = None
