@@ -10,6 +10,7 @@ question remain on each `QuizAnswer.score_awarded`.
 
 from __future__ import annotations
 
+import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -18,6 +19,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.logging import get_logger
 from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
@@ -38,6 +40,7 @@ from backend.schemas.quiz import (
 from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.course_service import CourseService
+from backend.services.gradebook_service import GradeBookService
 from backend.services.assessment_scope import (
     AssessmentScopeResolver,
     AssessmentTarget,
@@ -46,12 +49,15 @@ from backend.services.assessment_scope import (
 from backend.services.notification_service import NotificationService
 from backend.core.notification_types import NotificationType
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import QuestionType
+from backend.utils.enums import GradeComponentType, QuestionType
 
 # Wall-clock slack allowed past a quiz's `duration_minutes` before the
 # submission is stamped late. Covers the round trip and a slow client; it is
 # not a grace period on the exam itself.
 _SUBMIT_GRACE = timedelta(seconds=30)
+
+
+logger = get_logger(__name__)
 
 
 class QuizService:
@@ -276,8 +282,57 @@ class QuizService:
     # -- questions -----------------------------------------------------------
 
     async def list_questions(self, public_id: uuid.UUID, *, actor: User) -> list[Question]:
+        """The canonical order, for authoring."""
         quiz = await self.get(public_id, actor=actor)
         return await self.quizzes.questions_for(quiz.id)
+
+    async def questions_for_attempt(
+        self, public_id: uuid.UUID, *, actor: User
+    ) -> list[tuple[Question, list[QuestionOption]]]:
+        """The questions as *this* person should see them, with their options.
+
+        **Seeded from the attempt, never from the clock.** A student who
+        reloads mid-quiz, or whose connection drops, must be given the same
+        paper back: an order that changed between requests would silently
+        remap every answer they had already chosen. `random.Random(seed)` with
+        the attempt's own id gives one stable order per sitting, and a
+        different one to the next student, which is what shuffling is for.
+
+        Nothing is stored. The question bank is frozen as soon as a quiz has
+        any attempt (see `_assert_question_bank_editable`), so the inputs to
+        the shuffle cannot change underneath it and a column recording the
+        order would only be a second copy of something already determined.
+
+        **Options are returned alongside rather than reordered in place.**
+        `question.options` is a mapped collection; shuffling it would mark the
+        relationship dirty and invite SQLAlchemy to write a display choice
+        back to the answer key.
+        """
+        quiz = await self.get(public_id, actor=actor)
+        questions = list(await self.quizzes.questions_for(quiz.id))
+
+        def ordered(question: Question) -> list[QuestionOption]:
+            return sorted(question.options, key=lambda o: (o.order, o.id))
+
+        attempt = await self.attempts.get_in_progress(quiz_id=quiz.id, student_id=actor.id)
+        if attempt is None:
+            # Not sitting it: an author previewing, or a student who has not
+            # started. The canonical order is the honest answer -- inventing a
+            # shuffle here would show a different paper from the one they get.
+            return [(q, ordered(q)) for q in questions]
+
+        if quiz.shuffle_questions:
+            random.Random(f"q:{attempt.public_id}").shuffle(questions)
+
+        out: list[tuple[Question, list[QuestionOption]]] = []
+        for question in questions:
+            options = ordered(question)
+            if quiz.shuffle_answers:
+                # Seeded per question as well as per attempt, or every
+                # question in the paper would be permuted identically.
+                random.Random(f"a:{attempt.public_id}:{question.id}").shuffle(options)
+            out.append((question, options))
+        return out
 
     async def add_question(
         self, public_id: uuid.UUID, payload: QuestionCreateRequest, *, actor: User
@@ -689,6 +744,48 @@ class QuizService:
         )
         attempt.score = percentage
         attempt.is_passed = percentage >= Decimal(str(attempt.quiz.passing_score))
+        await self._record_in_gradebook(attempt)
+
+    async def _record_in_gradebook(self, attempt: QuizAttempt) -> None:
+        """Push a finished, fully-marked attempt into the grade book (§9, §47).
+
+        Hooked here rather than at the two call sites because this is where a
+        result *becomes* final -- on submission for an auto-graded quiz, and
+        on the tutor's marking for one with essays in it. A third entry point
+        added later gets this for free.
+
+        **Reached only with a score set.** `_recompute_score` returns before
+        this line whenever any answer is still unmarked, so there is no
+        `score is None` guard here: one was written, and no test could tell it
+        from its absence because nothing can reach it. A caller added later
+        that does not hold that invariant must check before calling.
+
+        **Fail-open, and loudly.** The marking has already happened and is
+        already committed to as far as the student is concerned; refusing it
+        because a derived row could not be written would discard real work to
+        protect a cache. `sync_batch` exists precisely to repair what this
+        loses, so the cost of a failure here is bounded and recoverable --
+        which is why it is a warning rather than a raise.
+        """
+        try:
+            await GradeBookService(self.session).record_component(
+                student_id=attempt.student_id,
+                course_id=attempt.quiz.course_id,
+                batch_id=attempt.quiz.batch_id,
+                component_type=GradeComponentType.QUIZ,
+                reference_id=attempt.id,
+                # `attempt.score` is already a percentage, so the denominator
+                # is 100 rather than the quiz's raw points -- the same choice
+                # `_sync_quizzes` makes, and they must agree or the sweep
+                # would rewrite every row this one wrote.
+                score=Decimal(str(attempt.score)),
+                max_score=Decimal("100"),
+            )
+        except Exception:  # noqa: BLE001 - a derived row must not undo a mark
+            logger.exception(
+                "Failed to record quiz attempt in the grade book",
+                extra={"attempt_id": attempt.id},
+            )
 
     # -- guards --------------------------------------------------------------
 

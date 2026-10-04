@@ -14,7 +14,7 @@ accidentally bypass than one attached to the route itself.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Sequence
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
@@ -22,7 +22,7 @@ from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
-from backend.models.quiz import Question, Quiz, QuizAttempt
+from backend.models.quiz import QuestionOption, Question, Quiz, QuizAttempt
 from backend.schemas.base import Page, PageParams
 from backend.schemas.quiz import (
     AUTO_GRADABLE,
@@ -45,7 +45,13 @@ from backend.services.quiz_service import QuizService
 router = APIRouter(tags=["Quizzes"])
 
 
-def _student_question(q: Question) -> QuestionForStudent:
+def _student_question(q: Question, options: Sequence[QuestionOption]) -> QuestionForStudent:
+    """`options` is passed in because the service decides their order.
+
+    When a quiz shuffles answers that order is per attempt, and `o.order`
+    still carries the authored position -- so the list is sent as given and
+    the client must not re-sort it.
+    """
     return QuestionForStudent(
         public_id=q.public_id,
         question_text=q.question_text,
@@ -53,10 +59,7 @@ def _student_question(q: Question) -> QuestionForStudent:
         points=q.points,
         order=q.order,
         settings=q.settings,
-        options=[
-            {"id": o.id, "option_text": o.option_text, "order": o.order}
-            for o in sorted(q.options, key=lambda o: (o.order, o.id))
-        ],
+        options=[{"id": o.id, "option_text": o.option_text, "order": o.order} for o in options],
     )
 
 
@@ -234,9 +237,14 @@ async def list_questions(
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.QUIZ, Action.READ)))],
 ) -> list[QuestionForStudent]:
     """The response schema has no `is_correct` field, so the answer key
-    cannot be serialised through this route at all."""
-    rows = await QuizService(session).list_questions(quiz_id, actor=actor)
-    return [_student_question(q) for q in rows]
+    cannot be serialised through this route at all.
+
+    While the caller has an attempt in progress, the order honours the quiz's
+    shuffle settings and is stable for that attempt -- reloading returns the
+    same paper, because a reshuffle would remap answers already chosen.
+    """
+    rows = await QuizService(session).questions_for_attempt(quiz_id, actor=actor)
+    return [_student_question(q, options) for q, options in rows]
 
 
 @router.get(

@@ -382,6 +382,72 @@ class GradeBookService:
         )
         return {**stats, "students_covered": len(students)}
 
+    async def record_component(
+        self,
+        *,
+        student_id: int,
+        course_id: int,
+        component_type: GradeComponentType,
+        reference_id: int,
+        score: Decimal,
+        max_score: Decimal,
+        batch_id: int | None = None,
+    ) -> int:
+        """Write one marked result straight into the grade book.
+
+        §47 says a published result "automatically enters the Gradebook". It
+        did not: `sync_batch` was the only writer and somebody had to press
+        it, so the grade book was a materialised view that drifted from the
+        moment anything was marked until a human noticed.
+
+        **The same rows `sync_batch` would have written**, through the same
+        `_upsert`, so running the sweep afterwards finds them unchanged rather
+        than fighting them. `sync_batch` stays as the reconciler -- it is the
+        only thing that can repair a write this method lost.
+
+        **No audit record.** The grading action that triggered this is already
+        audited; a second entry per mark would bury that log under its own
+        side effects. `sync_batch` keeps its audit because an operator chose
+        to run it.
+
+        Returns the number of entries written, for the caller's logs.
+        """
+        if batch_id is not None:
+            batch_ids = [batch_id]
+        else:
+            # Every active batch of the course the student is enrolled in --
+            # which is exactly what `sync_batch` does when it sweeps each
+            # batch in turn. A student in two cohorts of one course gets the
+            # mark in both, and changing that here would make the automatic
+            # and manual paths disagree.
+            batch_ids = list(
+                (
+                    await self.session.execute(
+                        select(Enrollments.batch_id)
+                        .join(Batch, Batch.id == Enrollments.batch_id)
+                        .where(
+                            Enrollments.student_id == student_id,
+                            Enrollments.status.in_(ACTIVE_STATUSES),
+                            Batch.course_id == course_id,
+                            Batch.is_active.is_(True),
+                        )
+                    )
+                ).scalars()
+            )
+
+        stats = {"created": 0, "updated": 0, "unchanged": 0, "skipped_ungraded": 0}
+        for target in batch_ids:
+            await self._upsert(
+                student_id=student_id,
+                batch_id=target,
+                component_type=component_type,
+                reference_id=reference_id,
+                score=score,
+                max_score=max_score,
+                stats=stats,
+            )
+        return stats["created"] + stats["updated"]
+
     async def _upsert(
         self,
         *,
