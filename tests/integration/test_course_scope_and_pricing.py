@@ -81,10 +81,15 @@ def world():
                           price=250.00)
             theirs = Course(title=f"{tag} Theirs", code=f"{tag}t", status=CourseStatus.PUBLISHED,
                             price=410.00)
-            for c in (mine, theirs):
+            # A course the tutor is *not* tutor-of-record for, but takes a
+            # session of one of its batches -- how a stand-in or second tutor
+            # is attached. Teaching it must count.
+            standin = Course(title=f"{tag} Standin", code=f"{tag}s", status=CourseStatus.PUBLISHED,
+                             price=99.00)
+            for c in (mine, theirs, standin):
                 c.batches, c.resources, c.tags, c.tutors = [], [], [], []
             mine.tutors = [u["tutor"]]
-            s.add_all([*u.values(), mine, theirs])
+            s.add_all([*u.values(), mine, theirs, standin])
             await s.flush()
 
             batch = Batch(batch_code=f"{tag}-A", course_id=mine.id, start_date=date.today(),
@@ -100,7 +105,25 @@ def world():
             )
             sess.attendances = []
             s.add(sess)
+
+            stand_batch = Batch(batch_code=f"{tag}-S", course_id=standin.id,
+                                start_date=date.today(),
+                                end_date=date.today() + timedelta(days=30),
+                                is_active=True, capacity=10)
+            stand_batch.sessions, stand_batch.enrollments, stand_batch.student_reviews = [], [], []
+            s.add(stand_batch)
+            await s.flush()
+            stand_sess = BatchSession(
+                batch_id=stand_batch.id, tutor_id=u["tutor"].id,
+                session_start_time=datetime.now(timezone.utc) + timedelta(days=2),
+                session_end_time=datetime.now(timezone.utc) + timedelta(days=2, hours=1),
+                duration_minutes=60, platform=Platforms.Zoom,
+            )
+            stand_sess.attendances = []
+            s.add(stand_sess)
+
             ids["mine"], ids["theirs"] = str(mine.public_id), str(theirs.public_id)
+            ids["standin"] = str(standin.public_id)
 
     loop.run_until_complete(build())
     lifespan = app.router.lifespan_context(app)
@@ -204,3 +227,20 @@ def test_the_price_is_withheld_in_the_listing_too(world) -> None:
     # The listing is built with `model_validate` straight off the ORM row, so
     # a mapper-level gate would have missed it entirely.
     assert listed[f"{world.tag} Mine"] is None
+
+
+def test_teaching_a_batch_counts_as_teaching_its_course(world) -> None:
+    """The regression the first version of this scope introduced.
+
+    Restricted to `tutor_courses` alone, a tutor taking sessions for a batch
+    could see the batch, its students and the timetable -- and not the course
+    they belong to. They could not have set an assignment for a class they
+    teach every week, and nothing in the console would have said why.
+    """
+    titles = _titles(world.get("tutor", "/courses", limit=100))
+    assert f"{world.tag} Standin" in titles
+
+    # Reachable by id as well, since the detail route gates on the same rule.
+    assert world.get("tutor", f"/courses/{world.ids['standin']}").status_code == 200
+    # Still no price: teaching a course is not a reason to see what it sells for.
+    assert world.get("tutor", f"/courses/{world.ids['standin']}").json()["price"] is None

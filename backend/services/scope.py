@@ -382,17 +382,38 @@ class ScopeResolver:
             return WorkVisibility(True, frozenset(), frozenset())
 
         enrollment = await self.enrollment_visibility(user)
-
-        # Courses reached by teaching: direct `tutor_courses` assignment, plus
-        # the courses of any batch they take sessions for (the stand-in route).
-        taught_courses = await self.tutor_course_ids(user)
-        if enrollment.taught_batch_ids:
-            stmt = select(Batch.course_id).where(Batch.id.in_(enrollment.taught_batch_ids))
-            taught_courses |= set((await self.session.execute(stmt)).scalars().all())
+        taught_courses = await self.teaching_course_ids(user, enrollment=enrollment)
 
         return WorkVisibility(
             False, frozenset(taught_courses), enrollment.cared_for_student_ids
         )
+
+    async def teaching_course_ids(
+        self, user: User, *, enrollment: "EnrollmentVisibility | None" = None
+    ) -> set[int]:
+        """Every course this person teaches, by either route.
+
+        Two ways to teach a course and both count:
+
+        * a direct `tutor_courses` assignment -- tutor of record;
+        * taking sessions for one of its batches, which is how a stand-in or a
+          second tutor is attached without being put on the course itself.
+
+        Keeping these apart is what made the catalogue scope wrong on its
+        first pass: restricted to `tutor_courses` alone, a tutor taking three
+        batches of Data Analysis could see the batches, the students and the
+        timetable, and not the course they belong to -- so they could not set
+        an assignment for a class they teach every week.
+
+        `enrollment` is accepted so a caller that already resolved it does not
+        pay for it twice.
+        """
+        courses = await self.tutor_course_ids(user)
+        enrollment = enrollment or await self.enrollment_visibility(user)
+        if enrollment.taught_batch_ids:
+            stmt = select(Batch.course_id).where(Batch.id.in_(enrollment.taught_batch_ids))
+            courses |= set((await self.session.execute(stmt)).scalars().all())
+        return courses
 
     async def visible_session_ids(self, user: User) -> Scope:
         """Sessions this user may reach -- those belonging to a batch they

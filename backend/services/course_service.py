@@ -87,7 +87,7 @@ class CourseService:
         return await self.courses.search(
             params,
             unrestricted=ScopeResolver.is_unrestricted(actor),
-            tutor_course_ids=await self.scopes.tutor_course_ids(actor),
+            tutor_course_ids=await self.scopes.teaching_course_ids(actor),
             may_browse=self._may_browse(actor),
             query=query,
             status=status,
@@ -124,7 +124,7 @@ class CourseService:
         if not ScopeResolver.is_unrestricted(actor):
             from backend.repositories.course import PUBLIC_STATUSES
 
-            taught = await self.scopes.tutor_course_ids(actor)
+            taught = await self.scopes.teaching_course_ids(actor)
             assigned = course.id in taught
 
             # The same rule as the listing, applied at the other door. Scoping
