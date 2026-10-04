@@ -2866,3 +2866,117 @@ read "Role Resize Role" to a screen reader.
 
 **There is still no frontend test runner for the BFF proxy**, so its fixes
 are guarded by live proof only.
+
+## Academic assessment brief, phases 13–14 — notifications, calendar, reports
+
+Phases 1–12 of the §42 sequence were already built (assessment scoping, the
+performance engine, grade book, grading schemes, transcripts, the §37
+drill-down, dashboards with a guardian/corporate panel). These two phases
+closed what was left, and most of the work was finding what was decorative.
+
+### Six notification types nobody had ever sent
+
+Counting emitters per type found six codes listed on the preferences screen
+-- so a person is offered a switch and told they can turn it off -- that
+nothing in the system emitted: `exam_result_published`, `grade_recorded`,
+`guardian_linked`, `enrollment_status_changed`, and the two **mandatory**
+security warnings `account_locked` and `password_changed`.
+
+The catalogue's own docstring says the mandatory pair exist "so a person
+notices a compromise" and cannot be switched off. An account locked by
+repeated failed sign-ins, or a password changed by whoever now holds the
+account, told its owner nothing. Only the *admin-initiated* security events
+were wired. `quiz_service` and `exam_service` contained zero notification
+calls of any kind.
+
+Decisions worth keeping:
+
+* **Publishing notifies on the transition only.** Re-saving must not
+  re-announce, and retraction announces nothing -- "your exam is scheduled"
+  arriving as it is cancelled serves nobody.
+* **Exam results go to students who have a result row**, not the eligible
+  roster. An absent student with no row has nothing to read.
+* **Grade-book notifications fire for manual entries only.** Every synced
+  entry already has an emitter at its source, so announcing it here too
+  notifies one student twice for one mark, from two services that do not know
+  about each other. §23's single-source-of-truth rule applied to
+  notifications.
+* **The lockout warning runs in its own transaction**, because the sign-in
+  path raises immediately afterwards and that rollback would discard the
+  warning -- docs' rollback pitfall, in the shape where the record of an
+  attack disappears because the attack was refused. It can never fail the
+  request.
+
+`tests/unit/test_every_notification_type_is_emitted.py` makes it
+unrepeatable. It parses the backend with `ast` rather than grepping, so a
+mention in a docstring cannot satisfy it, and carries a meta-test because the
+first version of a guard like this will happily scan the wrong directory and
+pronounce every type healthy.
+
+### The calendar carried no deadlines
+
+`/calendar/{token}.ics` served sessions only, so a student saw their classes
+and none of the work those classes set. Published assignment deadlines, quiz
+windows and exam sittings now merge into it.
+
+**The feed is a capability URL** -- calendar clients cannot send an
+`Authorization` header, so the token is in the link and anyone holding the
+link is the audience. That makes scoping the whole change, and it is why the
+existing session query deliberately avoids `ScopeResolver`: "everything this
+user may see" would put other cohorts into a forwardable link.
+
+The first version piped descriptions, instructions and online joining links
+into it. None of that belongs in a link that can be forwarded -- exam
+instructions are content and a joining link is a way in -- so it carries a
+title, a time, and a physical venue. `CalendarFeed`'s docstring claimed it
+"exposes only session times and titles", which had stopped being true the
+moment this landed, so it was rewritten rather than left to mislead.
+
+### §35's statistics, and a denominator that was never real
+
+The performance report returned an average and nothing else, while the
+console described it as "scores and pass rates". It now carries lowest,
+median and highest.
+
+**The average and the spread deliberately disagree.** The average stays
+mark-weighted (`SUM(score) / SUM(max_score)`) because a 1-mark quiz and a
+100-mark exam are not equal halves of anyone's performance; the spread is
+taken across students, each reduced to their own weighted percentage, because
+"lowest" and "median" are questions about people. An average of 68% over a
+cohort whose median is 81% is a cohort with a few students in serious
+trouble, which a single mean hides completely.
+
+The new coursework report (`GET /v1/reports/coursework`) covers three of
+§34's reports -- submission, missing work, grading status -- as three
+readings of one grouped query. **Its denominator is the point:** a submission
+rate computed over `assignment_submissions` is 100% by construction, because
+the student who handed in nothing has no row to count, and it looks entirely
+plausible on screen. The population comes from the eligibility rule instead.
+Drafts are excluded (work set for nobody cannot be missing), and a rate over
+an empty population is `null`, never `0`.
+
+### One scope rule, not three
+
+`covers_batch` now sits beside `eligible_student_ids_stmt` in
+`assessment_scope.py`, used by both the coursework report and the calendar
+feed. The feed had its own copy, written two commits earlier in the same
+session -- the exact shape that cost this codebase a closed cohort on a live
+mark sheet when the exam service's private copy of the join lost
+`Batch.is_active`.
+
+### Two things the tests only found by being made harsher
+
+* A `DISTINCT ON` deduplicating submissions by `attempt_number` was **dead
+  code**: `uq_assignment_submissions_assignment_student` means a replacement
+  updates the row in place. Found by writing the fixture that would exercise
+  it and watching Postgres reject it.
+* Mutation testing had survivors twice, both because a fixture was too kind
+  -- an exam with no `instructions` made "no free text reaches the feed" pass
+  whatever the code did, and a single-batch cohort could not tell the scope
+  rule from a naive "same course" join. 8/8 and 7/7 after the fixtures were
+  fixed.
+
+**Not done:** §39 course completion and §40 certificate eligibility. Nothing
+computes either -- `Enrollments.can_download_certificate` is a plain boolean
+with no rule behind it and `Certificate.criteria` is an unread JSON column.
+They are the next instance of the same pattern.
