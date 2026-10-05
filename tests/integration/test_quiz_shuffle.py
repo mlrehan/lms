@@ -235,3 +235,53 @@ def test_before_an_attempt_starts_the_authored_order_is_shown(env) -> None:
     # a shuffle here would show a paper different from the one they get.
     assert order == AUTHORED
     assert all(opts == sorted(opts) for opts in options)
+
+
+def test_an_answer_reaches_the_marker_as_words_not_json(env) -> None:
+    """What a marker is shown for each answer (QA brief §5, quizzes).
+
+    The stored shape is `{"option_ids": [8055]}` for a choice and
+    `{"text": ...}` for an essay, and the console was rendering it verbatim:
+    an internal row id tells a tutor nothing about which option the student
+    picked. The option text lives on the server and never reached the client,
+    so no amount of work in the console could have fixed it.
+    """
+    from backend.api.v1.quizzes import _answer_text
+    from backend.models.quiz import QuizAnswer
+
+    quiz_pk = env.world["quiz_pks"]["plain"]
+    env.start(quiz_pk, env.world["alice"])
+
+    def check(s):  # noqa: ANN001, ANN202
+        async def go():  # noqa: ANN202
+            from sqlalchemy import select as _select
+            from sqlalchemy.orm import selectinload
+            from backend.models.quiz import Question as _Q, QuizAttempt as _A
+            attempt = (await s.execute(
+                _select(_A).where(_A.quiz_id == quiz_pk).order_by(_A.id.desc()).limit(1)
+            )).scalars().first()
+            question = (await s.execute(
+                _select(_Q).options(selectinload(_Q.options))
+                .where(_Q.quiz_id == quiz_pk).order_by(_Q.order).limit(1)
+            )).scalars().first()
+            chosen = sorted(question.options, key=lambda o: o.order)[1]
+
+            picked = QuizAnswer(attempt_id=attempt.id, question_id=question.id,
+                                selected_options={"option_ids": [chosen.id]})
+            blank = QuizAnswer(attempt_id=attempt.id, question_id=question.id,
+                               selected_options={})
+            essay = QuizAnswer(attempt_id=attempt.id, question_id=question.id,
+                               selected_options={"text": "Because it aggregates."})
+            for a in (picked, blank, essay):
+                a.question = question
+            return (_answer_text(picked), _answer_text(blank), _answer_text(essay),
+                    chosen.option_text)
+        return go()
+
+    picked, blank, essay, expected = env.run(check)
+
+    assert picked == expected          # the option's words, not its id
+    assert essay == "Because it aggregates."
+    # Left blank is a fact a marker needs; an empty string reads as a
+    # rendering failure.
+    assert blank is None

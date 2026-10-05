@@ -90,6 +90,11 @@ export interface AnswerInput {
 export interface AnswerResponse {
   question_id: string;
   question_text?: string | null;
+  question_type?: QuestionType | null;
+  /** What the student answered, rendered server-side for a person to read. */
+  answer_text?: string | null;
+  /** True when a person still has to score this one. */
+  needs_marking?: boolean;
   selected_options?: unknown | null;
   score_awarded?: string | null;
 }

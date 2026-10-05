@@ -88,7 +88,13 @@ class AttemptRepository(BaseRepository[QuizAttempt]):
         return select(QuizAttempt).options(
             selectinload(QuizAttempt.quiz),
             selectinload(QuizAttempt.student),
-            selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question),
+            # The question's options come too: the attempt mapper renders
+            # each answer as the option *text* a marker can read, and reaching
+            # them lazily is a `MissingGreenlet` on an async session rather
+            # than a slow query -- it fails the whole request.
+            selectinload(QuizAttempt.answers)
+            .selectinload(QuizAnswer.question)
+            .selectinload(Question.options),
         )
 
     async def get_by_public_id_full(self, public_id: uuid.UUID) -> QuizAttempt | None:

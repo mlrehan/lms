@@ -22,7 +22,7 @@ from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
-from backend.models.quiz import QuestionOption, Question, Quiz, QuizAttempt
+from backend.models.quiz import QuestionOption, Question, Quiz, QuizAnswer, QuizAttempt
 from backend.schemas.base import Page, PageParams
 from backend.schemas.quiz import (
     AUTO_GRADABLE,
@@ -83,6 +83,33 @@ def _author_question(q: Question) -> QuestionForAuthor:
     )
 
 
+def _answer_text(answer: QuizAnswer) -> str | None:
+    """What the student answered, rendered for a person to read.
+
+    The stored shape is `{"option_ids": [...]}` or `{"text": "..."}`. Only the
+    server can turn the first into anything meaningful -- the option rows are
+    here and never travel -- which is why this is a mapper and not a job for
+    the console.
+
+    An unanswered question returns `None` rather than an empty string: "left
+    blank" is a fact a marker needs, and an empty box looks like a rendering
+    failure.
+    """
+    stored = answer.selected_options or {}
+    if not isinstance(stored, dict):  # pragma: no cover - defensive
+        return str(stored)
+
+    text = stored.get("text")
+    if text:
+        return str(text)
+
+    ids = set(stored.get("option_ids") or [])
+    if not ids:
+        return None
+    chosen = [o.option_text for o in answer.question.options if o.id in ids]
+    return ", ".join(chosen) if chosen else None
+
+
 def _attempt_response(a: QuizAttempt) -> AttemptResponse:
     awaiting = any(ans.score_awarded is None for ans in a.answers)
     return AttemptResponse(
@@ -103,6 +130,9 @@ def _attempt_response(a: QuizAttempt) -> AttemptResponse:
             AnswerResponse(
                 question_id=ans.question.public_id,
                 question_text=ans.question.question_text,
+                question_type=ans.question.question_type,
+                answer_text=_answer_text(ans),
+                needs_marking=ans.score_awarded is None,
                 selected_options=ans.selected_options,
                 score_awarded=ans.score_awarded,
             )

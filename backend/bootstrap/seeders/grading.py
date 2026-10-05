@@ -65,10 +65,31 @@ async def seed_grading(session: AsyncSession) -> dict[str, int]:
     ).scalar_one_or_none()
 
     if scheme is None:
-        # No default at all. Creating one here would race the migration that
-        # owns it, and a second row would violate the one-default index -- so
-        # this reports rather than guesses.
-        return {"components_created": 0, "bands_created": 0, "skipped": 1}
+        # No default at all. The academic-foundation migration inserts one,
+        # so this should be unreachable -- and on a real database it was not:
+        # the row was absent and this returned `skipped`, leaving an
+        # institution with no grading scheme at all. Nothing then had a letter
+        # grade, transcripts could compute no overall result, and the grade
+        # distribution refused to draw.
+        #
+        # Creating it here cannot race the migration: a migration runs once
+        # and before this, and `uq_grading_schemes_one_default` refuses a
+        # second default outright rather than letting two exist. Reporting a
+        # problem nobody reads is worse than repairing it.
+        scheme = GradingScheme(
+            name="Institution default",
+            description=(
+                "Created automatically. Set component weightings before "
+                "relying on overall performance."
+            ),
+            is_default=True,
+            is_active=True,
+        )
+        session.add(scheme)
+        await session.flush()
+        created_default = 1
+    else:
+        created_default = 0
 
     components = int(
         (
@@ -127,6 +148,7 @@ async def seed_grading(session: AsyncSession) -> dict[str, int]:
 
     await session.flush()
     return {
+        "schemes_created": created_default,
         "components_created": created_components,
         "bands_created": created_bands,
         "skipped": 0,

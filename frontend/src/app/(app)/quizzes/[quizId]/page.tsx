@@ -403,27 +403,40 @@ function GradeAttemptDialog({
           {(attempt?.answers ?? []).map((answer) => (
             <div key={answer.question_id} className="rounded-lg border border-border-subtle p-3">
               <p className="text-sm font-medium">{answer.question_text ?? answer.question_id}</p>
+              {/*
+                `answer_text` is rendered server-side: the stored payload is
+                `{"option_ids": [8055]}`, and an option id tells a marker
+                nothing about what the student chose. This used to show the
+                raw JSON.
+              */}
               <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                {typeof answer.selected_options === "string"
-                  ? answer.selected_options
-                  : JSON.stringify(answer.selected_options)}
+                {answer.answer_text ?? <span className="italic">Left blank</span>}
               </p>
-              <div className="mt-2 flex items-center gap-2">
-                <label className="text-xs text-muted-foreground" htmlFor={`score-${answer.question_id}`}>
-                  Score
-                </label>
-                <Input
-                  id={`score-${answer.question_id}`}
-                  className="w-28"
-                  type="number"
-                  step="0.5"
-                  min={0}
-                  value={scores[answer.question_id] ?? answer.score_awarded ?? ""}
-                  onChange={(event) =>
-                    setScores((previous) => ({ ...previous, [answer.question_id]: event.target.value }))
-                  }
-                />
-              </div>
+              {answer.needs_marking ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground" htmlFor={`score-${answer.question_id}`}>
+                    Score
+                  </label>
+                  <Input
+                    id={`score-${answer.question_id}`}
+                    className="w-28"
+                    type="number"
+                    step="0.5"
+                    min={0}
+                    value={scores[answer.question_id] ?? ""}
+                    onChange={(event) =>
+                      setScores((previous) => ({ ...previous, [answer.question_id]: event.target.value }))
+                    }
+                  />
+                </div>
+              ) : (
+                // Already scored by auto-grading. Shown, not editable here:
+                // the dialog says only unmarked answers need a score, and an
+                // empty box beside a marked answer invites overwriting it.
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Marked automatically — {String(answer.score_awarded)}
+                </p>
+              )}
             </div>
           ))}
           <Field label="Feedback">

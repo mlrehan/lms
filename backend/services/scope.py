@@ -269,23 +269,32 @@ class ScopeResolver:
     # -- teaching assignments ------------------------------------------------
 
     async def _taught_batch_ids(self, tutor_id: int) -> set[int]:
-        """Batches a tutor reaches, by either route.
+        """Batches a tutor actually teaches: the ones they take sessions for.
 
-        Two independent routes exist in the schema and both count:
-        `tutor_courses` assigns a tutor to a *course* (and therefore to all
-        of its batches), while `batch_sessions.tutor_id` assigns them to
-        individual sessions -- which is how a stand-in covering one class
-        gets access without being made a course tutor.
+        **`tutor_courses` deliberately does not grant this.** It used to: a
+        tutor of record for a course reached every batch of it, on the
+        reasoning that the course was theirs. Measured against real data that
+        meant one tutor could see five cohorts taught entirely by a colleague
+        -- and with them those students, their enrollments, their attendance
+        and their grades -- while taking no session in any of them.
+
+        Being the tutor of record is an authoring relationship with the
+        *course*; teaching is a relationship with a *cohort*, and only the
+        second is a reason to see who is in it. A stand-in covering a single
+        class is reached by the same rule, which is the case the old union
+        was really there to serve.
+
+        This is the one definition behind batch, enrollment, grade-book,
+        attendance, dashboard and mail-audience scope, so narrowing it here
+        narrows all of them together -- which is the point of there being one.
+
+        The cost, stated: a tutor of record sees no batch of their course
+        until they are given a session in one. That is the intended reading of
+        "only the batches they are assigned to", and course-level visibility
+        is unaffected -- they still see and edit the course itself.
         """
-        via_course = select(Batch.id).where(
-            Batch.course_id.in_(
-                select(TutorCourse.course_id).where(TutorCourse.tutor_id == tutor_id)
-            )
-        )
-        via_session = select(BatchSession.batch_id).where(BatchSession.tutor_id == tutor_id)
-
-        rows = await self.session.execute(union(via_course, via_session))
-        return {row[0] for row in rows.all()}
+        stmt = select(BatchSession.batch_id).where(BatchSession.tutor_id == tutor_id)
+        return set((await self.session.execute(stmt)).scalars().all())
 
     async def visible_batch_ids(self, user: User) -> Scope:
         """Batches this user may reach.

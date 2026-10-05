@@ -233,6 +233,20 @@ class SubmitAttemptRequest(RequestModel):
 class AnswerResponse(APIModel):
     question_id: uuid.UUID
     question_text: str | None = None
+    question_type: QuestionType | None = None
+    #: What the student actually answered, in words.
+    #:
+    #: `selected_options` is the stored payload -- `{"option_ids": [8055]}`
+    #: for a choice, `{"text": "..."}` for an essay -- and a marker was being
+    #: shown it verbatim: an internal row id tells a tutor nothing about which
+    #: option the student picked, and an essay arrived wrapped in JSON. The
+    #: option text lives on the server and never reached the client at all, so
+    #: no amount of work in the console could have fixed it.
+    answer_text: str | None = None
+    #: True when a person still has to score this one. The marker's form shows
+    #: a box only for these, rather than inviting a tutor to overwrite a mark
+    #: auto-grading already made.
+    needs_marking: bool = False
     selected_options: Any | None = None
     score_awarded: Decimal | None = None
 

@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import select, text
 
 from backend.core.config import get_settings
-from backend.core.errors import AuthorizationError
+from backend.core.errors import NotFoundError
 from backend.db.manager import DatabaseManager
 from backend.models.course import Course, TutorCourse
 from backend.models.identity.role import Role
@@ -114,7 +114,11 @@ def test_a_tutor_cannot_set_an_assignment_on_a_course_they_do_not_teach(env) -> 
             made = await env.build(s)
             tutor, _ = made["mine"]
             _, foreign = made["theirs"]
-            with pytest.raises(AuthorizationError):
+            # `NotFoundError`, not `AuthorizationError`: a tutor cannot see
+            # this colleague's course at all now, and a refusal that said
+            # "you may not" would confirm it exists. The same 404-not-403
+            # rule the course service already applies to drafts.
+            with pytest.raises(NotFoundError):
                 await AssignmentService(s).create(foreign.public_id, _assignment("Planted"), actor=tutor)
             # ...and nothing was written, so the colleague's course is untouched.
             return (await s.execute(
@@ -145,7 +149,11 @@ def test_a_tutor_cannot_set_a_quiz_on_a_course_they_do_not_teach(env) -> None:
             made = await env.build(s)
             tutor, _ = made["mine"]
             _, foreign = made["theirs"]
-            with pytest.raises(AuthorizationError):
+            # `NotFoundError`, not `AuthorizationError`: a tutor cannot see
+            # this colleague's course at all now, and a refusal that said
+            # "you may not" would confirm it exists. The same 404-not-403
+            # rule the course service already applies to drafts.
+            with pytest.raises(NotFoundError):
                 await QuizService(s).create(foreign.public_id, _quiz("Planted"), actor=tutor)
             return (await s.execute(
                 text("SELECT count(*) FROM quizzes WHERE course_id = :c"), {"c": foreign.id}
