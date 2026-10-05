@@ -493,11 +493,19 @@ def test_a_refused_save_leaves_the_other_rows_untouched(env) -> None:
 
 def test_only_the_assigned_tutor_may_record(env) -> None:
     """A colleague who teaches the course but was not in the room cannot make a
-    statement about what happened in it."""
+    statement about what happened in it.
+
+    `NotFoundError`, not `AuthorizationError`: since tutors are scoped to the
+    sessions they actually take, a colleague cannot see this session at all,
+    and `_session` reports an invisible session as absent rather than
+    forbidden -- a 403 would confirm it exists. The refusal is the point and
+    it still holds; `test_the_academic_office_may_record_and_it_is_recorded_as_such`
+    is what stops this passing because nobody can record.
+    """
     def f(s):  # noqa: ANN001, ANN202
         async def go():  # noqa: ANN202
             made = await env.build(s)
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(NotFoundError):
                 await ClassPerformanceService(s).save(
                     made["session"].public_id,
                     [_entry(made["alice"], overall_score=D("9"))],
