@@ -7,6 +7,9 @@ four endpoints, as observed against the live service:
     GET /api/Tutors                 the tutor list
     GET /api/Students/guid/{id}     one student, same shape as the list row
     GET /api/Tutors/guid/{id}       one tutor, plus `email_id`
+    GET /api/GetDelegateManagers    corporate managers
+    GET /api/GetDelegateManagers/{customer_id}/Delegates
+                                    the students under one of them
 
 **`/api/Students/latest` is a recent-registrations feed, not the roster.** It
 returned 18 students whose ids ran 34951-34978, all registered inside the
@@ -131,6 +134,36 @@ class LaitClient:
     async def batch_students(self, batch_id: int) -> list[dict[str, Any]]:
         # `int()` is the guard: only digits can ever reach the URL path.
         return await self._get_list(f"/api/Batches/{int(batch_id)}/Students")
+
+    async def delegate_managers(self) -> list[dict[str, Any]]:
+        """Corporate managers, as LAIT holds them.
+
+        Observed live: 103 rows, each with `customer_id` (the key the
+        delegates endpoint takes), `unique_key`, `username`, name parts,
+        `company_name`, `designation` and `is_active`.
+
+        **`username` is an email address.** It is returned here because this
+        is the raw upstream row; the API layer decides who may see it.
+        """
+        return await self._get_list("/api/GetDelegateManagers")
+
+    async def delegate_manager_students(self, customer_id: int) -> list[dict[str, Any]] | None:
+        """The delegates under one manager, or `None` if LAIT has no such
+        manager.
+
+        Observed live: an unknown `customer_id` answers **404**, not an empty
+        list, so "this manager has nobody" and "there is no such manager" are
+        distinguishable -- and the caller is told which.
+
+        `int()` is the guard, as above: only digits reach the path.
+        """
+        data = await self._get_json(f"/api/GetDelegateManagers/{int(customer_id)}/Delegates",
+                                    allow_404=True)
+        if data is None:
+            return None
+        if not isinstance(data, list):
+            raise LaitApiError("/api/GetDelegateManagers/{id}/Delegates: expected a JSON list.")
+        return [item for item in data if isinstance(item, dict)]
 
     # -- transport ---------------------------------------------------------------
 

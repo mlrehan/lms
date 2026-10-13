@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -68,6 +68,17 @@ class Fetched:
     menu: list[ac.MenuCategory] = field(default_factory=list)
 
 
+class StageReporter(Protocol):
+    """Told when a phase starts and finishes, with that phase's counts.
+
+    Deliberately a callback rather than a return value: the console needs to
+    see "Batches: running, 18 of 26" while the transaction is still open, and
+    nothing that returns at the end can say that.
+    """
+
+    def __call__(self, step: str, status: str, counts: dict[str, int]) -> None: ...
+
+
 class LaitAcademicSyncService:
     def __init__(
         self,
@@ -76,11 +87,17 @@ class LaitAcademicSyncService:
         *,
         client: LaitClient | None = None,
         fetcher: PageFetcher | None = None,
+        on_stage: "StageReporter | None" = None,
     ) -> None:
         self._factory = session_factory
         self._settings = settings
         self._client = client
         self._fetcher = fetcher
+        # Optional, and ignored by every existing caller: the pipeline uses it
+        # to show Courses, Batches, Sessions and Enrollments advancing
+        # separately. The work itself is unchanged -- all four still happen in
+        # one transaction, which is why a half-imported batch cannot exist.
+        self._on_stage = on_stage
         self._users = LaitSyncService(session_factory, settings, client=client)
 
     # ------------------------------------------------------------------ lifecycle
@@ -154,19 +171,44 @@ class LaitAcademicSyncService:
         async with self._factory() as session:
             cache = _Cache()
             await cache.load(session)
+            self._stage("COURSES", "RUNNING", report.courses.as_dict())
             await self._courses(session, fetched, report, cache, actor_id)
+            self._stage("COURSES", "COMPLETED", report.courses.as_dict())
+
+            # Sessions are generated inside `_batch`, so the two advance
+            # together and are reported together rather than pretending to be
+            # sequential.
+            self._stage("BATCHES", "RUNNING", report.batches.as_dict())
+            self._stage("SESSIONS", "RUNNING", report.sessions.as_dict())
             touched: list[int] = []
             for payload in fetched.batches:
                 batch_id = await self._batch(session, client, geo, fetched, payload, report, cache, dry_run, actor_id)
                 if batch_id is not None:
                     touched.append(batch_id)
+                self._stage("BATCHES", "RUNNING", report.batches.as_dict())
+                self._stage("SESSIONS", "RUNNING", report.sessions.as_dict())
+            self._stage("BATCHES", "COMPLETED", report.batches.as_dict())
+            self._stage("SESSIONS", "COMPLETED", report.sessions.as_dict())
+
+            self._stage("ENROLLMENTS", "RUNNING", report.enrollments.as_dict())
             await self._enrollments(session, client, geo, fetched, report, cache, dry_run, actor_id)
+            self._stage("ENROLLMENTS", "COMPLETED", report.enrollments.as_dict())
             await self._recount(session, touched)
             report.statuses = await refresh_course_statuses(session, commit=False)
             if dry_run:
                 await session.rollback()
             else:
                 await session.commit()
+
+    def _stage(self, step: str, status: str, counts: dict[str, int]) -> None:
+        """Report a phase boundary. A reporter that raises must never be able to
+        fail the synchronisation -- it is a progress display, not the work."""
+        if self._on_stage is None:
+            return
+        try:
+            self._on_stage(step, status, counts)
+        except Exception:  # noqa: BLE001
+            logger.exception("Stage reporter failed; the sync is unaffected")
 
     async def _fetch(self, client: LaitClient, report: "_Report") -> Fetched:
         f = Fetched()

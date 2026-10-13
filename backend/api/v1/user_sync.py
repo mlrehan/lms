@@ -53,6 +53,20 @@ async def start_sync(request: Request, actor: _SYNC, dry_run: bool = False) -> S
     return SyncRunResponse.model_validate(run)
 
 
+#===================TEST=======================
+# SHOHEL
+#================END TEST======================
+@router.post(
+    "/test",
+    summary="Get managers of a student",
+)
+async def get_managers_of_student(request: Request, actor: _SYNC, dry_run: bool = False) -> list[dict]:
+    """Returns the managers of a student."""
+    service = LaitSyncService(request.app.state.db.session_factory, get_settings())
+    
+    return {}
+
+
 async def _execute(service: LaitSyncService, run_id: int) -> None:
     try:
         await service.execute(run_id)

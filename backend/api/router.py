@@ -46,6 +46,8 @@ from backend.api.v1 import (
     sessions,
     settings,
     academic_sync,
+    lait_delegates,
+    sync_pipeline,
     user_sync,
     users,
 )
@@ -54,10 +56,16 @@ router = APIRouter()
 
 router.include_router(auth.router)
 router.include_router(user_sync.router)
+# Read-through views of LAIT's corporate directory. Its own prefix,
+# so no `{id}` route can swallow them.
+router.include_router(lait_delegates.router)
 router.include_router(users.router)
 router.include_router(roles.router)
 router.include_router(geo.router)
 router.include_router(academic_sync.router)
+# Spans users, courses, batches, sessions and enrolments, so it has a prefix
+# of its own rather than living under any one of them.
+router.include_router(sync_pipeline.router)
 router.include_router(courses.router)
 router.include_router(batches.router)
 router.include_router(sessions.router)

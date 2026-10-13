@@ -449,6 +449,22 @@ _ADMIN: set[str] = (
     # in every affected course the moment it is saved. That is a governance
     # decision, not an operational one.
     perm(Module.GRADING_SCHEME, Action.MANAGE),
+    # Importing from LAIT is a Super Admin capability. One press creates
+    # accounts, courses, batches, sessions and enrolments across the whole
+    # institution from a system nobody here controls -- it is the largest
+    # single write this platform can make, and it is not daily operations.
+    #
+    # Both halves go together on purpose: the "Sync All Data" pipeline is
+    # gated on holding `user.sync` *and* `course.sync`, so leaving either
+    # with an Administrator would leave them able to achieve the same import
+    # in two presses from the Users and Batches screens. Withdrawing one and
+    # not the other would be a gate that looks closed and is not.
+    #
+    # `google.sync` is deliberately NOT withdrawn: that integration writes to
+    # a calendar, not to the institution's records, and an Administrator
+    # running the timetable needs it.
+    perm(Module.USER, Action.SYNC),
+    perm(Module.COURSE, Action.SYNC),
 }
 
 

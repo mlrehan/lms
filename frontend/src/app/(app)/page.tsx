@@ -21,6 +21,7 @@ import { Badge, Card, CardHeader, SectionHeader } from "@/components/ui/primitiv
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
+import { SyncPanel } from "@/components/domain/sync-panel";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
@@ -116,8 +117,16 @@ function Deadlines({ items }: { items: AssignmentBrief[] }) {
 }
 
 export default function DashboardPage() {
-  const { user } = useSession();
+  const { user, permissions } = useSession();
   const timeZone = useDisplayTimeZone();
+
+  // The panel is offered only to a caller who could actually press the button;
+  // the three permissions are the ones the pipeline itself exercises, so the
+  // panel cannot appear for somebody the API would then refuse.
+  const canSync =
+    permissions.has("user.sync") &&
+    permissions.has("course.sync") &&
+    permissions.has("managed_student.create");
 
   const { data, isPending, error, refetch } = useQuery<DashboardResponse, ApiError>({
     queryKey: ["dashboard"],
@@ -136,6 +145,8 @@ export default function DashboardPage() {
             : "Your dashboard."
         }
       />
+
+      {canSync ? <SyncPanel canSync={canSync} /> : null}
 
       {isPending ? (
         <LoadingState rows={4} label="Loading your dashboard" />

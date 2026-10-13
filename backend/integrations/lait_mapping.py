@@ -303,6 +303,50 @@ def map_student(payload: dict[str, Any], *, source_timezone: str) -> MappedUser:
     return mapped
 
 
+def map_delegate_manager(payload: dict[str, Any], *, source_timezone: str) -> MappedUser:
+    """A LAIT delegate manager -> an account.
+
+    These are the corporate contacts behind `/api/GetDelegateManagers`: the
+    person a company's delegates are booked under. They are mapped here, beside
+    students and tutors, because they go through the *same* upsert -- a manager
+    who is also a student must end up as one account holding both roles, which
+    only works if one matcher sees all three feeds.
+
+    `username` upstream is the email address, as it is in the student feed.
+    `unique_key` is LAIT's GUID and becomes `public_id`, so re-running matches
+    the same row rather than making a second one.
+
+    There is deliberately no external-id column for a manager: `customer_id` is
+    an id in a different namespace from `StudentID`, and writing it into
+    `external_student_id` would collide with a real student's id.
+    """
+    guid = parse_guid(payload.get("unique_key"))
+    mapped = MappedUser(guid=guid, source="manager")
+    warnings = mapped.warnings
+
+    email = normalise_email(payload.get("username"))
+    if email is None and clean(payload.get("username")):
+        warnings.append("email is not a valid address and was ignored")
+    mapped.email = email
+    mapped.username = email.lower() if email else None
+
+    mapped.title = fit(clean(payload.get("title")), "title", warnings)
+    mapped.first_name = fit(clean(payload.get("first_name")), "first_name", warnings)
+
+    # Same as the tutor feed: no middle-name column here, so it goes in front
+    # of the surname rather than being dropped.
+    last = " ".join(p for p in (clean(payload.get("middle_name")), clean(payload.get("last_name"))) if p)
+    mapped.last_name = fit(last or None, "last_name", warnings)
+
+    mapped.company = fit(clean(payload.get("company_name")), "company", warnings)
+    mapped.registered_at = parse_registered_at(payload.get("date_created"), source_timezone)
+
+    # Presence in this feed is what makes someone a corporate manager; the
+    # payload carries no roles of its own.
+    mapped.roles = ["CORPORATE_MANAGER"]
+    return mapped
+
+
 def map_tutor(payload: dict[str, Any]) -> MappedUser:
     guid = parse_guid(payload.get("user_id"))
     mapped = MappedUser(guid=guid, source="tutor")

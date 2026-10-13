@@ -3858,3 +3858,337 @@ mutation from the truth:
 
 Seventh, eighth and ninth instances in this codebase. The rule holds: assume a
 new negative test passes for the wrong reason until a mutation says otherwise.
+
+## LAIT's corporate managers, read through rather than synced
+
+Two upstream endpoints surfaced for the first time:
+
+    GET /api/v1/integrations/lait/delegate-managers
+    GET /api/v1/integrations/lait/delegate-managers/{customer_id}/delegates
+
+`backend/api/v1/lait_delegates.py` + `backend/schemas/lait_delegates.py`, two
+new methods on the existing `LaitClient`, and nothing else. **No new
+credential, no new setting, no migration.** The key is the one already in
+`LaitSettings`, read into an `X-API-Key` header by the client at request time.
+
+**Read-through, deliberately not a sync.** `manager_links` already records who
+looks after whom -- an administrator's assertion, which `ScopeResolver`
+enforces -- and that is *not* derived from this feed. These two answer a
+different question: what does the upstream system say right now? Which is what
+somebody reconciling the two needs, and what nothing in the console could
+previously show. They are tagged **Corporate managers** so they sit beside
+`/manager-links` in Swagger, with every summary saying "held by LAIT".
+
+**Four decisions worth not re-litigating:**
+
+1. **`organization.read`, not `user.sync`.** A delegate manager is a company's
+   contact and their delegates are its employees, so this is the corporate
+   directory, governed by the permission that already governs organizations.
+   `user.sync` is a *write* grant -- reading a list must not require the
+   authority to overwrite the roster. Super Admin, Administrator and Corporate
+   Manager hold it; tutors, students and guardians get 403, **decided before
+   the external call**, so a refused caller cannot drive traffic at LAIT on our
+   key.
+2. **An external source is not a way around the contact rule.** Upstream a
+   manager's `username` *is* their email address. It is returned as `email`
+   only to a holder of `user.view_contact` and is `null` otherwise -- the same
+   rule `core/privacy.py` applies to every other directory here. The field
+   exists either way, so `null` means withheld rather than absent. Proven live:
+   the same 103 rows carried 103 addresses for a Super Admin and 0 for a
+   Corporate Manager.
+3. **The delegate list is wrapped, so "nobody" is expressible.** A bare `[]`
+   cannot distinguish an empty company from a `customer_id` LAIT has never
+   heard of -- and upstream *does* distinguish them, answering 404 for the
+   second. `{customer_id, count, delegates}` keeps both facts. Verified against
+   the live service: id 1 → 3 delegates, id 99999999 → **404**.
+4. **An upstream failure is 503, never 500**, and relays nothing. A refused
+   key, a timeout and an upstream 500 all mean "this integration is not
+   answering", which is an operator's problem rather than the caller's. The
+   body is withheld because on these two routes it is people's names and
+   addresses -- `LaitApiError` is built from a status and a path by design.
+
+The path id is `ge=1` and typed `int` because it is interpolated into an
+upstream URL; `0`, `-1` and `abc` are all 422 **before** any call is made.
+
+**Nothing leaks.** Checked rather than asserted: the configured key appears in
+neither the OpenAPI document, nor any response body, nor any of the 26 log
+lines emitted across three real calls, and the header name is absent from the
+spec too.
+
+`test_lait_delegate_endpoints.py` (33) drives both routes over real HTTP with a
+`MockTransport` upstream, so it needs no network and can exercise the failure
+modes a live call cannot. **Mutation-tested, 5 of 5:** removing the email gate,
+flattening 404 to an empty list, dropping `ge=1`, relaying the upstream body,
+and removing the permission dependency each fail tests that pass when restored.
+
+**The dev server on :8000 runs without `--reload`, so it must be restarted
+before these routes are reachable there.** Swagger UI is `/docs`.
+
+## "Sync All Data": six synchronisations as one ordered operation
+
+The platform had two synchronisations, two buttons on two different screens,
+and no way to say "import everything". Pressed in the wrong order they produce
+exactly the per-record errors their error lists are full of: a batch whose
+course does not exist yet, an enrolment whose student was never imported. The
+order is now explicit, recorded, and pressable from the dashboard.
+
+New: `sync_pipeline_runs` + `sync_pipeline_jobs` (migration `e9a1c74f0b36`),
+`services/sync_pipeline_service.py`, `services/manager_link_sync.py`,
+`services/sync_schedule.py`, `api/v1/sync_pipeline.py` (6 routes under
+`/sync/all`), `cli/sync_all.py`, and `components/domain/sync-panel.tsx` on the
+dashboard.
+
+**Nothing re-implements a synchronisation.** Each step drives the service that
+already owns it: `LaitSyncService` for users, the new `ManagerLinkSyncService`
+for managers, and `LaitAcademicSyncService` for the other four, which it does
+in one run.
+
+**Five decisions worth not re-litigating:**
+
+1. **The duplicate guard is a partial unique index, not a check.** Both this
+   table and `user_sync_runs` carry one over `status = 'RUNNING'`. Two presses,
+   two API processes, or a press racing the scheduled worker all reach the same
+   index and exactly one wins. A service that checked first would be correct
+   only until the second process existed. Proven live: the second press is 409.
+2. **The four academic steps share one transaction, and are still reported as
+   four jobs.** That transaction is what makes "a batch without its course"
+   impossible, so it was not split; instead `LaitAcademicSyncService` gained an
+   optional `on_stage` callback (ignored by every existing caller) and the
+   console watches four steps advance. The cost, stated rather than hidden:
+   retrying any one of them re-runs the academic sync, which is idempotent.
+3. **A failed step skips the ones that depend on it.** Importing enrolments
+   after the user import failed attaches people to nothing and then reports
+   hundreds of per-record errors with one cause.
+4. **Managers are matched by email and delegates by `external_student_id`.**
+   The email rule is also forced -- `users.email` is unique and
+   `_assert_free` refuses to create an account whose email belongs to somebody
+   else -- so an upstream manager already in the LMS is *used*, never
+   duplicated. Delegates are matched on the stable external id because name
+   matching attaches a person's coursework to the wrong manager the first time
+   two delegates share a name.
+5. **A manager with no match is created through `LaitSyncService.upsert_record`**,
+   not a second account-creation path, so they get `can_login=False` and the
+   same audit row as every other imported account. Without this the step is
+   nearly a no-op: measured against live data, only **7 of 103** upstream
+   managers already existed here.
+
+**Scheduling reuses the existing shape: a separate CLI process**, like
+`sync_lait_users` and `sync_lait_academic`, so it is independent of the API
+process as well as of user sessions:
+
+```bash
+python -m backend.cli.sync_all            # loop, obeying the console
+python -m backend.cli.sync_all --once     # one pass
+```
+
+The on/off switch and frequency live in `system_settings`
+(`sync.automatic.enabled`, `sync.automatic.interval_hours`), read fresh on
+every pass, so the dashboard toggle takes effect with nothing to restart.
+`--interval` overrides the cadence but never the off switch.
+
+### What the live run found, that the tests could not
+
+1. **The migration declared `public_id` as `sa.CHAR(32)`.** `PublicIdMixin`
+   uses `sa.Uuid()`; CHAR(32) is how that *renders*, not the column to declare.
+   Every insert died with "value too long for type character(32)".
+2. **The schedule route read its session after committing it** --
+   `InvalidRequestError: Can't operate on closed transaction`. The settings
+   were written and the response was a 500, so the UI showed the new value and
+   an error at the same time. Both handlers now share one builder that opens
+   its own session.
+3. **Unmatched delegates were counted as failures.** 454 of 471 delegates
+   upstream have never taken a course here, so they are not in `users` and no
+   retry will put them there. Counting them as failures made every run read
+   PARTIAL for ever, which trains an operator to ignore the status.
+4. **Sessions reported "0 processed, 46 succeeded".** They are *generated* from
+   each batch's schedule, not fetched, so `fetched` is legitimately 0.
+5. **"Last successful" said Never, for ever.** One upstream manager has no
+   email address, so every real run is PARTIAL. It now means "every step ran",
+   with per-record failures reported separately -- the operator's question is
+   "when did data last come in?", and Never was a false answer to it.
+
+**Verified live, not only in tests:** a full run from the dashboard; a **full
+page load to another route mid-run** with the pipeline still at 83% afterwards
+and finishing while the browser was elsewhere; 409 on the second press; the
+schedule saved from the UI into `system_settings` and then obeyed by a
+separate worker process, which idled when switched off; +95 manager accounts
+(sign-in disabled) and +10 links on the first run, then **+0 courses, batches,
+sessions and enrolments on the second** -- the upserts are idempotent. After
+the run: 0 orphan batches, 0 self-links, 0 duplicate manager links, and every
+join resolves.
+
+`test_sync_pipeline.py` (15) fakes the three steps so a test can fail step 2 on
+demand, which a live run cannot do without breaking the upstream API.
+**Mutation-tested, 4 of 4:** a failure no longer stopping downstream steps, the
+academic sync running once per step instead of once, a retry resetting
+completed steps, and the stale-run reaper removed each fail tests that pass
+when restored.
+
+### Found during the review, not fixed
+
+* ~~Academic setup → Academic years does not refresh after a create.~~
+  **This was a false positive and there is no defect** -- see "The academic
+  years refresh was not broken" below.
+* **`/api/v1/users/sync/test`** is a stub marked `# SHOHEL` that is declared
+  `-> list[dict]` and returns `{}`. Dead, and wrong about its own type.
+* **A category named `ac884656 Category`** is residue from
+  `test_lait_academic_sync.py`'s fixtures (0 courses, 0 sub-categories).
+* ~~Administrators can press "Sync All Data" too.~~ **Done** -- see
+  "Importing from LAIT is now Super Admin only" below.
+
+
+## Importing from LAIT is now Super Admin only
+
+`user.sync` and `course.sync` are subtracted from `_ADMIN` in
+`core/permissions.py`. Both go together on purpose: the pipeline is gated on
+holding both, so leaving an Administrator either one would let them achieve
+the same import in two presses from the Users and Batches screens -- a gate
+that looks closed and is not.
+
+`google.sync` is deliberately **not** withdrawn (it writes to a calendar, not
+to the institution's records), and `managed_student.*` stays, so an
+Administrator still manages manager assignments by hand.
+
+### Editing `core/permissions.py` does nothing until the catalogue is reseeded
+
+**This is the trap, and it was walked into.** `resolve_permissions` flattens
+`user.roles[].permissions[]` -- **`role_permissions` rows**. The constant in
+`core/permissions.py` is only the source the seeder reads. A unit-style
+assertion over `ROLE_PERMISSIONS` passed while a real Administrator session
+still got **202** from `POST /sync/all`, because the rows were untouched.
+
+    python -m backend.cli.seed          # or bootstrap_identity directly
+
+The seeder is idempotent and **code wins**: an out-of-band grant added
+straight into the database is reverted by it. **After any change to
+`core/permissions.py`, this must run as part of the deploy.**
+
+`test_sync_pipeline.py` now asserts the **database** grants, not just the
+catalogue, so a forgotten reseed fails a test instead of shipping. Verified by
+mutation: restoring the grants in the constant and reseeding fails it with
+*"ADMIN must not be able to import from LAIT"*; reverting and reseeding passes.
+
+**Proven live, from a throwaway Administrator session** (created, used,
+deleted): `POST /sync/all`, `GET /sync/all/status`, `POST /users/sync` and
+`POST /courses/sync` all **403**, while `/users`, `/courses`, `/batches` and
+`/manager-links` all still **200** -- and the Super Admin is unaffected. The
+first run of that same probe, before the reseed, returned 202/200/409/202,
+which is what made the trap visible at all.
+
+19 pipeline tests pass; 214 frontend tests, `tsc` and `eslint src` (0 errors)
+are clean.
+
+## The academic years refresh was not broken
+
+Reported in the previous pass as "POST returns 201 and the list stays empty
+until a reload". **It does not reproduce, and the earlier report was wrong.**
+
+Three attempts, each creating a year and reading the table back:
+
+* straight after a fresh page load -- the row appears at once;
+* after walking Semesters → Departments → Categories → Tags and back, which
+  was the original path -- appears at once;
+* submitting twice in quick succession (201 then 409), which is what the
+  original run actually did -- appears at once.
+
+Then checked against a **production build** (`next build` + `next start` on
+:3100, signed in for real): the row appears immediately there too.
+
+The Next dev log also rules out the obvious explanation -- the refetch after
+the original POST completed in **51 ms**, well inside the 2.5 s window the
+check waited. The wiring is ordinary and correct: `queryKey:
+["academic-years", limit, offset]`, `invalidate: [["academic-years"]]`, and
+the global defaults set no `refetchOnMount: false`.
+
+Most likely a dev-server Fast Refresh artifact in that session; a full reload
+cleared it, which fits. **No code was changed**, because changing working code
+to chase an unreproducible symptom is how a real defect gets introduced.
+
+## Managers are matched, never invented -- and three bugs that only a second run could show
+
+The previous pass created an LMS account for every upstream manager with no
+match. That is reversed: **the manager step matches by email and skips
+otherwise.** An external directory saying somebody is a corporate contact is
+not a reason for them to exist here.
+
+The 95 accounts the old behaviour created were removed, identified from the
+audit trail (`details->>'source' = 'manager'`, `result = 'created'`) rather
+than by a `can_login = false` heuristic -- which would have swept up five
+corporate managers the *student and tutor* feeds had legitimately created.
+Checked first: none could sign in, none held another role, none had
+enrolments, attendance or taught a session. Removed through the API, so each
+went through the ordinary service and left an audit entry.
+
+**Nothing in this step is a failure any more.** A manager with no LMS account,
+a manager LAIT holds no email for, and a delegate who is not a student here
+are facts about two systems holding different people -- counted as skipped,
+never failed. That is what turned a permanently PARTIAL run into a COMPLETED
+one. Only the LAIT API refusing to answer is an error, because only that is
+worth retrying.
+
+Skips are recorded with a reason and **nothing else**: `{"customer_id": "1",
+"reason": "no LMS user has this email address"}`. The list is stored on the
+run and rendered in the console, so "which record" is answerable without
+publishing a third party's name, email or employer. A test asserts the address
+cannot appear there.
+
+### Three defects, each found by running it rather than reading it
+
+1. **`rowcount` is `-1`, and `-1` is truthy.** The link upsert decided
+   "created" vs "already linked" from `result.rowcount` after an
+   `ON CONFLICT DO NOTHING` insert. This driver reports `-1` when there is
+   nothing to fetch, so **every** link counted as newly created and
+   `already_linked` sat at 0 for ever -- on runs that wrote nothing at all.
+   The database was always right; only the report lied. Now
+   `.returning(ManagedStudent.id)`, where a conflict yields no row and the two
+   cases are genuinely distinguishable.
+2. **Soft-deleted users were matched.** Users are soft-deleted because
+   `audit_logs` references the row, so a deleted person keeps their email.
+   Immediately after removing those 95 accounts the next run matched all 95
+   again and re-linked two of them -- quietly undoing the deletion. Both
+   lookups now require `deleted_at IS NULL` and `status != DELETED`.
+3. **A known error was reported as a crash.** A step that hit the
+   `user_sync_runs` single-RUNNING-row lock -- shared with the "Sync now"
+   buttons on the Users and Batches screens -- failed the whole pipeline with
+   *"COURSES: Unexpected ConflictError"*, skipping the three steps after it.
+   Two fixes: `_readable` passes an `AppError`'s own message through, and a
+   step now **waits out** the competing run (3 minutes, polling every 3s)
+   instead of dying on a condition that resolves itself in under a minute.
+
+### Verified
+
+Four consecutive runs from the dashboard, all **COMPLETED**, `failed = 0`, and
+the last three byte-identical in their manager figures:
+
+    managers  : fetched 103, matched 7, no_lms_account 95, no_email 1
+    delegates : fetched 18, linked 0, already_linked 8, unmatched 3, self 7
+
+`linked: 0` on a repeat run is the idempotence proof the old `rowcount` bug
+had been hiding. Delegate fetches also fell from 471 to 18, because only a
+matched manager's list is now requested -- less upstream traffic for the same
+result.
+
+Afterwards: 82 live users, 7 live corporate managers, 15 links, **0 duplicate
+links, 0 self links, 0 links pointing at a deleted account, 0 orphan batches
+or sessions**, and courses/batches/sessions/enrolments unchanged at
+28/26/66/41.
+
+Permissions re-checked live: corporate manager, student and tutor all **403**
+on `POST /sync/all` and `GET /sync/all/status`; anonymous **401**; a second
+press **409**; retrying an all-succeeded run **409**.
+
+`test_manager_link_sync.py` (14) drives the service against real Postgres with
+a faked LAIT API, with a fixture holding one manager of each kind the live
+feed has. **Mutation-tested, 6 of 6:** treating an unmatched manager as
+matched, counting skips as failures, counting every link as created, leaking
+the email into a skip reason, and dropping either soft-delete filter each fail
+tests that pass when restored. 214 frontend tests, `tsc` and `eslint src`
+(0 errors) clean.
+
+### Still true, and worth knowing
+
+* Only 7 of 103 upstream managers have an LMS account. That is the honest
+  state of the two systems, not a fault, and the console now says so in words
+  rather than leaving "7 of 103" to look like a failure.
+* `customer_id` 131 has no email address upstream, so it can never be matched
+  until LAIT holds one.

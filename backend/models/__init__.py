@@ -33,6 +33,12 @@ from .gradebook import GradeBand, GradeBookEntry, Transcript
 from .certificate import Certificate, CertificateIssued
 from .badge import Badge, UserBadge
 from .integration import CalendarFeed, WebhookDelivery, WebhookEndpoint
+from .sync_pipeline import (
+    PIPELINE_STEP_LABELS,
+    PIPELINE_STEPS,
+    SyncPipelineJob,
+    SyncPipelineRun,
+)
 from .user_sync import UserSyncRun
 from .google_connection import GoogleChangeRequest, GoogleConnection
 from .notification import Notification, Announcement
@@ -78,4 +84,5 @@ __all__ = [
     # Shared links
     "SharedLink", "SharedLinkTarget",
     # Background synchronisation
+    "SyncPipelineRun", "SyncPipelineJob", "PIPELINE_STEPS", "PIPELINE_STEP_LABELS",
 ]
