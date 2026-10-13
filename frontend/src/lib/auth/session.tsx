@@ -12,6 +12,7 @@
  */
 
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api/client";
 import { toast } from "sonner";
@@ -86,9 +87,17 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
     hydrate();
   }, [hydrate]);
 
+  // The Help Center is public: a reader with no account opens it from a link
+  // somebody sent them. Asking the API who they are would be one guaranteed
+  // 401 per page for a page that needs no session at all, so the question is
+  // not asked there. Every other route still asks on mount as before.
+  const pathname = usePathname();
+  const needsSession = !pathname.startsWith("/help");
+
   const query: UseQueryResult<CurrentUserResponse, ApiError> = useQuery({
     queryKey: CURRENT_USER_KEY,
     queryFn: () => api.get<CurrentUserResponse>("/auth/me"),
+    enabled: needsSession,
     // A 401 here is the answer, not a transient failure: retrying it wastes
     // three round trips before showing the sign-in screen.
     retry: (failureCount, error) =>
@@ -102,7 +111,7 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
     setAccountTimeZone(accountTimeZone);
   }, [accountTimeZone, setAccountTimeZone]);
 
-  useLocaleWatcher(query.data !== undefined);
+  useLocaleWatcher(needsSession && query.data !== undefined);
 
   const value = useMemo<SessionValue>(() => {
     const user = query.data ?? null;
@@ -110,12 +119,12 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
       user,
       permissions: permissionSet(user?.permissions),
       roles: user?.roles ?? [],
-      isLoading: query.isPending,
+      isLoading: needsSession && query.isPending,
       isSignedOut: query.isError && (query.error as ApiError).isUnauthenticated,
       error: query.isError ? (query.error as ApiError) : null,
       refetch: () => void query.refetch(),
     };
-  }, [query]);
+  }, [needsSession, query]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

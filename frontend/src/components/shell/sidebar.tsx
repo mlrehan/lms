@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { NAVIGATION } from "@/lib/navigation";
 import { useSession } from "@/lib/auth/session";
 import { Button } from "@/components/ui/button";
+import { HelpNavItem } from "@/components/help/help-nav-item";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string): boolean {
@@ -16,7 +17,7 @@ function isActive(pathname: string, href: string): boolean {
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): ReactNode {
   const pathname = usePathname();
-  const { permissions } = useSession();
+  const { permissions, roles } = useSession();
 
   const sections = NAVIGATION.map((section) => ({
     ...section,
@@ -75,6 +76,16 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): Rea
           </ul>
         </div>
       ))}
+
+      {/*
+        The user guide. Chosen from the roles the *server* reports, not from
+        what the sidebar happens to render: the guide somebody needs follows
+        from who they are, and a person with no screens at all still needs to
+        be able to read about signing in. Nothing is shown for a role whose
+        guide is not written yet, because a link to an empty guide is worse
+        than no link.
+      */}
+      <HelpNavItem roles={roles} onNavigate={onNavigate} />
 
       {sections.length === 0 ? (
         <p className="px-2.5 text-xs leading-relaxed text-muted-foreground">

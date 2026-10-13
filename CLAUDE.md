@@ -4192,3 +4192,391 @@ tests that pass when restored. 214 frontend tests, `tsc` and `eslint src`
   rather than leaving "7 of 103" to look like a failure.
 * `customer_id` 131 has no email address upstream, so it can never be matched
   until LAIT holds one.
+
+## A public Help Center, starting with the Super Admin guide
+
+`/help` is a public documentation site inside the console: 41 articles, 50
+screenshots of the real screens, readable without signing in and shareable by
+link. Full progress record and feature coverage matrix:
+[docs/help-center-progress.md](docs/help-center-progress.md).
+
+**It is outside the `(app)` route group, and that is the whole trick.** That
+group's layout holds the sign-in guard, so anything inside it redirects a
+signed-out visitor to the login screen. `/help` sits beside it, where no guard
+runs — no middleware was added and no existing route changed. The pages are
+prerendered at build time from content files, so they make no API call and
+have no session to leak.
+
+**Articles are typed data, not Markdown or MDX** (`content/help/types.ts`).
+Three reasons, each of which is a thing that otherwise rots:
+
+1. **The template is enforced.** Every article must say what the reader will
+   learn, what they need first, the steps, what they should see afterwards and
+   what to do when it goes wrong. Prose lets an author skip the last two,
+   which are the ones beginners need most.
+2. **Links cannot rot.** `related` holds article ids, and a test fails on an
+   id that names nothing.
+3. **Search needs no service.** The index is built in the browser from the
+   same data the page renders.
+
+Zero new dependencies. The pages reuse the console's design tokens, so the
+Help Center and the application look like one product.
+
+### Writing it from the application, not from memory
+
+A Playwright pass signed in as a Super Admin walked all 34 routes, recorded
+each page's real headings, tabs, buttons, columns and filters to JSON, and
+photographed it. A second pass opened what a list page cannot show: the quiz's
+four tabs and its answer key, the examination's mark sheet and its two
+visibility switches, the grade book's three tabs, both attendance tabs, and
+**twelve create dialogs — opened to read their real field names, then closed
+without saving**. Every field name in the guide is a field name on screen.
+
+**Nothing was submitted, published, graded or synced to produce
+documentation.** Where a workflow could not be completed safely against real
+institution data, the article describes the screen and the buttons and does
+not claim an outcome that was not observed; `docs/help-center-progress.md`
+lists those cases explicitly.
+
+### Personal data is blurred before the shutter opens
+
+The console is full of real students, tutors and guardians. A capture script
+blurs, in the page, every table cell under a column named for a person or a
+contact detail, **and** any element whose own text looks like an email
+address — 264 elements across 34 pages. Blurring rather than blanking keeps
+the shape of the screen, which is what a reader needs.
+
+The first attempt used `blur(5px)` and the email column was still partly
+legible when enlarged. It is `blur(11px)`, checked by cropping and enlarging
+the Users, Audit log and Quiz attempts captures.
+
+### One console change, and why
+
+`SessionProvider` asked `/auth/me` on every page. On a public help page that
+is a guaranteed 401 per visitor for a page with no session, so the query is
+disabled under `/help`. Every other route is unchanged. Verified: zero console
+errors on a public page, where there was one per page before.
+
+### Sidebar
+
+A **Help** group at the foot of the rail, chosen from the roles the *server*
+reports rather than from the screens the sidebar happens to render. It opens
+in a new tab and has a copy-link button beside it, because the commonest thing
+to do with a guide is send it to somebody.
+
+**A role whose guide is not written gets no link at all.** A link to an empty
+guide teaches people that the help is useless. Verified live: present for a
+Super Admin, absent for a Tutor and a Student.
+
+### Verified in a browser, signed out
+
+41/41 articles return 200 with no redirect in a fresh profile with no cookies;
+0 broken internal links; search returns results for real terms and an honest
+empty state otherwise; table-of-contents anchors land on headings that exist;
+click-to-enlarge opens and closes with Escape; at 375px there is no horizontal
+overflow and the contents drawer opens; in print media the header, sidebar,
+breadcrumbs, search and previous/next all collapse to nothing while the steps
+and screenshots stay.
+
+`help-content.test.ts` (19) checks what TypeScript cannot: that every `related`
+id names a real article, that every screenshot referenced **exists on disk**,
+that every screenshot has alternative text, and that **no email address or
+test credential appears in any article**. 233 frontend tests pass; `tsc`,
+`eslint src` (0 errors) and `npm run build` are clean.
+
+**One defect found in my own verification, not in the product:** a "broken
+image" on the quizzes article was a lazy-loaded screenshot below the fold.
+It loads on scroll and returns 200; the check was measuring too early.
+
+## Tutor guide — the second Help Center role
+
+`/help/tutor`: 25 articles, 32 screenshots, same shell and content model as the
+Super Admin guide. Registered in `GUIDES` and in `ROLE_TO_GUIDE`, which is all
+it takes for the Help Center listing, the sitemap, the search and the sidebar
+link to pick it up.
+
+**A tutor's guide is defined by what a tutor cannot reach.** Twelve screens a
+Super Admin opens are absent from a tutor's menu — Users, Roles, Permissions,
+Organizations, Guardians, Manager assignments, My team, Integrations, System
+settings, Audit log, Security and Operations — so they have no articles. Where
+a tutor can see a screen but not act on it (Grading schemes, Transcripts,
+Academic setup) the article says so and names who to ask.
+
+That list was **established, not assumed**: the capture pass records every
+button on every screen, so a diff of Tutor against Super Admin produces the
+restrictions. It is how the guide knows there is no **Export CSV** on a
+tutor's Reports, no **New scheme**, no **FEE** column and no **Add year**.
+
+Scoping was checked against the API as both roles rather than inferred from
+the screen: courses 28 → 9, batches 26 → 3, sessions 66 → 14, enrolments
+41 → 12, users 82 → 11.
+
+### Three things the capture got wrong first, and how
+
+1. **Two tutor screens were recorded as empty.** The capture waited for
+   `networkidle`, which these pages reach while still showing a loading
+   skeleton — they fetch after mount. Enrollments read "0 rows" when the API
+   had 12, and Batches read "No batches" with 3. The capture now waits for the
+   word "Loading" to leave the page, and both screens were re-taken. **Neither
+   was a product defect**, and reporting one would have been wrong.
+2. **Batches do not open from a link.** The row navigates on click
+   (`onRowClick`), with the same destination on the row's **Actions** menu.
+   The Super Admin guide said "click the batch code", which was wrong; both
+   guides now describe the row click and the Actions menu.
+3. **The tutor's create dialogs were not assumed to match the Super Admin's.**
+   They were opened as the tutor and read: they are identical, which is now a
+   checked fact rather than a guess.
+
+### The content test earned its place twice
+
+`help-content.test.ts` failed on the tutor content for two real reasons before
+anything shipped: four screenshots referenced before the optimiser had written
+them, and two article titles ("… (read only)") breaking the action-oriented
+title rule. Both were fixed rather than the rule weakened — the titles became
+"What transcripts and grading schemes are for" and "What Academic setup is
+for".
+
+### Housekeeping
+
+Captures include screens the role cannot reach, so unreferenced screenshots
+are pruned: 18 from the tutor folder and 7 superseded duplicates from the
+Super Admin folder. Four tutor captures were *used* rather than deleted
+(the batch Overview tab, announcements, discussions and notifications).
+
+**Verified signed out, fresh profile:** 25/25 Tutor articles HTTP 200, 0
+broken links, search/TOC/lightbox pass, no horizontal overflow at 375px, 0
+console errors. Sidebar: Super Admin → "Super Admin guide", Tutor → "Tutor
+guide", Student → no link (guide not written). 233 frontend tests, `tsc`,
+`eslint src` (0 errors) and `npm run build` all clean.
+
+## Corporate Manager guide — the third Help Center role
+
+`/help/corporate-manager`: 22 articles, 19 screenshots. Three guides now ship
+from one shell; adding this one changed two lines of `content/help/index.ts`.
+
+**The account used to write it is not the role it documents.** The test
+manager holds **both** `CORPORATE_MANAGER` and `STUDENT`, so it can open
+Announcements, Discussions, Resources and Grading schemes — none of which the
+corporate-manager role grants. Documenting what that account sees would have
+produced a guide that is wrong for every manager who is not also a learner.
+
+So the pure-role view was **computed** — the permission catalogue intersected
+with the permission each nav item declares in `navigation.ts` — rather than
+read off the screen. A pure corporate manager sees 19 sidebar items, and the
+guide covers those. The sidebar article tells a reader who sees extra items
+why, and points them at the Student guide for them.
+
+This also exercises the "most privileged role wins" rule in `ROLE_TO_GUIDE`:
+signed in, that same account is offered the **Corporate Manager** guide, not
+the Student one. Verified live.
+
+### The manager's single write action, found by searching rather than clicking
+
+A corporate manager holds `enrollment.create`, but the Enrollments screen has
+no create button and neither does their organization page. Grepping the
+frontend for the permission found it in exactly one place — the batch
+workspace's Enrollments tab — and opening a batch as the manager confirmed an
+**Enroll** button appears there. Without that search the guide would have said
+a manager cannot enrol anybody, which is wrong.
+
+Everything else is reading. Their batch workspace has **three** tabs where a
+tutor's has four: no Attendance tab, because they cannot mark a register.
+
+### Scoping, checked as both roles
+
+courses 28 → 28 (managers hold `course.view_all`, so they browse the whole
+catalogue), batches 26 → 1, sessions 66 → 6, enrolments 41 → 7, users 82 → 8,
+manager assignments 15 → 7, organizations 14 → 1.
+
+### The title rule was widened, deliberately
+
+The content test rejected "Why you can see some people and not others". That
+title is exactly the question its readers arrive with, so the rule gained
+`why` rather than the title being bent to fit — with the reason written into
+the test. The rule exists to stop bare-noun titles, not to ban good questions.
+
+**Verified signed out, fresh profile:** 22/22 articles HTTP 200, 0 broken
+links, search/TOC/lightbox pass, no horizontal overflow at 375px, 0 console
+errors. Sidebar across four accounts: Super Admin, Tutor and Corporate Manager
+each get their own guide; a Student still gets no link. 233 frontend tests,
+`tsc`, `eslint src` (0 errors) and `npm run build` clean.
+
+## Guardian guide — written only after the data to write it from existed
+
+`/help/guardian`: 19 articles, 18 screenshots. Four guides now ship.
+
+**The role could not be inspected at first, and that was the finding.** The
+two accounts the brief named (`gina@lmsdemo.com`, `cal@lmsdemo.com`) are not
+in this database, **no account held the GUARDIAN role at all**, and
+`student_guardians` was empty. Checked three ways — sign-in returned 401, the
+users table had no such rows, and the role count was zero — before stopping
+and asking rather than writing a guide from the permission catalogue and
+calling it documentation.
+
+With the user's approval one guardian was created through the API as an
+administrator would, linked to a student with real attendance and marks, used
+for the screenshots, then removed: link deleted, account soft-deleted,
+confirmed afterwards at **0 links, 0 live GUARDIAN accounts**. The soft-delete
+is the schema's doing — `audit_logs` references `users` — so that row and its
+audit entries remain, which is stated in the progress file rather than glossed.
+
+### What distinguishes a guardian, all verified on screen
+
+* **No write action whatsoever.** A corporate manager has exactly one
+  (enrolling from a batch); a guardian has none. The guide leads with that
+  instead of letting a reader hunt for buttons.
+* **No Reports screen** — guardians lack `report.read`, where managers have it.
+* **Announcements, which managers do not get** — `announcement.read` is a
+  guardian permission and not a manager one.
+* **Performance shows only their own student**, despite the screen being
+  organised by class group. One row, not the cohort.
+
+### The capture kept being too fast, a third time
+
+Courses and Timetable recorded as "Loading" even after a 17-second wait.
+Driving them by hand for twelve seconds showed 28 courses and 6 sessions, all
+API calls 200, no console errors. The settle now waits for the page text to
+**stop changing** rather than only for the word "Loading" to leave, which is
+what finally held. Three roles in, the lesson is the same each time: a screen
+that looks empty to a scraper is usually a screen that had not finished.
+
+**Verified signed out, fresh profile:** 19/19 articles HTTP 200, 0 broken
+links, search/TOC/lightbox pass, no horizontal overflow at 375px, 0 console
+errors. Sidebar across five accounts: Super Admin, Tutor, Corporate Manager
+and Guardian each get their own guide; a Student still gets none. 233 frontend
+tests, `tsc`, `eslint src` (0 errors) and `npm run build` clean.
+
+## Managed Student guide — the fifth Help Center role
+
+`/help/managed-student`: 23 articles, 20 screenshots. Five guides now ship.
+
+**A managed student is not a distinct role.** They hold the same `STUDENT`
+role and the same 27 permissions as any other student, and see the same 17
+menu items. What makes them "managed" is a row in another table: a corporate
+manager or guardian linked to their account. The account used was a student
+with one enrolment and **two corporate managers watching**.
+
+### What the guide says that the product does not
+
+* **The student has no screen listing who can see them.** There is no My team
+  and no Guardians item on a student's menu. Rather than leave a reader
+  hunting, the guide states it and says to ask the office.
+* **They are told once, when a link is created.** `guardian_linked` and
+  `manager_linked` are sent to both sides, naming the person. The comment in
+  `managed_student_service.py` says why: *"The student finding out is the
+  point -- it is the only moment they could object."* So the guide tells them
+  to read notifications rather than clear them, because this one arrives
+  nowhere else.
+* **Watchers can read but cannot act.** `assignment.submit` is held by
+  `STUDENT` and by neither `CORPORATE_MANAGER` nor `GUARDIAN` — checked rather
+  than assumed, because "your manager can sort it out" is exactly the wrong
+  thing for a guide to imply.
+
+### Two findings from checking rather than reading
+
+* **"All submissions" on the assignment page is scoped, not a leak.** The label
+  invites the opposite reading, so it was measured over the API: the same
+  assignment returns 6 submissions to an administrator and **1** to the
+  student, because `list_submissions` filters on `work_visibility`. The guide
+  explains the label instead of repeating it.
+* **18 of the 38 captured PNGs were stale** — a prior route sweep into the same
+  folder, 22:58–23:00 against the real capture's 23:01–23:04. Only the 20
+  screens present in `deep.json` were published. Publishing a folder because it
+  is the output folder is how an admin screen ends up in a student's guide.
+
+### The privacy policy had two holes, and real names were in the frame
+
+`privacy.js` blurred table cells under person-ish headers and anything shaped
+like an email. Two things escaped: **the signed-in person's own name**, which
+is a page heading on `/account` and not a table cell, and **"recorded … by
+Firstname Lastname"** credits under a `RECORDED` column. A student's name on a
+public page beside their own absence record is the thing the brief forbids, so
+the policy gained two rules and the six affected screens were re-photographed.
+
+The supplied names are read from the account page **at capture time** and
+passed in as `window.__redactNames`. A list of names written into the script
+would be stale the moment the data changed, and would itself be a published
+name.
+
+Cost, stated because it is visible: the `RECORDED` column now blurs its
+timestamp along with the credit, since they are one text node.
+
+### Residue from the Guardian pass, cleaned
+
+The temporary guardian created for the previous guide had been removed, but the
+notification it caused had not — a real student's feed still said a guardian who
+no longer exists could read their record, and it was in frame on the
+notifications screenshot. One row deleted by id, after re-reading it and
+refusing to act unless it matched on both type and body (10 → 9 notifications),
+then the screen re-photographed.
+
+### One role, two guides — an open decision
+
+`ROLE_TO_GUIDE` maps a role to a single guide, and the Individual Student guide
+will share the `STUDENT` role. Nothing in a student's own token says whether
+anyone is linked to them, so the console cannot tell them apart. `STUDENT`
+currently maps to `managed-student`, which means an individual student is
+offered it too — verified, and recorded rather than hidden. A chooser is
+probably the answer once the second guide exists.
+
+## Individual Student guide — the sixth role, and the Help Center is complete
+
+`/help/individual-student`: 23 articles, 20 screenshots. **All six guides now
+ship: 153 articles and 164 screenshots.**
+
+**Nothing in the software distinguishes this role from the managed student.**
+Same `STUDENT` role, same 27 permissions, same 17 menu items. The account used
+has zero managers, zero guardians and no employer membership, against the
+managed student's two managers and one membership — otherwise the two are
+matched (1 enrolment, 1 submission, 3 attendance records each). So the guide
+differs in framing, not in which screens it covers, and says so rather than
+inventing a distinction.
+
+* **Nobody chases them**, so the guide points repeatedly at the dashboard as
+  the thing that does.
+* **"Private" would have been the wrong word.** Tutors and administrators read
+  their record, and a link can be created later. `privacy` sets out who sees
+  what in a table instead of implying nobody does, and `if-linked` describes
+  the notification *before* it arrives so a later-sponsored student recognises
+  it.
+
+### One role, two guides — resolved with a typed pointer
+
+`Guide.sibling` is new and optional: a companion guide, rendered as one line on
+the landing page — *"If nobody at an employer or at home follows your progress,
+read the Individual Student guide instead."* and the reverse. Followed in a
+browser both ways.
+
+It was needed because `ROLE_TO_GUIDE` maps a role to one guide and nothing in a
+student's own token says whether anyone is linked to them. `STUDENT` maps to
+`managed-student`; the pointer is how the other half of the audience arrives.
+Deliberately **not** done by adding links to body markup: `markup.tsx` supports
+only `**bold**` precisely so content cannot render a link, an image or raw HTML,
+and there is no sanitiser to get wrong. A typed field on the guide keeps that.
+
+### The privacy policy had a third hole, and it was in the shipped guide
+
+The managed student's dashboard read **"Welcome back, Ibn"** in clear. The name
+rule matched on whole names scraped from the account page, and the greeting
+renders a *shorter* form of the same name, so it never matched. The individual
+student's dashboard had the same leak with a `gmail.com` account.
+
+Fixed by taking the names from `/auth/me` at capture time — first, middle and
+last name, their combinations, the username and the email — instead of scraping
+page headings. The scraped list had also been swallowing UI labels like "My
+Account", which is why matching on word fragments would not have been safe with
+it. Both student guides were re-photographed and re-checked by eye.
+
+**The lesson is the one this file keeps relearning: a redaction rule is only
+proven by looking at the picture.** The scan that said the managed guide was
+clean searched for `Ibn Benin`, so "Welcome back, Ibn" passed it. Three rules
+and two review passes went by before an eye on the crop caught it.
+
+### My own title rule said no, and the rule was wrong
+
+`"Who can see your work"` failed the action-oriented-title test, whose allowed
+openings did not include "who". The rule already carried a note explaining that
+"why" was added because *"Why you can see some people and not others"* is the
+question its readers arrive with. The same argument applies verbatim: a student
+opens the help looking for "who can see my work". The rule was widened and the
+reason recorded, rather than the title contorted to fit it.
