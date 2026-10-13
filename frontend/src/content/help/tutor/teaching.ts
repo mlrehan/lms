@@ -363,5 +363,195 @@ export const teaching: Section = {
       ],
       related: ["batches", "timetable", "gradebook", "reports"],
     },
+    {
+      id: "class-performance",
+      title: "How to mark class performance",
+      summary:
+        "Record how each student took part in a class. These marks count towards their final result.",
+      feature: "Class performance",
+      learn: [
+        "Where to record class performance",
+        "Why an unmarked class holds up a result",
+        "What publishing does, and how to correct a published mark",
+      ],
+      before: ["Open the class from the **Timetable**. The sheet is on the session's own page."],
+      body: [
+        {
+          type: "paragraph",
+          text: "**Class performance** is your assessment of how each student took part - participation, preparation, practical work and so on. It sits on the session page, under the register.",
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "warning",
+            title: "This is a graded component, not a note to yourself",
+            body: "Class performance is one of the weighted parts of the final result. A class you leave unassessed does not score zero - it leaves every student on it **incomplete**, and an incomplete result cannot be turned into a transcript. If an administrator tells you a transcript will not finalise, an unmarked class is the usual reason.",
+          },
+        },
+        {
+          type: "screenshot",
+          image: {
+            src: "tutor/class-performance.webp",
+            alt: "The class performance sheet on a session page, showing one row per student with columns for participation, interaction, preparation, practical, presentation, teamwork, communication and professionalism, an overall score and a comment.",
+            caption:
+              "One row per student. Names are blurred in this guide for privacy; you will see them in full.",
+          },
+        },
+        {
+          type: "steps",
+          items: [
+            { text: "Open the class from the **Timetable**." },
+            { text: "Scroll to **Class performance**." },
+            {
+              text: "Set **Out of** if you do not want the default of 100.",
+              note: "It applies to the whole sheet, so set it before you start typing.",
+            },
+            {
+              text: "Fill in a score for each student. You can use just **Overall** if the detailed columns are not useful to you.",
+            },
+            { text: "Click **Save marks**." },
+            {
+              text: "When you are happy, publish the sheet.",
+              note: "Publishing is what releases the marks. The header tells you how many of the class are assessed.",
+            },
+          ],
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "note",
+            title: "Published marks are locked on purpose",
+            body: "Once released, somebody has seen the figure. To change one you have to **Withdraw** the sheet first, which is a deliberate act rather than an accidental edit.",
+          },
+        },
+      ],
+      result: "Every student on the class has a mark, and the result can be completed.",
+      tips: [
+        "Mark it straight after the class while you still remember it. It takes a minute and it is the part most often forgotten.",
+      ],
+      problems: [
+        {
+          symptom: "The sheet will not save.",
+          fix: "Only the session's assigned tutor can record it, or an administrator on their behalf. Check you are the tutor on this class.",
+        },
+        {
+          symptom: "A student's result says 'so far incomplete' after everything else is marked.",
+          fix: "Check this sheet. An unassessed class is the component most often missing.",
+        },
+      ],
+      related: ["attendance", "timetable", "gradebook", "performance"],
+    },
+
+    {
+      id: "share-recording",
+      title: "How to share a class recording or video",
+      summary:
+        "Put a YouTube, Vimeo, Zoom or other video link on a class so your students can watch it.",
+      feature: "Timetable",
+      learn: [
+        "Where to paste a video link",
+        "Which links work",
+        "Who can watch it, and what they are given",
+      ],
+      before: [
+        "Have the video's web address copied - the one from your browser's address bar is fine.",
+      ],
+      body: [
+        {
+          type: "paragraph",
+          text: "A class can carry a recording. Paste the link once and everyone entitled to that class can watch it inside the LMS - you do not have to send it round.",
+        },
+        {
+          type: "steps",
+          items: [
+            { text: "Open the class from the **Timetable**." },
+            { text: "Click **Edit session**." },
+            { text: "Paste the address into **Recording link**." },
+            { text: "Save." },
+          ],
+        },
+        {
+          type: "screenshot",
+          image: {
+            src: "tutor/share-recording.webp",
+            alt: "A session page showing the Recording section with a video player embedded below the session details.",
+            caption: "Once saved, the video plays on the class page itself.",
+          },
+        },
+        { type: "heading", text: "Which links work" },
+        {
+          type: "table",
+          columns: ["Where the video is", "What happens"],
+          rows: [
+            [
+              "YouTube",
+              "Plays on the class page. Any YouTube address works - the watch page, a share link or a youtu.be link.",
+            ],
+            ["Vimeo", "Plays on the class page."],
+            [
+              "Zoom cloud recording",
+              "Plays on the class page, under Zoom's own rules - if the recording has a passcode, your students still need it.",
+            ],
+            [
+              "Google Drive",
+              "Plays on the class page, if the file is shared so your students can open it.",
+            ],
+            ["A video file (.mp4 and similar)", "Plays on the class page."],
+            [
+              "Anywhere else",
+              "Offered as a link that opens in a new tab, rather than a player that would not work.",
+            ],
+          ],
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "note",
+            title: "You do not need the 'embed' address",
+            body: "Paste the ordinary address you see in your browser. The system works out the right player address itself.",
+          },
+        },
+        { type: "heading", text: "Who can watch it" },
+        {
+          type: "paragraph",
+          text: "Everyone who is entitled to the class: the students enrolled on it, their guardians and corporate managers, you, and administrators. Permission is checked every time somebody presses play, so a student removed from the batch loses access immediately.",
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "warning",
+            title: "The link itself stays with staff",
+            body: "Students are never handed the provider's address - only a way to watch through the LMS. That is deliberate: a bare YouTube or Zoom link works for anybody who has it, signed out, for ever.",
+          },
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "note",
+            title: "A video that must not be downloadable belongs in the library",
+            body: "Once the video is playing on YouTube's or Zoom's player, whatever download controls that provider offers are theirs, not ours. Upload the file to **Resources** instead if that matters.",
+          },
+        },
+      ],
+      result: "The class page shows the video, and your students can watch it.",
+      tips: [
+        "Check it yourself after saving. The player appears on the class page straight away.",
+      ],
+      problems: [
+        {
+          symptom: "The link is refused when you save.",
+          fix: "The message says why - usually the address is incomplete. Copy it again from your browser's address bar.",
+        },
+        {
+          symptom: "The player says the video is private or unavailable.",
+          fix: "That is the provider, not the LMS. Check the video's own sharing settings allow people outside your account to watch it.",
+        },
+        {
+          symptom: "A student says they cannot see any recording.",
+          fix: "Check they are confirmed on the batch - the recording follows the class, so somebody not enrolled sees nothing.",
+        },
+      ],
+      related: ["timetable", "batches", "resources"],
+    },
   ],
 };

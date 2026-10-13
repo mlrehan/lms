@@ -4691,3 +4691,13 @@ sync → performance → transcript → finalise. Auto-marking scored 100% and 0
 for right and wrong answers; a Tutor was refused at `results/publish` and an
 administrator allowed; finalising made the transcript visible to the student
 and their corporate manager and to nobody else.
+
+### Guides corrected
+
+Four guides said a transcript appears once the school *generates* it. It
+appears once the school *finalises* it — proven by finalising one and watching
+it appear for the student and their manager. The Super Admin guide promised to
+explain "finalised" and never did; it now has the step, what it publishes, and
+why finalising is sometimes refused. Two articles were missing entirely and
+are now written from the real screens: marking class performance, and sharing
+a class recording or video.

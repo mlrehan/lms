@@ -243,7 +243,7 @@ export const theirLearning: Section = {
           image: {
             src: "guardian/transcripts.webp",
             alt: "The Transcripts screen with columns for student, batch, GPA, overall, generated date and state.",
-            caption: "Transcripts appear once the school generates them.",
+            caption: "A transcript appears here once the school has finalised it."
           },
         },
         {
@@ -251,7 +251,7 @@ export const theirLearning: Section = {
           callout: {
             kind: "note",
             title: "Transcripts appear at the end",
-            body: "The school generates them once a course has finished and all the marking is done. 'No transcripts yet' part-way through a course is completely normal.",
+            body: "The school produces a transcript once a course has finished and all the marking is done, and then **finalises** it. You see it only after that last step — a draft is visible to staff alone. So 'No transcripts yet' part-way through a course is completely normal, and so is a short wait after the course ends.",
           },
         },
         {

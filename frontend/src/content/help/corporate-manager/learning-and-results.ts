@@ -446,7 +446,7 @@ export const learningAndResults: Section = {
           callout: {
             kind: "note",
             title: "Transcripts appear only when they are made",
-            body: "An administrator generates them, usually once a course has finished and its marking is complete. If the screen says there are none yet, that is normal mid-course.",
+            body: "An administrator produces them once a course has finished and its marking is complete, and then **finalises** each one. You see a transcript only after it has been finalised — before that it is a draft visible to staff alone. If the screen says there are none yet, that is normal mid-course, and normal for a short while after it ends.",
           },
         },
       ],

@@ -699,7 +699,27 @@ export const assessment: Section = {
             },
             { text: "Click **Generate for batch**." },
             { text: "Use the **Student** filter to check an individual transcript." },
+            {
+              text: "When you are satisfied, **finalise** each transcript.",
+              note: "This is the step that issues it. Until you do, the student cannot see it.",
+            },
           ],
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "warning",
+            title: "Generating is not issuing — finalising is",
+            body: "A generated transcript is a draft, and only you and the tutors can see it. The student, and any manager or guardian linked to them, see nothing on their Transcripts screen until you finalise it. If somebody says their transcript is missing, this is almost always why.",
+          },
+        },
+        {
+          type: "callout",
+          callout: {
+            kind: "note",
+            title: "Why finalising is sometimes refused",
+            body: "A transcript can only be finalised once every part of the grading scheme has a mark. If one component — class performance, say — has not been assessed for that student, there is no final result to certify and the system refuses, saying the course is not complete. Assess the missing part, generate again, then finalise.",
+          },
         },
         {
           type: "callout",
@@ -710,7 +730,7 @@ export const assessment: Section = {
           },
         },
       ],
-      result: "Each student on the batch has a transcript showing their result.",
+      result: "Each student on the batch has a transcript, and the ones you finalised are visible to the student.",
       tips: [
         "Generate transcripts only when marking is complete, otherwise they record a half-finished picture.",
         "Check two or three transcripts by hand the first time, against the grade book, so you trust the arithmetic.",
@@ -719,6 +739,14 @@ export const assessment: Section = {
         {
           symptom: "A transcript shows a lower result than the grade book.",
           fix: "It was generated before the last marks were entered. Generate again — unless it has been finalised, in which case it is kept on purpose.",
+        },
+        {
+          symptom: "A student says their transcript is missing, but you can see it.",
+          fix: "It has been generated but not finalised. A draft is visible only to staff.",
+        },
+        {
+          symptom: "Finalising is refused and says the course is not complete.",
+          fix: "Some weighted part of the grading scheme has no mark for that student. Check the student's row on **Performance**: any component showing 'Not yet assessed' is the one to record.",
         },
       ],
       related: ["gradebook", "performance", "exams"],

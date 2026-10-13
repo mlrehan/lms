@@ -257,7 +257,7 @@ export const yourProgress: Section = {
           callout: {
             kind: "note",
             title: "Transcripts come at the end",
-            body: "The school generates them once a course has finished and the marking is complete. An empty screen in the middle of a course is expected, not a fault.",
+            body: "The school produces your transcript once the course has finished and the marking is complete, and then **finalises** it. It appears here only after that last step — before then it is a draft that only staff can see. An empty screen during a course, or shortly after it ends, is expected rather than a fault.",
           },
         },
         {
