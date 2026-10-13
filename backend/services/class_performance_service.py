@@ -275,6 +275,27 @@ class ClassPerformanceService:
 
         await self.session.flush()
 
+        # The response names each student. A row created a moment ago has never
+        # had its `student` relationship loaded, so touching it in the response
+        # mapper lazy-loads from inside the async request and raises
+        # MissingGreenlet -- a 500 on every save, which is exactly what it did.
+        # Re-reading with the relationship attached is the cheapest fix that
+        # keeps the mapper simple; the order the caller sent is preserved.
+        if saved:
+            order = {row.id: i for i, row in enumerate(saved)}
+            reloaded = (
+                (
+                    await self.session.execute(
+                        select(ClassPerformanceMark)
+                        .where(ClassPerformanceMark.id.in_(list(order)))
+                        .options(selectinload(ClassPerformanceMark.student))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            saved = sorted(reloaded, key=lambda row: order[row.id])
+
         audit_service.record(
             self.session,
             action=AuditAction.UPDATE,
@@ -333,7 +354,11 @@ class ClassPerformanceService:
                 "Only the session's assigned tutor can release its class performance marks."
             )
 
-        stmt = select(ClassPerformanceMark).where(
+        # `student` is eager-loaded for the same reason as in `save`: the
+        # response names the student, and a lazy load here is a 500.
+        stmt = select(ClassPerformanceMark).options(
+            selectinload(ClassPerformanceMark.student)
+        ).where(
             ClassPerformanceMark.session_id == batch_session.id
         )
         if student_public_id is not None:

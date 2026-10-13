@@ -6,6 +6,7 @@ cannot exist without one; everything else addresses the session directly.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -375,11 +376,33 @@ async def embed_session_recording(
             # The URL earned one admission, for this caller, now. A cache
             # between us and them must not be able to repeat it.
             "Cache-Control": "private, no-store",
-            # Do not hand the provider the LMS URL the viewer came from.
-            "Referrer-Policy": "no-referrer",
+            "Referrer-Policy": _referrer_policy_for(link),
         },
     )
 
+
+#: Providers whose player refuses to start unless it can see which site is
+#: embedding it. Measured, not assumed: framed with `no-referrer`, YouTube
+#: renders "Video player configuration error -- Error 153" and plays nothing,
+#: while Vimeo plays normally either way.
+_NEEDS_EMBEDDING_ORIGIN = ("youtube.com", "youtube-nocookie.com", "youtu.be")
+
+
+def _referrer_policy_for(link: str) -> str:
+    """How much of the LMS URL the provider may see.
+
+    `no-referrer` by default, because the provider has no business knowing
+    which class a viewer came from. For the providers above it is
+    `strict-origin-when-cross-origin`, which sends the site's origin and
+    nothing else -- enough for the player's domain check, while the batch,
+    the session and the viewer stay out of it. The alternative is a player
+    that never starts, which is what this was doing.
+    """
+    host = urlparse(link).hostname or ""
+    host = host.lower().removeprefix("www.")
+    if any(host == name or host.endswith("." + name) for name in _NEEDS_EMBEDDING_ORIGIN):
+        return "strict-origin-when-cross-origin"
+    return "no-referrer"
 
 @router.put(
     "/sessions/{session_id}/recording",

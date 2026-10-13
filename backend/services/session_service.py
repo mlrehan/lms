@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.video_links import VideoLinkError, parse_video_url
 from backend.core.live_class import JoinWindow, join_window
 from backend.core.permissions import Action, Module, perm
 from backend.models.batch import BatchSession
@@ -357,7 +358,20 @@ class SessionService:
         row = await self.get(public_id, actor=actor)
         if not row.recording_link:
             raise NotFoundError("No recording is published for this class.")
-        return row.recording_link
+
+        # The address a tutor copies is the *page*, and for YouTube and Vimeo
+        # the page is not the player: framing it shows the provider's whole
+        # site, or nothing at all. `parse_video_url` maps each recognised
+        # provider to its documented embed endpoint, and leaves anything it
+        # does not recognise exactly as it was -- so a link that worked before
+        # this still works.
+        try:
+            return parse_video_url(row.recording_link).embed_url or row.recording_link
+        except VideoLinkError:
+            # Stored before the field was validated. Refusing to play it would
+            # help nobody; it is returned as it always was, and the next save
+            # of that session will reject it.
+            return row.recording_link
 
     async def resolve_recording_stream(
         self, public_id: uuid.UUID, *, actor: User

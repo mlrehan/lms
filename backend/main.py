@@ -25,6 +25,7 @@ import sys
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -68,6 +69,43 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     """Every deliberately-raised error already knows its own status code and
     a safe-to-display message; this just puts that on the wire."""
     return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Put a rejected field on the wire in the shape the console understands.
+
+    FastAPI's own 422 is `{"detail": [{"loc": [...], "msg": "..."}]}`. The
+    console reads `{"code", "message", "details"}` -- the envelope every
+    deliberately-raised `AppError` uses -- so it found no message and fell
+    back to "The request could not be completed." for *every* invalid form in
+    the application. The reason the field was refused was computed, sent, and
+    then thrown away at the last step.
+
+    `details` is keyed by field name because `ApiError.fieldErrors()` already
+    reads it that way, so a form can mark the offending input rather than
+    showing a banner.
+    """
+    details: dict[str, str] = {}
+    for error in exc.errors():
+        # loc is ("body", "recording_link") or ("body", "entries", 0, "score")
+        parts = [str(p) for p in error.get("loc", ()) if p not in ("body", "query", "path")]
+        field = ".".join(parts) or "request"
+        message = str(error.get("msg", "")).removeprefix("Value error, ").strip()
+        details.setdefault(field, message or "This value is not valid.")
+
+    first = next(iter(details.items()), ("request", "The request could not be completed."))
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": "VALIDATION_ERROR",
+            # The console shows this when a form has no field to point at.
+            "message": first[1],
+            "details": details,
+        },
+    )
 
 
 @app.exception_handler(Exception)

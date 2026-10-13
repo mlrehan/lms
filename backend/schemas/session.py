@@ -6,8 +6,9 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
+from backend.core.video_links import VideoLinkError, validate_video_url
 from backend.schemas.base import APIModel, RequestModel
 from backend.utils.enums import Platforms
 
@@ -99,6 +100,17 @@ class SessionCreateRequest(_SessionTimes):
     meeting_link: Annotated[str | None, Field(max_length=2048)] = None
     tutor_notes: str | None = None
 
+    # Same reason as on the update schema: the link reaches an href.
+    @field_validator("meeting_link")
+    @classmethod
+    def _safe_link(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            return validate_video_url(value)
+        except VideoLinkError as exc:
+            raise ValueError(str(exc)) from None
+
 
 class SessionUpdateRequest(_SessionTimes):
     tutor_id: uuid.UUID | None = None
@@ -111,6 +123,20 @@ class SessionUpdateRequest(_SessionTimes):
     recording_link: Annotated[str | None, Field(max_length=2048)] = None
     tutor_notes: str | None = None
     student_notes: str | None = None
+
+    # A meeting or recording link is written into an `href` and an `iframe
+    # src`. `javascript:` and `data:` there execute in the page, and both were
+    # accepted and stored until this check existed -- as was "not-a-url",
+    # which simply produced a dead player nobody could diagnose.
+    @field_validator("meeting_link", "recording_link")
+    @classmethod
+    def _safe_link(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            return validate_video_url(value)
+        except VideoLinkError as exc:
+            raise ValueError(str(exc)) from None
 
 
 class CalendarSession(APIModel):

@@ -216,7 +216,7 @@ async def record_results(
     exam_id: uuid.UUID,
     payload: RecordExamResultsRequest,
     session: DBSession,
-    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.GRADE, Action.UPDATE)))],
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.EXAM, Action.GRADE)))],
 ) -> list[ExamResultResponse]:
     """Bulk, like attendance marking. Idempotent — re-sending corrects an
     existing mark rather than adding a second.

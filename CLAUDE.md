@@ -4580,3 +4580,114 @@ openings did not include "who". The rule already carried a note explaining that
 question its readers arrive with. The same argument applies verbatim: a student
 opens the help looking for "who can see my work". The rule was widened and the
 reason recorded, rather than the title contorted to fit it.
+
+## Assessment verification and video sharing — what driving it found
+
+A verification pass over the seven assessment components against all six
+roles, and over how videos are shared and watched. Everything below was found
+by signing in and using the system, not by reading it.
+
+### A Tutor could issue official transcripts
+
+`POST /batches/{id}/transcripts/generate` was gated on `grade.update`, which a
+Tutor holds in order to mark work. The catalogue defines a separate
+`transcript.generate`, grants it to the academic office alone, and explains
+why in as many words: a transcript is an *official* document, and "somebody
+may be entitled to see a mark without being entitled to issue the document
+that certifies it". Nothing checked it — `transcript.read` and
+`transcript.generate` were both seeded, both shown in the role editor, and
+both enforced by no route at all.
+
+Driven as the Tutor it returned **200 and created a transcript**. The Tutor
+user guide already said "generating them is an administrator's job", so the
+documentation was right and the route was wrong.
+
+Fixed by pointing the three transcript routes at the transcript permissions.
+`quiz.publish` and `exam.grade` were decorative in the same way and are now
+enforced; both have the same holders as the permission they replaced, so that
+half is behaviour-neutral and guards against future drift.
+
+`tests/unit/test_assessment_route_permissions.py` reads the required codes out
+of each route's dependency closure and compares them with a written-down
+expectation. Mutation-tested: reverting the gate fails three of its four tests.
+
+### Class performance was a 500 on every save, and it stopped every transcript
+
+`PUT /class-performance/sessions/{id}` returned 500 whatever you sent. The
+service flushed newly created marks and returned them; the route's response
+mapper then read `row.student` to name the student, and on a row created
+moments earlier that relationship had never been loaded — in async SQLAlchemy
+that is `MissingGreenlet`, not a slow query. The mark was written and the
+caller was told the save had failed.
+
+The *read* path builds its rows from enrollments and never touches that
+relationship, which is why every test of the sheet passed while the write was
+unusable.
+
+It was not confined to one screen. PRACTICAL ("Class performance") is one of
+five weighted components of the default grading scheme, and the performance
+engine withholds a final percentage until every weighted component is
+assessed. With class performance impossible to record, **no transcript in the
+database had a `final_percentage`** — 11 of 11 null — and `finalise` refuses
+without one. So no transcript could ever be certified, and since students,
+guardians and corporate managers are shown only finalised transcripts, their
+Transcripts screen was empty by construction.
+
+Both write paths now eager-load the relationship.
+`tests/integration/test_class_performance_save.py` asserts it by doing exactly
+what the response mapper does; removing the fix reproduces `MissingGreenlet`.
+
+### Video links were stored unvalidated, and YouTube could not play
+
+`recording_link` accepted anything. `javascript:alert(1)` and `not-a-url` were
+both stored and handed back to the browser, which writes them into an `href`
+and an `iframe src`.
+
+`backend/core/video_links.py` now validates and normalises in one place:
+scheme allowlist (not a blocklist), no credentials in the authority, and each
+recognised provider mapped to its *documented* embed endpoint, because the
+address a tutor copies is the page and not the player. An unrecognised but
+valid host is offered as a link rather than framed, which is honest about what
+a blank iframe would have been.
+
+**The referrer finding is the one worth keeping.** Framing YouTube with
+`referrerpolicy="no-referrer"` renders "Video player configuration error —
+Error 153" and plays nothing: its player checks which site is embedding it.
+Measured in a browser, two iframes of the same video side by side, one with
+the attribute and one without; Vimeo played identically either way. The
+attribute was on our own iframe, where it is the floor for the whole redirect
+chain, so no backend header could loosen it. The element now sends
+`strict-origin-when-cross-origin` — our origin and nothing more — and the
+route tightens it back to `no-referrer` for the providers that do not need it.
+
+**A false positive worth remembering:** a Playwright probe for a player
+element reported success on the Error 153 page, because that page contains
+one. Only looking at the screenshot showed the failure. The same probe is why
+the first fix appeared to work and had not.
+
+### Every invalid form in the console said the same unhelpful thing
+
+FastAPI's 422 is `{"detail": [...]}`; the console reads `{"code", "message",
+"details"}`, the envelope every `AppError` already uses. With nothing bridging
+them, `ApiError` found no message and fell back to "The request could not be
+completed." for *every* rejected field in the application. The reason was
+computed, serialised, and thrown away at the last step. `main.py` now maps
+validation errors into the same envelope, keyed by field so a form can mark
+the input.
+
+### What the verification showed working
+
+Scoping is correct and consistent across all six roles on all seven
+components, at the API and in the console: a Corporate Manager sees their
+roster, a Guardian sees their linked student, a student sees themselves, and
+a record somebody may not see answers 404 rather than 403. Grading schemes are
+withheld from four roles in the menu *and* refused on direct navigation. The
+quiz answer key is refused to everyone without marking rights, and `is_correct`
+is absent from the payload a student receives.
+
+The full lifecycle was driven end to end on an isolated `DEMO-ASMT` course:
+author → publish → submit and attempt → mark → publish results → grade-book
+sync → performance → transcript → finalise. Auto-marking scored 100% and 0%
+for right and wrong answers; a Tutor was refused at `results/publish` and an
+administrator allowed; finalising made the transcript visible to the student
+and their corporate manager and to nobody else.

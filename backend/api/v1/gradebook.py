@@ -312,7 +312,7 @@ async def list_transcripts(
     session: DBSession,
     params: Annotated[PageParams, Depends()],
     actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.GRADE, Action.READ)))
+        CurrentUser, Depends(require_permissions(perm(Module.TRANSCRIPT, Action.READ)))
     ],
     batch_id: Annotated[uuid.UUID | None, Query()] = None,
     student_id: Annotated[uuid.UUID | None, Query()] = None,
@@ -335,7 +335,7 @@ async def get_transcript(
     transcript_id: uuid.UUID,
     session: DBSession,
     actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.GRADE, Action.READ)))
+        CurrentUser, Depends(require_permissions(perm(Module.TRANSCRIPT, Action.READ)))
     ],
 ) -> TranscriptResponse:
     return _transcript_response(
@@ -352,10 +352,18 @@ async def generate_transcripts(
     batch_id: uuid.UUID,
     session: DBSession,
     actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.GRADE, Action.UPDATE)))
+        CurrentUser, Depends(require_permissions(perm(Module.TRANSCRIPT, Action.GENERATE)))
     ],
 ) -> GenerateTranscriptsResponse:
     """Issues an official transcript for every actively enrolled student.
+
+    Gated on `transcript.generate`, not `grade.update`. The permission
+    catalogue says why in as many words -- a transcript is an *official*
+    document, and "somebody may be entitled to see a mark without being
+    entitled to issue the document that certifies it". A Tutor marks the work
+    and so holds `grade.update`; issuing the certificate is the academic
+    office's. This route asked for `grade.update` until it was driven as a
+    Tutor and answered 200, which is how the mismatch surfaced.
 
     Computed from **published marks only**, whatever the caller is permitted to
     see (§5); the weighting comes from the course's grading scheme, and the

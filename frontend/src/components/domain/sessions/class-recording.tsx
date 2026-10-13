@@ -168,7 +168,19 @@ export function ClassRecording({
             // keeps it watchable at every width before it does.
             allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
             allowFullScreen
-            referrerPolicy="no-referrer"
+            // The floor for the whole chain, so it cannot be `no-referrer`:
+            // this request is same-origin, but it redirects to the provider,
+            // and an element policy of `no-referrer` cannot be loosened by
+            // anything downstream. Measured in a browser: YouTube's player
+            // renders "Video player configuration error -- Error 153" and
+            // plays nothing when it cannot see which site embedded it.
+            //
+            // `strict-origin-when-cross-origin` sends our own path to us and
+            // only the bare origin onward -- never the batch, the session or
+            // the viewer. The route behind this then tightens it further to
+            // `no-referrer` for the providers that do not need it, which is
+            // why Vimeo and Zoom still learn nothing at all.
+            referrerPolicy="strict-origin-when-cross-origin"
             className="absolute inset-0 size-full border-0"
           />
         </div>

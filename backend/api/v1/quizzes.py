@@ -446,7 +446,7 @@ async def publish_quiz(
     quiz_id: uuid.UUID,
     payload: QuizPublishRequest,
     session: DBSession,
-    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.QUIZ, Action.UPDATE)))],
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.QUIZ, Action.PUBLISH)))],
 ) -> QuizResponse:
     """A quiz with no questions cannot be published."""
     service = QuizService(session)
