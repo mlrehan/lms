@@ -15,6 +15,8 @@ import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/form";
 import { Select, optionsFromValues } from "@/components/ui/select";
+import { BatchPicker } from "@/components/domain/entity-pickers";
+import { UserPicker } from "@/components/domain/user-picker";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
@@ -99,18 +101,20 @@ export default function EnrollmentsPage() {
   const { permissions } = useSession();
   const { limit, offset, setPage } = useListState();
   const [status, setStatus] = useState("");
-  const [batchId, setBatchId] = useState("");
-  const [studentId, setStudentId] = useState("");
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null);
+  const [tutorId, setTutorId] = useState<string | null>(null);
   const [transferring, setTransferring] = useState<EnrollmentResponse | null>(null);
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ["enrollments", "list", status, batchId, studentId, limit, offset],
+    queryKey: ["enrollments", "list", status, batchId, studentId, tutorId, limit, offset],
     queryFn: () =>
       api.get<PageEnrollmentResponse>("/enrollments", {
         query: {
           status: status || undefined,
           batch_id: batchId || undefined,
           student_id: studentId || undefined,
+          tutor_id: tutorId || undefined,
           limit,
           offset,
         },
@@ -234,32 +238,57 @@ export default function EnrollmentsPage() {
               />
             )}
           </Field>
-          <Field label="Batch id" className="w-64">
+          {/*
+            * Pickers, not id boxes.
+            *
+            * These two were `<Input>`s expecting a raw uuid typed by hand.
+            * Nobody has one, and anything short of a well-formed uuid made the
+            * API refuse the entire request with a 422 -- so the filter looked
+            * broken rather than empty, which is what was reported.
+            */}
+          <Field label="Batch" className="w-64">
             {({ id }) => (
-              <Input
+              <BatchPicker
                 id={id}
                 value={batchId}
-                placeholder="Filter by batch"
-                onChange={(event) => {
-                  setBatchId(event.target.value.trim());
+                placeholder="Any batch"
+                onValueChange={(next) => {
+                  setBatchId(next);
                   setPage({ limit, offset: 0 });
                 }}
               />
             )}
           </Field>
-          <Field label="Student id" className="w-64">
+          <Field label="Student" className="w-64">
             {({ id }) => (
-              <Input
+              <UserPicker
                 id={id}
+                role="STUDENT"
                 value={studentId}
-                placeholder="Filter by student"
-                onChange={(event) => {
-                  setStudentId(event.target.value.trim());
+                placeholder="Any student"
+                onChange={(next) => {
+                  setStudentId(next);
                   setPage({ limit, offset: 0 });
                 }}
               />
             )}
           </Field>
+          {permissions.has("institution.view_all") ? (
+            <Field label="Tutor" className="w-64">
+              {({ id }) => (
+                <UserPicker
+                  id={id}
+                  role="TUTOR"
+                  value={tutorId}
+                  placeholder="Any tutor"
+                  onChange={(next) => {
+                    setTutorId(next);
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              )}
+            </Field>
+          ) : null}
         </div>
 
         {isPending ? (

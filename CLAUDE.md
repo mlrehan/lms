@@ -1760,6 +1760,14 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 
 ## Known gaps — flagged, not forgotten, not yet addressed
 
+> **Pruned 2026-10-05.** Four entries here had become false — "no automated
+> tests", "no file upload anywhere", "quiz `shuffle_questions` is stored and
+> never applied", and the grade book being stale until somebody pressed Sync.
+> A gaps list that still names solved problems is the same failure as a
+> comment asserting a safety property that no longer holds: it stops the next
+> person checking. Anything left below was re-read, not assumed.
+
+
 - **Messaging and academic administration are unbuilt** (spec §16, §23) —
   models and permissions exist for both, but no endpoints.
 - **No virus scanning** (spec §20). Uploads are checked for size and content
@@ -1784,19 +1792,13 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
   real policy ("coursework is 40% of the final mark") needs a table to store
   it in, which no model provides — the natural home is a per-course or
   per-batch weighting row keyed by `GradeComponentType`.
-- **Sync is manual.** Nothing triggers `gradebook/sync` automatically after a
-  mark is recorded, so the grade book is stale until someone calls it. A
-  background job or a post-grade hook is the fix; a hook inside each marking
-  service is the thing the derived design deliberately avoids, so this
-  probably belongs in a scheduler.
+- **Sync is no longer the only writer, but it is still the only reconciler.**
+  Marking a quiz, an assignment or an exam now enters the grade book
+  immediately (§47), so it is no longer stale between a mark and a sweep.
+  `sync_batch` remains what repairs a write the fail-open hook lost, and
+  nothing runs it on a schedule.
 - **Transcript PDF/export does not exist** (spec §18's PDF/Excel/CSV export
   covers reports generally, and none of it is built).
-- **No file upload anywhere.** `AssignmentSubmission.files` and
-  `Assignment.instructions_path` take caller-supplied metadata/paths; there
-  is no upload endpoint, storage backend, or virus scanning (spec §20).
-- **Quiz `shuffle_questions` is stored and never applied** — questions are
-  always returned in author order. Real shuffling needs a per-attempt seed so
-  a student reloading mid-attempt doesn't get a different order.
 - **No way to add a city the bundled GeoNames snapshot doesn't have**
   (population < 15,000, or a place that's grown since the dump was taken).
   `/geo/*` is read-only by design (seeded reference data, not
@@ -1818,11 +1820,6 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
   submissions) **must** resolve a scope and apply it in the repository
   before any other filter. That is the single most likely place for a data
   leak to be introduced — see the leak that phase 2 actually hit, above.
-- **No automated tests.** Verified by driving the live API; a regression in
-  permission enforcement or scoping would currently be invisible until
-  someone hit it. Given how much of this phase's value is in *negative*
-  behaviour (403s, 404s, empty scopes), this is the most valuable thing to
-  add next.
 - No email module, so password reset and email verification are unbuilt
   (`MAIL_*` settings and `backend/email/` exist; no SMTP library installed).
 - No rate limiting on `/auth/login` beyond per-account lockout — an attacker
@@ -2980,3 +2977,884 @@ mark sheet when the exam service's private copy of the join lost
 computes either -- `Enrollments.can_download_certificate` is a plain boolean
 with no rule behind it and `Certificate.criteria` is an unread JSON column.
 They are the next instance of the same pattern.
+
+
+## Quiz settings that do nothing, grade-book entries nobody triggered, and a grid that took 55 seconds
+
+Three pieces of one brief, and all three were the same shape: a field stored
+and never read, or read wrongly, with nothing failing.
+
+### §47's first arrow, for the other two marking paths
+
+"Tutor publishes result -> result automatically enters Gradebook" was true of
+quizzes only. `AssignmentService.grade` and `ExamService.record_results` now
+go through the same `GradeBookService.record_component`, so the grade book no
+longer disagrees with the marks it derives from until somebody presses Sync.
+
+Decisions worth keeping:
+
+* **The hook writes the row the sweep would have written.** Out of the
+  assignment's own `max_score` and the exam's own `total_marks` -- matching
+  `_sync_assignments` and `_sync_exams` -- so running `sync_batch` afterwards
+  reports them *unchanged* rather than rewriting every row.
+* **Exam marks enter at recording, not at publication**, which reads
+  backwards against §47's wording and is the only choice that keeps the two
+  writers in agreement: `_sync_exams` writes every result that has a mark,
+  published or not. Withholding here would mean the next sweep introduced
+  rows this path declined to write.
+* **Fail-open, loudly.** A derived row that cannot be written must not undo a
+  mark a tutor has given. `sync_batch` is the reconciler.
+* The assignment hook has **no `grade is None` guard**: `grade()` assigns it
+  from a required payload field immediately above the call, so one would be
+  unreachable. The exam hook does have one, and needs it --
+  `record_results` rewrites the whole mark sheet, so saving one student's
+  mark hands every other candidate's row to the hook, including candidates
+  nobody has marked.
+
+Two defects in my own first attempt, both caught by reading the file rather
+than the tests: the call had landed in `submit()` instead of `grade()`, and
+the insertion had stolen `_late_penalty`'s `@staticmethod` decorator, leaving
+a method that would have failed on its first call.
+
+Mutation-tested 7/7, including the one that matters: an unmarked candidate
+stays out of the grade book **and produces no error in the log**. Without
+that second assertion the guard looked load-bearing when it was not --
+`Decimal(str(None))` raises and the fail-open handler swallows it, so no
+wrong row appears either way, and an operator would be chasing a marking
+failure for every unmarked student on every save.
+
+### Five quiz settings that were switches wired to nothing
+
+`questions_per_attempt`, `auto_submit_on_expiry`, `show_result_immediately`,
+`show_correct_answers` and `show_explanations` were written at creation and
+read by no code. The console offered switches for them. **A switch that does
+nothing is worse than an absent one** -- somebody sets it and believes the
+paper is a random draw, or that marks are withheld until they release them.
+
+Three of them could not have been implemented as the schema stood, which is
+presumably why they were not. Migration `f17c4a9b0e23` adds what they were
+missing:
+
+* `quizzes.results_released_at` -- `show_result_immediately` had no opposite.
+  Marking and releasing are separate acts for assignments
+  (`SubmissionState.PUBLISHED`) and exams (`exam_results.is_published`);
+  quizzes had no equivalent, so "immediately" meant nothing.
+* `questions.explanation` -- `show_explanations` had nothing to show.
+* `quiz_attempts.auto_submitted` -- nowhere to record that the clock closed
+  an attempt. Deliberately **not** `submitted_late`, which is the opposite
+  case: the timer was advisory and the student submitted by hand afterwards.
+  Both exist, and a tutor needs to tell them apart.
+* `question_options.match_text`, for the new question types below.
+
+**`_paper_for` is now the single definition of what one sitting was served**,
+and it has to be: the same list decides what the student is shown, what their
+submission may answer, and what their percentage is out of. Three separate
+seeds, all from the attempt's own id and never the clock -- `p:` draws the
+sample, `q:` orders the questions, `a:...:<question>` orders each question's
+options. The draw is seeded separately from the display so that toggling
+`shuffle_questions` on an unsat quiz does not change *which* questions are
+drawn.
+
+**The defect that made `questions_per_attempt` unusable rather than merely
+inert:** submission graded every question in the bank. A student answering
+all four of their four drawn questions correctly scored four marks out of
+ten. `_recompute_score` now takes its denominator from the answer rows --
+one per question the sitting was served -- rather than from a question list
+the caller passes, which both callers were filling with the whole bank.
+
+**`auto_submit_on_expiry` enforces the clock, and closes abandoned sittings.**
+On: nothing is accepted after `duration_minutes` plus the existing grace, and
+an expired attempt is closed at its cutoff (not at the moment somebody
+noticed) with whatever the server holds -- which is nothing, because no answer
+is stored until submit. Harsh, and the honest outcome of a paper that never
+arrived; it also fixes a real trap, because an attempt whose timer ran out
+while the tab was shut stayed "in progress" for ever, refusing the student
+every further attempt they were entitled to and leaving the tutor waiting for
+a result that could not arrive. Off: the limit is advisory, a late submission
+is still marked and flagged, and an abandoned attempt is left alone because it
+is still theirs to submit. The honest limitation is that answers are not saved
+as they are chosen; that is the fix worth building next.
+
+**Closing is done in `start_attempt`, never in the same transaction as a
+refusal.** Recording the closure and then raising would roll the closure back
+-- the rollback pitfall this codebase keeps meeting. For the student who has
+used every attempt and so never calls `start_attempt` again, there is
+`POST /quizzes/{id}/close-expired-attempts`, because there is no scheduler
+here and somebody has to be able to ask.
+
+`results_visible_to` gates the mark, the pass flag, every per-question score
+**and** the answer key together: a total hidden while the per-question marks
+are listed beside it is not hidden. It withholds from the student *and their
+guardian*, since releasing to one and not the other is a leak in one
+direction and a bug in the other, and it asks `quiz.grade` as a permission
+rather than checking a role -- a Guardian holds `grade.read`.
+
+### Four question types, and three answer keys that were being handed out
+
+Fill in the blank, matching, ordering and numeric (§9). Their keys live where
+they fit: `settings` for fill-in-the-blank and numeric (the shapes differ per
+type, so a column each would be null for every other question), `order` for
+ordering, and the new `match_text` for matching -- one row per pair, so a
+half-deleted pair cannot exist.
+
+Marking rules worth keeping: text comparison collapses whitespace and folds
+case unless the question says the case matters, because **marking "  paris "
+wrong is what makes automatic text marking untrustworthy**; a missing numeric
+tolerance means exact, never infinite; words typed into a numeric box are
+**wrong, not unmarkable**, since `None` means "a human must mark this" and
+would hold the whole attempt's score up waiting for a tutor with nothing to
+do; and matching and ordering are all-or-nothing, like MCQ_MULTIPLE, because
+partial credit needs a rule nobody has specified.
+
+**Three leaks, found by writing the tests rather than by the types:**
+
+1. `question_options.order` **is** the answer to an ordering question, and it
+   was sent to the student with every option. The student now gets their
+   position in the list they were served, which also makes re-sorting by it
+   harmless rather than a way to undo the shuffle.
+2. The right-hand column of a matching question was being served beside the
+   prompt it belongs to. It is now sorted by its own text, so its order
+   cannot encode the pairing -- and ordering and matching options are always
+   scrambled regardless of `shuffle_answers`, because for them the authored
+   order is the key.
+3. `questions.settings` was served verbatim, which was harmless while it held
+   a code question's language and became the whole answer key once it held
+   `accepted` and `answer`. The student's copy is now built by removing the
+   keyed fields rather than by trusting every future writer of that column.
+
+One rule set for answer keys (`answer_key_problem` in `schemas/quiz.py`),
+raised as a pydantic `ValueError` on create and as the API's
+`ValidationError` on edit. The rules had been written out twice and the
+copies had already drifted: the service's understood options only, so editing
+a numeric question's answer to something unparseable went straight in.
+
+### The console
+
+A **Settings tab** on the quiz page shows and edits every setting, with the
+release control and the close-expired button. Deliberately not more fields on
+the create dialog: these are decisions a tutor revisits. Save is not disabled
+once a quiz has attempts, because the response does not say whether it has
+any and guessing would either block a tutor who could still edit or promise
+one who cannot -- the server's 409 is the gate and it explains itself.
+
+The question editor grows an answer-key form per type (accepted answers one
+per line, numeric answer and tolerance, orderable items, pairs) and an
+explanation field. Taking a quiz grows two widgets, extracted to
+`components/domain/quiz-answers.tsx` with their own vitest -- the frontend
+half of two contracts no type error can catch: an ordering answer that loses
+its order submits a set, and the server marks a set against a sequence as
+wrong for everybody; and a matching widget that read each prompt's own
+`match_text` would offer a list of one and show the student the answer.
+
+A student's finished attempt now says *why* a mark is missing when the quiz
+withholds it, and shows the key and the explanation once released. The
+attempts table distinguishes **Timed out** from **Late**.
+
+### The grade-book grid: 10,267 queries in 55 seconds, for eight students
+
+Profiled rather than guessed at, and the causes were three layers deep:
+
+1. **`User` eager-loaded seventeen collections**, including `audit_logs` --
+   every row that person had ever generated. A `User` is loaded on every
+   authenticated request to resolve permissions, and again for every row of
+   anything that references one. Five of them had already been changed to
+   `lazy="raise"` for exactly this reason; the rest now are too. **None of
+   the seventeen is read as an attribute anywhere** in the backend, the tests
+   or the scripts -- checked before changing, not assumed. `roles` stays
+   eager, because permission resolution reads it on every request.
+2. **`_assignment_marks`, `_quiz_marks` and `_exam_marks` selected ORM
+   entities when they read five scalar columns.** `Exam` eager-loads its
+   course, batch, invigilators and *every result*, and each result its
+   student; that one query cost 1,070 queries and 5 seconds. They select
+   columns now, and the quiz's question total comes from a correlated
+   subquery instead of a follow-up query per quiz per student.
+3. **`_evaluate` loaded the whole `Batch` entity for one integer**, pulling
+   in its tutor reviews and their students.
+
+**55s -> 0.3s, 10,267 -> 89 queries.** Guarded by a query *count*, not a
+clock: latency on one laptop is not an assertion, and the count is exactly
+what regressed -- by a factor of a hundred, with every correctness test
+passing.
+
+**And a wrong mark, found while reading that code.** `Mark.percentage` is
+`earned / possible`, and `_quiz_marks` passed a percentage as `earned` with
+the quiz's raw question total as `possible`. An 80% attempt on a 12-point
+quiz contributed **666.67%** to the quiz component, and with any quiz in a
+scheme the whole overall mark was wrong -- on a figure students appeal
+against and transcripts print. Measured, not inferred: reverting the fix
+reproduces 666.67 exactly. Nothing caught it because the engine's tests build
+marks by hand and the service's tests had no quiz in them at all.
+
+### Mutation testing, and two survivors worth more than the kills
+
+25 mutations applied across the quiz settings, the question types and the
+performance work; 24 caught. The two instructive moments:
+
+* **A survivor that was right about the test, not the code.** Making every
+  `User` collection eager again failed nothing, because after the
+  column-select fix the grid loads no `User` entity at all. The model change
+  protects every *other* authenticated request, so the answer was a second
+  guard measuring what one user load costs (23 queries before, 5 after) --
+  not reverting a fix that no longer had a witness.
+* **A fixture too kind, for the third time in this codebase.** Restoring the
+  entity select in `_exam_marks` also survived, because the cost fixture had
+  no exams in it. With an exam and an assignment per student it fails at 247
+  queries.
+
+A third: `test_two_students_draw_different_questions` failed twice during
+mutation runs against correct code -- two students drawing the same four
+questions from ten is a 1-in-210 coincidence, which is often enough. The bank
+is twenty now. And the pool quiz must set `shuffle_questions=False`
+explicitly, because `bool_column()` defaults to **true**: with the display
+shuffle on, the test passed against an implementation that drew the front of
+the bank every time.
+
+### The browser pass, which found two things no test had
+
+Driven as a tutor and then as an enrolled student, against a second API and a
+second console on their own ports so the user's running servers were never
+touched. Both throwaway accounts and everything they made were deleted
+afterwards, and the deletion was verified by counting rows.
+
+What it proved: every setting saved from the Settings tab and came back from
+the database; releasing and withholding worked from the button; a drawn paper
+really was four of five questions; all four new types were authored through
+the dialog and marked correctly on submission (100%, including a numeric
+answer typed as `3,14`); and with results withheld the student's own list
+showed `—` while staff saw 100.00.
+
+What it found, both only visible from a student's seat:
+
+1. **The ordering answer was on the page before the attempt started.**
+   `questions_for_attempt` returns the authored order when nobody is sitting
+   the quiz, which is right for an author previewing and hands a student the
+   exact sequence they are about to be asked for. Ordering and matching are
+   now scrambled in that view too, seeded by the question rather than the
+   attempt -- every student sees the same scrambled order, which is fine,
+   because what has to stay hidden is the *authored* one.
+2. **The question list printed "France = Lima"** to students -- the right-hand
+   column detached and alphabetised, rendered beside the prompts by the
+   author's renderer. It read as an answer key that was not one. Students now
+   get the prompts and a separate "Match these:" line.
+
+Also from the pass: the answer-key list showed a tutor nothing for four of
+the five types -- ordering had no positions, matching no pairs, and
+fill-in-the-blank and numeric keep their key in `settings`, which the list
+never read. All four are rendered now, on the screen whose entire job is the
+answer key.
+
+One thing the comma rule is worth stating: a numeric answer typed `3,14` is
+3.14, not 314. A single comma followed by one or two digits, in a string with
+no dot, is a decimal separator; every other comma is grouping and is removed.
+Much of the world writes the first, and stripping it silently would mark a
+correct answer wrong.
+
+### Not done, and said so rather than left to be discovered
+
+* **Answers are not saved as they are chosen**, so an auto-submitted attempt
+  scores zero. It is the right next piece of work and the honest cost of the
+  timer being enforceable at all.
+* The create-quiz dialog still exposes two of the settings; the rest are
+  edited on the Settings tab after creation. The API accepts them all at
+  creation.
+* A tutor marking an attempt sees the per-question answer key only when the
+  quiz is set to show it to students, because one mapper serves both
+  audiences and `results_visible` cannot tell them apart. The answer-key
+  route is the tutor's way to it, and it is the route built for that.
+* `_sync_assignments` and `_sync_quizzes` ignore an assessment's own batch
+  scope -- they match on course only -- so for a student in two cohorts of
+  one course the sweep writes a batch-scoped mark into both, while the
+  automatic hook writes it into one. The hook's narrower behaviour is
+  deliberate and tested; the sweep's is pre-existing and left alone, because
+  changing it moves existing grade-book rows.
+
+
+## Corporate managers are linked to students, not to a company's payroll
+
+A manager's roster used to be derived: manager -> `organization_managers` ->
+`organization_memberships` -> every employee of that company. Visibility was
+a side effect of the org chart, so a company with four managers and two
+hundred employees gave each of those managers all two hundred, and "these
+thirty are yours" could not be said at all.
+
+`manager_students` (migration `b2f9d4c7a1e8`) is the same shape as
+`student_guardians`, and for the same reasons: many managers per student,
+many students per manager, its own history, and a direct relationship between
+two people rather than a view over a third thing. It is now the **only** rule
+-- `ScopeResolver._managed_student_ids` reads it, and everything
+student-scoped reads `ScopeResolver`.
+
+**The company stays, and keeps everything that was actually about
+employment**: who works where, their employee code and department, which
+company a manager works for, and `enrollments.organization_id` -- the record
+of who sponsored a past enrolment, which is the one fact here that could not
+be reconstructed if it were dropped.
+
+The module docstring on `models/organization.py` used to argue *against* a
+direct link, on the grounds that `corporate_manager_id` on Student is a
+one-column answer to a many-row question. That argument was right about a
+**column** and says nothing about a join table; it has been rewritten rather
+than left to contradict the schema beneath it.
+
+### The backfill is the half that matters
+
+Every (active manager, visible member) pair in the same organization became a
+row, so the day this ships every manager sees exactly the students they saw
+yesterday. Without it every corporate manager opens the console to an empty
+roster. Administrators then narrow the rosters deliberately, which is the
+point of the change. Verified on the dev database: the one active manager's
+seven employees became seven links.
+
+### Two accesses that used to end by themselves
+
+This is the regression a change like this leaves behind, and it took the two
+longest comments in the diff.
+
+* **Leaving the company.** Visibility was read from the membership row, so
+  `REMOVED` simply stopped resolving. Nothing would notice now -- a former
+  employee would stay on their old manager's dashboard, with their current
+  coursework, indefinitely. `set_member_status` deletes that student's links
+  to *that company's* managers, and records how many went in the audit entry.
+* **Revoking the appointment.** `is_active` was read on every resolution.
+  `revoke_manager` now deletes that manager's links to that company's
+  members.
+
+Both are scoped to the company in question: a manager who also looks after
+somebody elsewhere keeps that, because it was never justified by this
+employment.
+
+### Adding an employee links the person who added them, and nobody else
+
+`organization.invite` is a manager's power, and before the change adding an
+employee made them visible at once -- same row. Dropping that entirely would
+leave a manager inviting somebody they then cannot see until an administrator
+intervenes, which is a dead end in a workflow the permission exists to
+support. So the inviting manager is linked, and only them; a colleague
+managing the same company still sees nothing. An administrator adding a
+member links nobody, because they are not the person who will be looking
+after them.
+
+### Everything downstream followed from one definition
+
+Reports, dashboards, My Team, enrollments, attendance, submissions, quiz
+attempts, exam results, the grade book, performance and transcripts all read
+`ScopeResolver` and needed no change. The ones that had their own copy of the
+join did:
+
+* **Enrolment sponsorship** asked one question that was really two. *May this
+  manager enrol this student?* is now the roster; *who is paying?* is the
+  student's own employment. A managed student with no company on file is
+  enrolled **unsponsored** rather than refused -- that combination could not
+  happen before and is ordinary now.
+* **Mail audience** went out through the company and back, which let two
+  strangers at a large employer write to each other because a manager sat
+  between them. It is now the same direct-link-read-both-ways pair that
+  guardians already used.
+* **The session roster** and **Google Calendar guest list** listed every
+  manager of the sponsoring company. A guest list is outward-facing: that put
+  managers on an invitation for a class none of their own people were in.
+* **My Team** showed a manager a blank relationship, because only
+  guardianship was asked about -- their connection was a column on a
+  different table.
+
+### Where the decision is pinned, and why not in an API test
+
+Mutating `permissions.py` to let a manager create their own links **failed
+nothing**: the running app resolves permissions from `role_permissions` rows,
+so an API test proves what the database happens to be seeded with, not what
+the catalogue says. `tests/unit/test_care_relationship_grants.py` asserts the
+catalogue directly, for both relationships at once -- a guardian and a
+manager may read their own links and may not write them, an administrator may
+do both, and a student holds neither side. That one does fail when mutated.
+
+**Mutation-tested, 6 of 6:** the derived roster restored (8 tests fail),
+removal not unlinking, revocation not unlinking, the inviting manager not
+linked, the invite linking every manager of the company, and the calendar
+guest list resolved through the sponsoring company again.
+
+That last one **survived its first run**, for the fourth time in this
+codebase: the calendar fixture had one manager who was both an active
+manager of the sponsoring company *and* linked to the student, so the old
+query and the new one returned the same person. A second manager of the same
+company, linked to nobody, is what tells them apart. A fixture that cannot
+distinguish the two implementations is not a test of either.
+
+### Driven in a browser
+
+Against the running API on `:8000` with a build served on `:3001` -- the
+`next dev` server on `:3000` was wedged (sign-in produced no network request
+at all, HMR failing), which is the stale-compile failure already recorded
+above; its own process was left alone rather than restarted.
+
+Carla Gordon's seven backfilled links render on **Manager assignments**, with
+filters, the first-contact switch and unassign. A link created through the
+console reached `ScopeResolver` -- she went from seven people to eight,
+checked against the resolver itself rather than a screen -- and unassigning
+restored her roster to exactly the seven it started with.
+
+**Residue cleaned afterwards.** The first runs of the new integration test
+aborted their cleanup on `audit_logs`, which is append-only at the database
+level, so the whole cleanup transaction rolled back and left 84 users and 22
+links behind. That is the right behaviour from the database and a bug in the
+test's teardown, which no longer tries to delete audit rows: an audit record
+outlives the account it describes, which is why `actor_user_id` carries no
+foreign key.
+
+### Status
+
+**1,098 tests, all green** (`pytest tests`, exit 0), with the quiz and
+performance work from the previous pass included. Frontend: `tsc`, `eslint`,
+`npm run build` and 164 vitest tests clean. Migration head
+`b2f9d4c7a1e8`.
+
+**Re-run `backend.bootstrap.seeders.identity.seed_identity` after pulling** --
+four new permissions (`managed_student.*`) and three regranted roles. The
+`backend.cli.seed` CLI does the same thing but prompts for a super-admin
+password and resets it, so for a permissions-only refresh call the seeder
+directly.
+
+### Not changed, deliberately
+
+* `visible_organization_ids` still answers "which companies may this person
+  administer" from `organization_managers`. That is employment, not
+  visibility of people.
+* One company per person at a time, both for managers and for employees. The
+  partial unique indexes are about employment and still hold; they no longer
+  decide who reads whom.
+* `enrollments.organization_id` keeps its historical meaning and is still
+  derived server-side, never accepted from a request body.
+
+
+## A class recorded on Zoom was published to nobody
+
+A tutor pastes the Zoom cloud link into a session and the class is, as far as
+they can tell, published: `has_recording` comes back true and the link is on
+their screen. Every student, guardian and corporate manager entitled to that
+class saw **"No recording yet"**.
+
+Both halves were deliberate once. `recording_link` was returned only to
+callers who may edit the session, because it is a URL that works outside the
+LMS, signed out, for anyone holding it. The student-facing route was
+`playback_url`, a file in the library streamed by us. Nothing joined them, so
+the only recording a student could watch was one nobody had ever published:
+across the whole database, 2 sessions carried a link and **0** carried a
+stored file.
+
+### The viewer gets a path of ours, not the provider's URL
+
+`GET /sessions/{id}/recording` now also returns `embed_url`, which the session
+page frames. It is a path on this API that re-checks permission on every
+request and then redirects (307) to the player. So the provider's URL is in
+neither the response nor the page's DOM, the only route to it is one that
+checks each time that this caller still has the class, and a student removed
+from the batch loses the recording rather than keeping a working link.
+
+The audience is whoever `SessionService.get` already admits -- the enrolled,
+their guardians, their corporate manager, the tutor, administrators -- so it
+needed no audience of its own. `external_url`, the link in the clear, still
+goes only to staff: they set it and need to check what they entered.
+
+A **stored** recording wins outright and suppresses the frame. We serve those
+bytes ourselves, ranged and re-checked, so offering the provider's player
+beside it would only be a weaker route to the same class.
+
+### What the embed can and cannot promise
+
+It is a redirect and not a proxy because **there are no bytes for us to
+serve**. Measured, not assumed: the share link resolves to Zoom's own player,
+whose `<video>` src is a signed CloudFront URL, and that URL returns **403**
+to our server even with the right `Referer` -- it is bound to Zoom's session
+cookies. Importing the file would need Zoom's API and credentials this
+deployment does not hold.
+
+So the player on the other side is the provider's, including whatever download
+control they offer; Zoom's page has one. Said plainly in the route and in the
+component rather than implied, because it bounds the promise: **a recording
+that must not be downloadable at all belongs in the library**, where
+`playback_url` serves it under our rules with `nodownload` and no link that
+survives leaving the batch. The indirection still buys the thing that was
+missing -- copy the URL, share it, open it signed out, and every route leads
+back through the permission check.
+
+### Two smaller corrections that came with it
+
+* **`has_recording` meant "staff can see a link"**, so a student's timetable
+  told them a recorded class had no recording. It now means "this caller has
+  something to watch", on the session and on the summary row both.
+* **Watching was audited only for a stored file.** A class watched through the
+  provider left no record that anyone had watched it. Still written once per
+  playback, not once per seek.
+
+### On all screen sizes, and in full screen
+
+The frame sits in a 16:9 box (`aspect-video`) with `allowFullScreen` and
+`allow="fullscreen; ..."`: a bare iframe has no intrinsic size and collapses
+on a phone, and without the attribute the player inside cannot ask for the
+screen. The stored-file player moved from `max-h-[70vh]` to
+`max-h-[80svh]` -- `svh` is the viewport a mobile browser actually leaves
+after its own chrome.
+
+### Pinned where it can fail
+
+`tests/integration/test_recording_access.py` (14) drives `SessionService` and
+the real route: all four kinds of entitled viewer parametrised, because each
+reaches the session by a different rule and the recording must not be the one
+thing that forgets three of them; both kinds of outsider refused with 404
+rather than an empty recording; stored beating the frame; the 307 with its
+`Location`, `no-store` and `no-referrer`. `class-recording.test.tsx` (5)
+pins the browser half, including that a viewer who was not handed the provider
+URL cannot read it out of the page.
+
+**Mutation-tested, 8 of 8:** the embed withheld from non-staff as the link
+was, the frame offered beside a stored recording, the provider URL handed to
+every viewer, the redirect trusting the page that led there, the audit written
+only for stored files, `has_recording` back to staff-only, and both response
+headers dropped. The first frontend attempt **survived** -- the leak assertion
+only ran on a payload with no provider URL in it, so framing
+`external_url ?? embed_url` changed nothing it looked at. The staff case now
+asserts the frame is still ours, which fails it. Fifth "fixture too kind" in
+this codebase.
+
+
+## Sharing a file is a decision about people, not a user-id field
+
+Three things were true at once: `resource.update` let a tutor share any file
+they managed with **any user id on the platform**, the picker showed one person
+at a time, and both the picker and the resulting list printed `username` --
+which in this deployment is the person's email address.
+
+### The audience is the server's answer, not a filtered directory
+
+`backend/services/resource_audience.py` answers "who may *this* caller share
+with", once, for both directions:
+
+* **`search`** draws the picker. `GET /resources/share-audience`.
+* **`resolve`** is the gate every write goes through, and refuses the whole
+  request if one recipient is outside the audience.
+
+The rule: an administrator reaches everybody; a tutor reaches the
+administrators, the students in the batches they teach, and those students'
+guardians. Nobody else -- including a **corporate manager who employs one of
+those students**. They may read that employee's grades, so "can see them" and
+"may be sent their class material" are different questions, and this is where
+they part.
+
+Drawing the list from `/users` and narrowing it in the browser would have put
+the rule where it is a suggestion. The old code did the opposite of that and
+got away with it for the same reason: the picker only ever offered sensible
+people, so nobody noticed the body was unchecked.
+
+### The batch and the course are not decoration
+
+Two students called Sarah is the ordinary case, and the consequence of picking
+the wrong one is a file reaching a class that should not have it. So each row
+carries the cohort -- and for a tutor it is **their own** cohort, not every one
+the student is in: surfacing a colleague's batch would both disclose a class
+the tutor has nothing to do with and bury the line that identifies the student
+here. A guardian's own name says nothing about which class they are connected
+to, so their row reads "Guardian of Jane Doe" with that student's batch.
+
+### No address, by construction
+
+`ShareCandidateResponse` has no field that could carry one, and the directory
+matches on first and last name only -- matching the login name would make the
+box an address checker. Two further leaks were closed on the way:
+
+* `_share_response` used `visible_username`, which hands the login name to any
+  viewer holding `user.view_contact`. Correct for a staff directory; wrong for
+  "who has this file", which is read dozens of times a day.
+* `display_name` does **not** fall back to `username`, which every other
+  directory in this codebase does. An account with no name recorded shows as
+  "Unnamed account" -- visibly a data problem an administrator can fix, rather
+  than an address nobody notices.
+
+The audit entry records recipients by `public_id` for the same reason: a share
+must not copy an address into a second table.
+
+### Several files, several people, one act
+
+`POST /resources/share` takes both lists and is **all or nothing**: every file
+is authorised and every recipient resolved before the first row is written. A
+partial share is the worst outcome available -- the sharer is told it failed
+and half the class has the file anyway. The library grew tick boxes and a
+sticky "N files selected · Share" bar to feed it; uploading several at once
+already worked.
+
+### The library is staff-only; "Shared with me" is everyone's
+
+The nav entry moved from `resource.read` -- which every signed-in role holds --
+to `resource.create`. A student reaching the library could browse folders and
+open the Share panel, and every control on it would answer 403. What they have
+instead is "Shared with me", which is their whole relationship with resources.
+
+The sidebar matrix test proves a link matches *whatever* permission its item
+names, so it would have stayed green with the permission put back. The per-role
+assertions are written out separately for exactly that reason.
+
+### Pinned where it can fail
+
+`tests/integration/test_resource_share_audience.py` (12), driven over HTTP.
+**Mutation-tested, 6 of 6**: no gate at all, guardians dropped, every cohort
+shown instead of the sharer's own, a nameless account named by its login name,
+the directory made searchable by address, and the share list naming people by
+login name.
+
+The last two **survived the first run**: every account in the fixture had a
+name, so nothing exercised the fallback, and the one share in the suite was
+read back by a tutor, who lacks `user.view_contact` and so sees a name either
+way. A nameless account and an administrator-side read kill both. Sixth
+"fixture too kind" in this codebase, and the second in a day.
+
+
+## The Shared Resources page is a viewer, not a list of download links
+
+A student's only relationship with resources is "files someone sent me", and
+the screen for it showed a filename, who shared it, and a Download button. To
+read a handout you took a copy of it, left the LMS, and opened it in whatever
+the operating system felt like.
+
+`/shared-with-me` is now a split view: the list on the left, the file open on
+the right, and nothing in between.
+
+### The list is metadata; only the viewer fetches bytes
+
+`/shared-with-me` gained `resource_type`, `mime_type` and `size`, which is
+enough to draw a type icon, run the search and work the type filter. So forty
+shared files cost forty rows and **no file contents** until one is chosen, and
+`viewerKind` decides which renderer to mount before a byte is requested.
+
+One renderer is mounted at a time, keyed by the file, so switching unmounts the
+previous one -- which is what releases a PDF's worker and aborts an in-flight
+request. Swapping a `src` on a single mounted viewer would leave both behind.
+
+The filter buttons are drawn from what the person actually has
+(`availableFilters`), because a student with three PDFs should not be handed
+five empty buttons to press.
+
+### Which viewer, decided from the type and then the extension
+
+MIME first: the server recorded it against the upload allowlist, so it is the
+better evidence. The extension breaks the two ties it cannot: browsers send
+`application/octet-stream` for perfectly ordinary files, and a `.md` arrives as
+`text/plain` because `text/markdown` is not in the allowlist -- reading markdown
+as plain text is not wrong, but it is worse.
+
+### PDF, and why not an iframe
+
+`pdfjs-dist`, loaded by a dynamic `import()` so a student with no PDFs never
+downloads it. An `<iframe>` at the preview endpoint would be fewer lines and
+fails twice over: the preview response carries a `sandbox` CSP, which blocks
+the built-in plugin outright, and the toolbar it would draw is the browser's --
+not stylable, not translatable, and carrying a save button on a file that may
+have been shared view-only.
+
+Renders are cancellable, because clicking through five files in a second leaves
+four renders in flight and the last to *finish* would otherwise win.
+
+### `.docx` and `.xlsx` are parsed here, not by a library
+
+The obvious choices are SheetJS and mammoth. The npm build of SheetJS is a
+version behind its own security fixes, and mammoth returns an HTML **string** --
+`innerHTML` on a file a tenant uploaded, which is the one thing this codebase
+has repeatedly refused to do. Both are also an order of magnitude larger than
+what is needed to show somebody their mark sheet.
+
+Both formats are ZIPs of XML, so `office.ts` reads them with `fflate` (8 KB)
+and `DOMParser` and returns **data**; the components build elements from it.
+Deliberately partial -- paragraphs, headings, bold and italic runs, lists,
+tables, cells with shared strings -- and a file it cannot read gets the
+download panel rather than a bad rendering.
+
+The cases that actually break naive parsers are the tested ones: a row with a
+gap (`A1` and `D1`, with no `B` element at all, which shifts every later column
+left if cells are appended in order), a shared string split across styled runs,
+a CSV field with the separator inside quotes, and a heading level that lives in
+`w:pStyle`.
+
+### Two Office types joined the preview allowlist, and why that is still safe
+
+`PREVIEWABLE_TYPES` excluded them, so the viewer got a 422. The allowlist's
+reasoning is about **the browser interpreting bytes a stranger uploaded** --
+which is why `image/svg+xml` and `text/html` are excluded despite rendering
+perfectly, since both execute script at this origin. The OOXML types are the
+same reasoning read the other way: the browser never interprets them. The
+console fetches, unzips, parses with `DOMParser` (which executes nothing) and
+builds elements. The legacy binary `.doc` and `.xls` stay out, because nothing
+here can read them and a clear "download this" beats a parse error.
+
+That decision had no test at all. `tests/unit/test_previewable_types.py` (26)
+now pins both halves, including that a `charset` parameter neither defeats the
+check nor smuggles `text/html` past it.
+
+### Every file was fetched twice, and only the browser could say so
+
+`useFile` took the parser as a callback, and every caller passed an inline
+`async (response) => ...`: a new function each render, so the effect re-ran the
+moment the first response set state. The network panel showed **two requests
+per file**, the first aborted by the cleanup of the render it had triggered --
+two downloads per file being the whole of what this screen exists to avoid.
+
+Fixed by splitting fetching from parsing: `useFile(src, "bytes" | "text")` has
+two primitive dependencies, and `useParsed` turns the payload into a grid or a
+document. A `useCallback` at each call site would also have worked and is one
+forgotten wrapper away from bringing it back.
+
+### What is not here, and is not pretended to be
+
+The brief asks for YouTube, Vimeo and web links. `shared_links` and
+`shared_link_targets` exist in the schema with **no service, no API and no UI**,
+so nothing in the product can put a link in anybody's list -- building the
+renderers for them would be dead code on an unreachable branch. The "Links"
+filter is therefore absent, matching the brief's own instruction to use only
+the types the LMS already supports. Wiring that table up is a separate change.
+
+### Pinned where it can fail
+
+`kinds.test.ts` (12) and `office.test.ts` (11). **Mutation-tested, 4 of 4** on
+the parsers: cells appended in order instead of by address, a shared string
+taken from its first run only, quoting ignored so a comma splits a field, and
+the heading level dropped.
+
+
+## Assessment: the authoring tools, the files, and what a candidate is told
+
+Nine items across quizzes, assignments and examinations. Three of them were
+one bug wearing three hats -- a field stored and read by nobody who mattered,
+which this codebase keeps producing.
+
+### "Something went wrong" was never a crash
+
+The Mark Sheet tab failed on every examination, and the message was
+`ErrorState`'s own title. `PageParams` caps `limit` at 200 and answers **422**
+above it; the mark sheet asked for **500**, on both of its queries. Every
+other screen in the console already used 200 -- this was the one that missed
+it, so the cap was known and the screen was wrong.
+
+Two things the original also left out, fixed with it:
+
+* **`roster.error` was never checked**, only `results.error`. A refused roster
+  fell through to *"Nobody is confirmed on this exam's batch"*, which is a
+  claim about the cohort rather than about the request.
+* **A cohort over 200 now says so.** Silently truncating a mark sheet is worse
+  than admitting it is incomplete: the marks entered save correctly, and the
+  missing names read as absences.
+
+Driven end to end afterwards: tutor schedules, mark sheet renders (8
+candidates, 24 inputs), marks of 72 and 35 save -- *"Recorded 2 result(s)"* --
+with the Pass and Fail badges computed against the pass mark.
+
+### What a candidate is told, in three places
+
+`GET /quizzes/{id}` returned the **whole configuration** to every student set
+it: shuffle, how many are drawn from the bank, whether answers come back
+immediately. The console drew them a Settings tab with the inputs disabled,
+which is the giveaway -- the fields were in the payload and only the styling
+withheld them. Knowing them is an advantage: "answers shown immediately" and
+"ten drawn from forty" both change how a paper is best attempted.
+
+Swept the other two while there:
+
+* **Assignment** -- `instructions_path` is a storage key that *nothing reads*
+  (the generated types are its only other mention), published to every
+  student set the work. `submission_count` and `eligible_count` are facts
+  about classmates.
+* **Examination** -- `result_count` and `published_result_count`.
+  "28 of 30 published" tells a student whose mark is missing that theirs is
+  one of the two being withheld, which is exactly what the release step
+  exists to avoid saying.
+
+Withheld on the server in all three, not behind a hidden tab. `null`, not a
+default: a client rendering a missing shuffle flag as "questions are in
+order" would be stating something it was not told. The invigilator list was
+already safe -- `visible_username` gives a name, not a login name.
+
+### A paper now has a total
+
+`total_marks` on quizzes (migration `c4a7e1f93d20`), **nullable**: every quiz
+written before it has no stated ceiling, and inventing one from its current
+questions would both fabricate a decision and start refusing the next
+question added. Enforced on add *and* edit, with the room left named in the
+refusal.
+
+The edit path subtracts the question's own current marks. Without that,
+raising a 6 to a 7 on a full paper is measured as 10 + 7 and refused -- so the
+last question written could never be touched again. A limit that cannot be
+recovered from is a dead end, not a limit.
+
+### Files that are actually files
+
+`assignment_submissions.files` was JSON written **straight from the request
+body** -- `[{"filename": "...", "path": "..."}]`. No byte was ever stored, and
+`path` was caller-controlled; the only reason it was not a file-read
+primitive is that nothing read it back. The console said so in its own copy:
+*"the API's submission endpoint has no upload of its own -- upload the file
+under Resources and paste its link here."*
+
+`assignment_submission_files` (migration `d5b8c2e71f43`) owns the key, the
+size and the type. `submission_id` is nullable because the order is attach,
+check, submit -- the rows are claimed when the work goes in. `files` left the
+request entirely, which moved "did they submit anything?" from a body
+validator to the service, the only place that can see both halves.
+
+**The bug the tests caught.** The first `resolve_attachment` authorised a
+non-owner with `get(assignment)`, reasoning that it is scoped to the courses
+a caller teaches. It is not scoped that way for a *student* -- their own
+assignment is one they can get -- so **a classmate could download anybody's
+coursework**. It now uses `work_visibility`, the predicate `get_submission`
+uses, which gives guardians and corporate managers the right access for free.
+
+### Rich text, and where the sanitising lives
+
+A brief needs tables (a mark scheme *is* a table) and code blocks; an email
+does not, so `rich_text.py` shares `mail_html`'s primitives and not its
+allow-list. The editor is a request; the server re-parses and nothing
+downstream re-sanitises, which is the contract that makes
+`dangerouslySetInnerHTML` correct at the one place it is used.
+
+`RichText` **detects** plain text rather than assuming HTML. Every assignment
+and question written before the editor holds plain text, and `x < 5` is an
+ordinary thing to write in a question.
+
+### Smaller, and worth keeping
+
+* **True/False** -- the labels were the symptom. Saving one kept the type and
+  replaced its options with two *blank* rows. `optionsFor(type)` is now the
+  single answer the picker and the post-save reset both read.
+* **"Save & add another"** keeps the type and the points, because a tutor
+  writing a paper writes ten of the same kind.
+* **Grading maxima** -- `points_possible` was gated on `results_visible`, so a
+  tutor marking a quiz that withholds marks could not see what they were
+  marking out of. Students already get `points` while sitting, so it is not a
+  result. The server refused over-awards already, but it refused the *whole*
+  submission on the first one: one typo lost eleven other marks.
+
+### Result visibility, driven rather than reasoned about
+
+Before release the student saw **0** results though her mark existed; after,
+exactly **1** -- her own -- and not the other two candidates'. The corporate
+manager saw exactly the three marked students, all on her roster, by name.
+Her performance breakdown rolls up ASSIGNMENT / ATTENDANCE / FINAL_EXAM /
+PRACTICAL / QUIZ.
+
+Guardians go through the same `work_visibility` resolver and are pinned by
+`test_recording_access.py`; there are no guardian links in the dev data to
+drive live, and that is stated rather than claimed.
+
+### Pinned, and the fixtures that were too kind
+
+`test_quiz_total_marks.py` (5), `test_rich_text.py` (19),
+`test_submission_attachments.py` (13), `test_quiz_settings_are_private.py`
+(29). **Mutation-tested, 20 of 20** once the fixtures were fixed.
+
+Four survived first time, all the same way -- the fixture could not tell the
+mutation from the truth:
+
+* the pricing catalogue change needed an **Administrator** in the fixture;
+* `instructions_path` was **null** on the fixture's assignment, so publishing
+  it again changed nothing;
+* the exam had **no results**, so both counts were zero for staff and
+  candidate alike;
+* and the ordering mutation had **no test over `/sessions`** at all.
+
+Seventh, eighth and ninth instances in this codebase. The rule holds: assume a
+new negative test passes for the wrong reason until a mutation says otherwise.

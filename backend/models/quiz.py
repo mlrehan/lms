@@ -37,6 +37,11 @@ class Quiz(Base, PublicIdMixin):
     duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
     attempts_allowed: Mapped[int] = mapped_column(Integer, default=1)
     passing_score: Mapped[Numeric] = mapped_column(Numeric(5, 2), nullable=False)  # e.g. 70.00
+    # The paper's stated total, against which question marks are checked.
+    # Nullable: a quiz written before this existed has no stated ceiling, and
+    # inventing one from its current questions would both fabricate a
+    # decision and start refusing the next question added to it.
+    total_marks: Mapped[Optional[Numeric]] = mapped_column(Numeric(6, 2), nullable=True)
     shuffle_questions: Mapped[bool] = bool_column()
     is_auto_graded: Mapped[bool] = bool_column()
     # e.g. {"negative_marking": 0.25, "min_time": 10, "max_time": 60}
@@ -55,6 +60,12 @@ class Quiz(Base, PublicIdMixin):
     show_correct_answers: Mapped[bool] = bool_column(default=False)
     show_explanations: Mapped[bool] = bool_column(default=False)
     auto_submit_on_expiry: Mapped[bool] = bool_column(default=True)
+    # When `show_result_immediately` is false, this is what the student is
+    # waiting for: marking and releasing are separate acts (§14), exactly as
+    # they are for assignments and exams. Null means "not released yet", so
+    # every existing quiz keeps the behaviour it has today -- which is
+    # `show_result_immediately=True`, released on marking.
+    results_released_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
     weight: Mapped[Numeric] = mapped_column(
         Numeric(6, 3), nullable=False, default=1, server_default="1"
     )
@@ -74,7 +85,18 @@ class Question(Base, PublicIdMixin):
     points: Mapped[Numeric] = mapped_column(Numeric(5, 2), nullable=False)
     order: Mapped[int] = mapped_column(Integer)
     # e.g. {"language": "python", "test_cases": [...]}
+    #
+    # Also carries the answer key for the types whose key is not a set of
+    # options: `{"accepted": [...], "case_sensitive": false}` for
+    # FILL_BLANK, and `{"answer": 3.14, "tolerance": 0.01}` for NUMERIC.
+    # Those shapes live here rather than in columns because they differ per
+    # type, and a column per type would be null for every other question.
     settings: Mapped[Optional[dict]] = mapped_column(JSON)
+    # Why the answer is the answer. Shown to a student only when the quiz
+    # sets `show_explanations` *and* its results have been released -- which
+    # is what made that setting unimplementable before: there was nothing to
+    # show.
+    explanation: Mapped[Optional[str]] = mapped_column(Text)
 
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
     options: Mapped[List["QuestionOption"]] = relationship(back_populates="question")
@@ -89,6 +111,11 @@ class QuestionOption(Base):
     option_text: Mapped[str] = mapped_column(Text, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer)
+    # MATCHING only: the right-hand item this left-hand prompt pairs with.
+    # A pair is one row rather than two, so a half-deleted pair cannot
+    # exist. ORDERING needs no extra column -- `order` already carries the
+    # correct sequence, and the student is served a shuffled copy.
+    match_text: Mapped[Optional[str]] = mapped_column(Text)
 
     question: Mapped["Question"] = relationship(back_populates="options")
 
@@ -112,6 +139,13 @@ class QuizAttempt(Base, PublicIdMixin):
     # fact, `Quiz.duration_minutes` would be a decorative field: enforced
     # nowhere and invisible to the tutor reviewing the attempt.
     submitted_late: Mapped[bool] = bool_column(default=False)
+    # Closed by the time limit rather than by the student (§9's
+    # `auto_submit_on_expiry`). Distinct from `submitted_late`, which is the
+    # opposite case: a quiz whose timer is advisory, submitted by hand after
+    # the deadline. Recorded because "scored zero because they ran out of
+    # time" and "scored zero because they answered wrongly" are different
+    # facts, and a tutor looking at the attempt needs to tell them apart.
+    auto_submitted: Mapped[bool] = bool_column(default=False)
 
     quiz: Mapped["Quiz"] = relationship(back_populates="attempts")
     student: Mapped["User"] = relationship(back_populates="quiz_attempts")

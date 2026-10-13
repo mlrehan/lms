@@ -40,7 +40,7 @@ from backend.models.class_performance import ClassPerformanceMark
 from backend.models.enrollment import Enrollments
 from backend.models.exam import Exam, ExamResult
 from backend.models.identity.user import User
-from backend.models.quiz import Quiz, QuizAttempt
+from backend.models.quiz import Question, Quiz, QuizAttempt
 from backend.services.grading_scheme_service import GradingSchemeService
 from backend.services.scope import ScopeResolver
 from backend.utils.enums import (
@@ -125,8 +125,19 @@ class PerformanceService:
         to be measured against, so the join follows the same three columns the
         eligibility resolver reads.
         """
+        # Columns, not entities. Selecting `AssignmentSubmission` and
+        # `Assignment` as ORM objects made this 710 queries for eight
+        # students: every row dragged its relationships in, and a `User`
+        # reached that way dragged its own. Nothing here reads anything but
+        # these five values. See `_exam_marks` for the measurement.
         stmt = (
-            select(AssignmentSubmission, Assignment)
+            select(
+                AssignmentSubmission.grade,
+                AssignmentSubmission.state,
+                Assignment.max_score,
+                Assignment.weight,
+                Assignment.title,
+            )
             .join(Assignment, Assignment.id == AssignmentSubmission.assignment_id)
             .where(
                 AssignmentSubmission.student_id == student_id,
@@ -138,17 +149,17 @@ class PerformanceService:
         rows = (await self.session.execute(stmt)).all()
 
         marks: list[Mark] = []
-        for submission, assignment in rows:
-            if released_only and not submission.state.is_visible_to_student:
+        for grade, state, max_score, weight, title in rows:
+            if released_only and not state.is_visible_to_student:
                 continue
             marks.append(
                 Mark(
                     component_type=C.ASSIGNMENT,
-                    earned=Decimal(submission.grade) if submission.grade is not None else None,
-                    possible=Decimal(assignment.max_score),
-                    state=submission.state,
-                    weight=Decimal(assignment.weight or 1),
-                    label=assignment.title,
+                    earned=Decimal(grade) if grade is not None else None,
+                    possible=Decimal(max_score),
+                    state=state,
+                    weight=Decimal(weight or 1),
+                    label=title,
                 )
             )
         return marks
@@ -171,8 +182,22 @@ class PerformanceService:
             .group_by(QuizAttempt.quiz_id)
             .subquery()
         )
+        # The quiz's own total, as a correlated subquery rather than a
+        # follow-up query per quiz per student.
+        points = (
+            select(func.coalesce(func.sum(Question.points), 0))
+            .where(Question.quiz_id == Quiz.id)
+            .correlate(Quiz)
+            .scalar_subquery()
+        )
         stmt = (
-            select(Quiz, best.c.score)
+            select(
+                Quiz.is_published,
+                Quiz.weight,
+                Quiz.title,
+                best.c.score,
+                points.label("total_points"),
+            )
             .join(best, best.c.quiz_id == Quiz.id)
             .where(
                 Quiz.course_id == course_id,
@@ -182,43 +207,54 @@ class PerformanceService:
         rows = (await self.session.execute(stmt)).all()
 
         marks: list[Mark] = []
-        for quiz, score in rows:
-            if released_only and not quiz.is_published:
+        for is_published, weight, title, score, total_points in rows:
+            if released_only and not is_published:
                 continue
-            total = await self._quiz_total_points(quiz.id)
-            if total <= _ZERO:
-                # A quiz with no marked questions has nothing to contribute,
-                # and dividing by it would be a crash rather than a grade.
+            if Decimal(total_points or 0) <= _ZERO:
+                # A quiz with no questions has nothing to contribute. Its
+                # total is no longer the denominator (see below), but a quiz
+                # with no marked questions cannot have produced a meaningful
+                # percentage either, so it stays out.
                 continue
             marks.append(
                 Mark(
                     component_type=C.QUIZ,
                     earned=Decimal(score) if score is not None else None,
-                    possible=total,
+                    # **100, not the quiz's raw points.** `QuizAttempt.score`
+                    # is already a percentage -- the model says so, and the
+                    # grade book's own writer pairs it with `max_score=100`.
+                    # Dividing a percentage by the question total was the
+                    # defect: an 80% attempt on a 12-point quiz contributed
+                    # 666% to the quiz component, and with any quiz in a
+                    # scheme the whole overall mark was wrong. Nothing caught
+                    # it because the engine's tests build marks by hand and
+                    # the service's tests had no quiz in them at all.
+                    possible=_HUNDRED,
                     state=SubmissionState.GRADED if score is not None else SubmissionState.PENDING,
-                    weight=Decimal(quiz.weight or 1),
-                    label=quiz.title,
+                    weight=Decimal(weight or 1),
+                    label=title,
                 )
             )
         return marks
 
-    async def _quiz_total_points(self, quiz_id: int) -> Decimal:
-        from backend.models.quiz import Question
-
-        total = (
-            await self.session.execute(
-                select(func.coalesce(func.sum(Question.points), 0)).where(
-                    Question.quiz_id == quiz_id
-                )
-            )
-        ).scalar_one()
-        return Decimal(total or 0)
-
     async def _exam_marks(
         self, *, student_id: int, batch_id: int, course_id: int, released_only: bool
     ) -> list[Mark]:
+        # Columns, not entities, and this is where it was measured: as ORM
+        # objects this single query cost **1,070 queries and 5 seconds** for
+        # eight students, because `Exam` eager-loads its course, batch,
+        # invigilators and *every result*, and each result eager-loads its
+        # student, whose own class then eager-loaded twenty collections of
+        # its own.
         stmt = (
-            select(ExamResult, Exam)
+            select(
+                ExamResult.marks_obtained,
+                ExamResult.is_published,
+                ExamResult.state,
+                Exam.total_marks,
+                Exam.weight,
+                Exam.title,
+            )
             .join(Exam, Exam.id == ExamResult.exam_id)
             .where(
                 ExamResult.student_id == student_id,
@@ -228,21 +264,19 @@ class PerformanceService:
         rows = (await self.session.execute(stmt)).all()
 
         marks: list[Mark] = []
-        for result, exam in rows:
-            if released_only and not result.is_published:
+        for marks_obtained, is_published, state, total_marks, weight, title in rows:
+            if released_only and not is_published:
                 continue
             marks.append(
                 Mark(
                     component_type=C.FINAL_EXAM,
                     earned=(
-                        Decimal(result.marks_obtained)
-                        if result.marks_obtained is not None
-                        else None
+                        Decimal(marks_obtained) if marks_obtained is not None else None
                     ),
-                    possible=Decimal(exam.total_marks),
-                    state=result.state,
-                    weight=Decimal(exam.weight or 1),
-                    label=exam.title,
+                    possible=Decimal(total_marks),
+                    state=state,
+                    weight=Decimal(weight or 1),
+                    label=title,
                 )
             )
         return marks
@@ -370,13 +404,19 @@ class PerformanceService:
         """Gather and weigh. Takes the release decision as a value rather than
         an actor, so the one caller that must never be flexible about it --
         transcript generation -- cannot be."""
-        batch = (
-            await self.session.execute(select(Batch).where(Batch.id == batch_id))
+        # The course id and nothing else. Loading the `Batch` entity pulled in
+        # its tutor reviews, and each review its student and tutor, and each
+        # of those a user -- eight times over for a grid of eight students,
+        # for one integer.
+        course_id = (
+            await self.session.execute(
+                select(Batch.course_id).where(Batch.id == batch_id)
+            )
         ).scalar_one_or_none()
-        if batch is None:
+        if course_id is None:
             raise NotFoundError("Batch not found.")
 
-        scheme_row = await self.schemes.for_course(batch.course_id)
+        scheme_row = await self.schemes.for_course(course_id)
         scheme = await self.schemes.as_engine_scheme(scheme_row)
 
         attendance, total_sessions, attended = await self._attendance_mark(
@@ -385,15 +425,15 @@ class PerformanceService:
         marks: list[Mark] = [
             *await self._assignment_marks(
                 student_id=student_id, batch_id=batch_id,
-                course_id=batch.course_id, released_only=released_only,
+                course_id=course_id, released_only=released_only,
             ),
             *await self._quiz_marks(
                 student_id=student_id, batch_id=batch_id,
-                course_id=batch.course_id, released_only=released_only,
+                course_id=course_id, released_only=released_only,
             ),
             *await self._exam_marks(
                 student_id=student_id, batch_id=batch_id,
-                course_id=batch.course_id, released_only=released_only,
+                course_id=course_id, released_only=released_only,
             ),
             *await self._class_performance_marks(
                 student_id=student_id, batch_id=batch_id, released_only=released_only

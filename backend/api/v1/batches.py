@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
+from backend.core.privacy import may_see_pricing
 from backend.db.dependencies import DBSession
 from backend.models.batch import BatchSession
 from backend.models.identity.user import User
@@ -56,7 +57,12 @@ async def summarise(session, batches) -> list[BatchSummary]:  # type: ignore[no-
     for b in batches:
         item = BatchSummary.model_validate(b)
         item.course_title = b.course.title if b.course else None
-        item.batch_fee = float(b.batch_fee) if b.batch_fee is not None else None
+        # Withheld here, not in the table's column list: a column the client
+        # declines to draw is still in the payload, and the batch list is the
+        # one screen that was publishing the fee to every role.
+        item.batch_fee = (
+            float(b.batch_fee) if b.batch_fee is not None and may_see_pricing() else None
+        )
         item.session_count, item.next_session_start, item.tutor_name = counts.get(b.id, 0), upcoming.get(b.id), tutors.get(b.id)
         out.append(item)
     return out
@@ -102,7 +108,11 @@ async def batch_response(service: BatchService, batch) -> BatchResponse:  # type
         training_start_time=batch.training_start_time.strftime("%H:%M") if batch.training_start_time else None,
         training_end_time=batch.training_end_time.strftime("%H:%M") if batch.training_end_time else None,
         class_duration_minutes=batch.class_duration_minutes,
-        batch_fee=float(batch.batch_fee) if batch.batch_fee is not None else None,
+        batch_fee=(
+            float(batch.batch_fee)
+            if batch.batch_fee is not None and may_see_pricing()
+            else None
+        ),
         schedule_timezone=batch.schedule_timezone,
     )
 
@@ -113,6 +123,8 @@ async def list_batches(
     params: Annotated[PageParams, Depends()],
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.BATCH, Action.READ)))],
     is_active: Annotated[bool | None, Query()] = None,
+    tutor_id: Annotated[uuid.UUID | None, Query(description="Batches this person takes sessions for.")] = None,
+    student_id: Annotated[uuid.UUID | None, Query(description="Batches this person is enrolled in.")] = None,
     q: Annotated[str | None, Query(max_length=100, description="Batch code, course title, method or days.")] = None,
     sort: Annotated[str | None, Query(pattern="^(batch_code|course|start_date|end_date|enrolled|capacity|fee|method|state)$")] = None,
     direction: Annotated[str, Query(alias="dir", pattern="^(asc|desc)$")] = "asc",
@@ -121,7 +133,8 @@ async def list_batches(
     they are enrolled in, a Guardian or Corporate Manager the batches of the
     people they are responsible for."""
     batches, total = await BatchService(session).list_batches(
-        params, actor=actor, is_active=is_active, query=q, sort=sort, descending=direction == "desc"
+        params, actor=actor, is_active=is_active, query=q, sort=sort,
+        descending=direction == "desc", tutor_public_id=tutor_id, student_public_id=student_id,
     )
     return Page.build(await summarise(session, batches), total=total, params=params)
 

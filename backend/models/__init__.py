@@ -9,7 +9,12 @@ from .administration import (
     AcademicYear, Semester, Department, Category, Tag, CourseTag, SystemSetting,
 )
 from .audit import AuditLog
-from .organization import Organization, OrganizationManager, OrganizationMembership
+from .organization import (
+    ManagedStudent,
+    Organization,
+    OrganizationManager,
+    OrganizationMembership,
+)
 from .guardian import StudentGuardian
 from .messaging import TutorReview, CourseDiscussion, DiscussionReply
 from .mail import MailMessage, MailRecipient, MailAttachment
@@ -19,7 +24,7 @@ from .batch import Batch, BatchSession
 from .enrollment import Enrollments
 from .attendance import Attendance
 from .resource import Resource, SharedResource, ResourceFolder, ResourceVersion, ResourcePermission
-from .assignment import Assignment, AssignmentSubmission
+from .assignment import Assignment, AssignmentSubmission, AssignmentSubmissionFile
 from .quiz import Quiz, Question, QuestionOption, QuizAttempt, QuizAnswer
 from .exam import Exam, ExamInvigilator, ExamResult
 from .grading import GradingScheme, GradingSchemeComponent
@@ -44,6 +49,7 @@ __all__ = [
     # Audit
     "AuditLog",
     # Corporate organizations & guardianship
+    "ManagedStudent",
     "Organization", "OrganizationManager", "OrganizationMembership", "StudentGuardian",
     # Messaging
     "MailMessage", "MailRecipient", "MailAttachment", "AttendanceSheet", "AttendanceSheetEvent", "TutorReview", "CourseDiscussion", "DiscussionReply",
@@ -54,7 +60,7 @@ __all__ = [
     # Resources
     "Resource", "SharedResource", "ResourceFolder", "ResourceVersion", "ResourcePermission",
     # Assignments
-    "Assignment", "AssignmentSubmission",
+    "Assignment", "AssignmentSubmission", "AssignmentSubmissionFile",
     # Quiz
     "Quiz", "Question", "QuestionOption", "QuizAttempt", "QuizAnswer",
     # Examination
@@ -71,4 +77,5 @@ __all__ = [
     "PushSubscription", "Announcement",
     # Shared links
     "SharedLink", "SharedLinkTarget",
+    # Background synchronisation
 ]

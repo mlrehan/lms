@@ -85,18 +85,20 @@ export interface AnswerInput {
   question_id: string;
   selected_option_ids?: number[] | null;
   text_answer?: string | null;
+  matches?: Record<string, string> | null;
 }
 
 export interface AnswerResponse {
   question_id: string;
   question_text?: string | null;
   question_type?: QuestionType | null;
-  /** What the student answered, rendered server-side for a person to read. */
   answer_text?: string | null;
-  /** True when a person still has to score this one. */
   needs_marking?: boolean;
   selected_options?: unknown | null;
   score_awarded?: string | null;
+  correct_answer?: string | null;
+  explanation?: string | null;
+  points_possible?: string | null;
 }
 
 export interface AppointManagerRequest {
@@ -251,10 +253,12 @@ export interface AttemptResponse {
   score?: string | null;
   is_passed?: boolean | null;
   submitted_late?: boolean;
+  auto_submitted?: boolean;
   feedback?: string | null;
   /** True when the attempt contains short-answer/essay questions a tutor has not yet scored. */
   awaiting_manual_grading?: boolean;
   answers?: AnswerResponse[];
+  results_visible?: boolean;
 }
 
 export interface AttendanceEntry {
@@ -450,6 +454,10 @@ export interface BatchUpdateRequest {
   clear_semester?: boolean;
 }
 
+export interface BodyAttachSubmissionFileApiV1AssignmentsattachmentsPost {
+  file: string;
+}
+
 export interface BodyPutImageApiV1Coursesput {
   file: string;
 }
@@ -478,6 +486,18 @@ export interface BodyUploadResourceApiV1ResourcesPost {
 export interface BodyUploadVersionApiV1ResourcesversionsPost {
   file: string;
   change_note?: string | null;
+}
+
+/**
+ * Several files, several people, one decision.
+ */
+export interface BulkShareRequest {
+  /** Files to share. */
+  resource_ids: string[];
+  /** People to share them with. */
+  user_ids: string[];
+  /** What the recipients may do. VIEW lets them read or watch it in place; DOWNLOAD hands over the bytes. Defaults to the narrower. */
+  level?: ResourcePermissionLevel;
 }
 
 export interface CalendarFeedCreatedResponse {
@@ -835,6 +855,16 @@ export interface CourseUpdateRequest {
   clear_department?: boolean;
 }
 
+/**
+ * How the coursework report is cut.
+ *
+ * `assignment` and `student` are the two that drive action -- which piece of
+ * work is not coming in, and which person is not handing it in -- so both
+ * are offered rather than only the management cuts.
+ */
+export type CourseworkGroupBy = "course" | "batch" | "assignment" | "student";
+export const CourseworkGroupByValues = ["course", "batch", "assignment", "student"] as const;
+
 export interface CreateAnnouncementRequest {
   title: string;
   content: string;
@@ -867,6 +897,17 @@ export interface CreateGuardianLinkRequest {
   /** e.g. 'Parent', 'Legal Guardian'. */
   relationship_type?: string | null;
   /** Marks the main point of contact when a student has several guardians. */
+  is_primary?: boolean;
+}
+
+export interface CreateManagedStudentRequest {
+  /** A user holding the CORPORATE_MANAGER role. */
+  manager_id: string;
+  /** A user holding the STUDENT role. */
+  student_id: string;
+  /** e.g. 'Line manager', 'L&D sponsor'. */
+  relationship_type?: string | null;
+  /** Marks the first point of contact when a student has several managers. */
   is_primary?: boolean;
 }
 
@@ -936,6 +977,59 @@ export interface DashboardResponse {
   teaching?: TeachingPanel | null;
   care?: CarePanel | null;
   institution?: InstitutionPanel | null;
+}
+
+/**
+ * A manager's delegates, with the manager named.
+ *
+ * Wrapped rather than returned as a bare list so that "this manager has
+ * nobody" is expressible. A bare `[]` would be indistinguishable from a
+ * manager LAIT has never heard of -- and upstream *does* distinguish them,
+ * answering 404 for the second.
+ */
+export interface DelegateListResponse {
+  customer_id: number;
+  count: number;
+  delegates?: DelegateResponse[];
+}
+
+/**
+ * One corporate manager, as LAIT holds them.
+ */
+export interface DelegateManagerResponse {
+  /** LAIT's own id, and the key the delegates endpoint takes. */
+  customer_id: number;
+  /** LAIT's GUID for this manager. */
+  unique_key?: string | null;
+  /** Title, first, middle and last, as one line. */
+  full_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  company_name?: string | null;
+  /** Their job title at that company. */
+  designation?: string | null;
+  is_active?: boolean | null;
+  date_created?: string | null;
+  date_modified?: string | null;
+  /** Only for callers holding `user.view_contact`. `None` means withheld, not absent -- the same rule every other directory in this console follows. */
+  email?: string | null;
+}
+
+/**
+ * One student under a manager, as LAIT holds them.
+ */
+export interface DelegateResponse {
+  /** The manager this delegate belongs to. */
+  customer_id: number;
+  /** LAIT's own student id. */
+  student_id?: number | null;
+  /** LAIT's GUID for this delegate. */
+  unique_key?: string | null;
+  delegate_name?: string | null;
+  status_id?: number | null;
+  /** LAIT's own wording, e.g. "Active". */
+  status_details?: string | null;
+  date_added?: string | null;
 }
 
 export interface DepartmentCreateRequest {
@@ -1362,6 +1456,16 @@ export interface GradeSubmissionRequest {
   state?: SubmissionState | null;
 }
 
+/**
+ * Only course and batch.
+ *
+ * A queue grouped by student or assessment would be a worklist, which is
+ * what the submission and attempt screens already are. This answers "where
+ * is the backlog", and the answer is a place, not a person.
+ */
+export type GradingQueueGroupBy = "course" | "batch";
+export const GradingQueueGroupByValues = ["course", "batch"] as const;
+
 export interface GradingSchemeCreateRequest {
   name: string;
   description?: string | null;
@@ -1586,6 +1690,20 @@ export interface MailThread {
   messages: MailMessageView[];
 }
 
+export interface ManagedStudentResponse {
+  public_id: string;
+  manager_id: string;
+  manager_username: string;
+  manager_name?: string | null;
+  student_id: string;
+  student_username: string;
+  student_name?: string | null;
+  relationship_type?: string | null;
+  is_primary?: boolean;
+  created_at?: string | null;
+  organization?: string | null;
+}
+
 export interface ManagerResponse {
   public_id: string;
   user_id: string;
@@ -1685,6 +1803,7 @@ export interface OptionForAuthor {
   id: number;
   option_text: string;
   order: number;
+  match_text?: string | null;
   is_correct: boolean;
 }
 
@@ -1696,12 +1815,14 @@ export interface OptionForStudent {
   id: number;
   option_text: string;
   order: number;
+  match_text?: string | null;
 }
 
 export interface OptionInput {
   option_text: string;
   is_correct?: boolean;
   order?: number;
+  match_text?: string | null;
 }
 
 export interface OrganizationCreateRequest {
@@ -1959,6 +2080,14 @@ export interface PageMailListItem {
   offset: number;
 }
 
+export interface PageManagedStudentResponse {
+  items: ManagedStudentResponse[];
+  /** Total rows matching the query, ignoring paging. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PageMembershipResponse {
   items: MembershipResponse[];
   /** Total rows matching the query, ignoring paging. */
@@ -2039,6 +2168,14 @@ export interface PageSubmissionResponse {
   offset: number;
 }
 
+export interface PageSyncPipelineResponse {
+  items: SyncPipelineResponse[];
+  /** Total rows matching the query, ignoring paging. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface PageSyncRunResponse {
   items: SyncRunResponse[];
   /** Total rows matching the query, ignoring paging. */
@@ -2099,10 +2236,8 @@ export interface PartyRef {
   full_name?: string | null;
 }
 
-export type PerformanceGroupBy = "course" | "batch" | "component" | "student";
+export type PerformanceGroupBy = "course" | "batch" | "component" | "student" | "month";
 export const PerformanceGroupByValues = ["course", "batch", "component", "student", "month"] as const;
-export const CourseworkGroupByValues = ["course", "batch", "assignment", "student"] as const;
-export const GradingQueueGroupByValues = ["course", "batch"] as const;
 
 export type PerformanceLevel = "poor" | "below_average" | "average" | "good" | "excellent";
 export const PerformanceLevelValues = ["poor", "below_average", "average", "good", "excellent"] as const;
@@ -2247,6 +2382,7 @@ export interface QuestionCreateRequest {
   points: number | string;
   order?: number;
   settings?: unknown | null;
+  explanation?: string | null;
   options?: OptionInput[];
 }
 
@@ -2257,6 +2393,7 @@ export interface QuestionForAuthor {
   points: string;
   order: number;
   settings?: unknown | null;
+  explanation?: string | null;
   options?: OptionForAuthor[];
 }
 
@@ -2267,6 +2404,7 @@ export interface QuestionForStudent {
   points: string;
   order: number;
   settings?: unknown | null;
+  explanation?: string | null;
   options?: OptionForStudent[];
 }
 
@@ -2275,8 +2413,8 @@ export interface QuestionForStudent {
  * single-select and multi-select need different answer-storage and
  * auto-grading logic even though the spec lists them under one bullet.
  */
-export type QuestionType = "MCQ_SINGLE" | "MCQ_MULTIPLE" | "TRUE_FALSE" | "SHORT_ANSWER" | "ESSAY";
-export const QuestionTypeValues = ["MCQ_SINGLE", "MCQ_MULTIPLE", "TRUE_FALSE", "SHORT_ANSWER", "ESSAY"] as const;
+export type QuestionType = "MCQ_SINGLE" | "MCQ_MULTIPLE" | "TRUE_FALSE" | "SHORT_ANSWER" | "ESSAY" | "FILL_BLANK" | "MATCHING" | "ORDERING" | "NUMERIC";
+export const QuestionTypeValues = ["MCQ_SINGLE", "MCQ_MULTIPLE", "TRUE_FALSE", "SHORT_ANSWER", "ESSAY", "FILL_BLANK", "MATCHING", "ORDERING", "NUMERIC"] as const;
 
 /**
  * Options are replaced wholesale when supplied, rather than patched
@@ -2288,6 +2426,7 @@ export interface QuestionUpdateRequest {
   points?: number | string | null;
   order?: number | null;
   settings?: unknown | null;
+  explanation?: string | null;
   options?: OptionInput[] | null;
 }
 
@@ -2313,6 +2452,8 @@ export interface QuizCreateRequest {
   duration_minutes?: number | null;
   attempts_allowed?: number;
   passing_score: number | string;
+  /** Optional. The paper's total; question marks are refused past it. */
+  total_marks?: number | string | null;
   shuffle_questions?: boolean;
   is_auto_graded?: boolean;
   /** e.g. {'negative_marking': 0.25} to deduct a quarter of a question's points per wrong answer. */
@@ -2336,6 +2477,17 @@ export interface QuizPublishRequest {
   is_published: boolean;
 }
 
+/**
+ * §14's separate, deliberate act -- for quizzes this time.
+ *
+ * Only meaningful to a quiz with `show_result_immediately` off; a quiz that
+ * shows results as it marks them is already released by definition, and the
+ * service says so rather than silently accepting.
+ */
+export interface QuizReleaseResultsRequest {
+  is_released?: boolean;
+}
+
 export interface QuizResponse {
   public_id: string;
   title: string;
@@ -2347,15 +2499,27 @@ export interface QuizResponse {
   available_from?: string | null;
   available_until?: string | null;
   instructions?: string | null;
-  shuffle_questions: boolean;
-  is_auto_graded: boolean;
+  shuffle_questions?: boolean | null;
+  is_auto_graded?: boolean | null;
   grading_policy?: unknown | null;
   course_id: string;
   course_title?: string | null;
   question_count?: number;
   total_points?: string;
+  /** The paper's stated total, which question marks are checked against. Null means no stated ceiling -- which is what every quiz written before this field had, and what they keep. */
+  total_marks?: string | null;
+  /** `total_marks` minus the questions written so far; null when there is no total. */
+  marks_remaining?: string | null;
   /** How many attempts the caller has already made. */
   my_attempts_used?: number;
+  shuffle_answers?: boolean | null;
+  questions_per_attempt?: number | null;
+  show_result_immediately?: boolean | null;
+  show_correct_answers?: boolean | null;
+  show_explanations?: boolean | null;
+  auto_submit_on_expiry?: boolean | null;
+  results_released_at?: string | null;
+  weight?: string | null;
 }
 
 export interface QuizSummary {
@@ -2376,9 +2540,19 @@ export interface QuizUpdateRequest {
   duration_minutes?: number | null;
   attempts_allowed?: number | null;
   passing_score?: number | string | null;
+  total_marks?: number | string | null;
   shuffle_questions?: boolean | null;
   is_auto_graded?: boolean | null;
   grading_policy?: unknown | null;
+  available_from?: string | null;
+  available_until?: string | null;
+  shuffle_answers?: boolean | null;
+  questions_per_attempt?: number | null;
+  show_result_immediately?: boolean | null;
+  show_correct_answers?: boolean | null;
+  show_explanations?: boolean | null;
+  auto_submit_on_expiry?: boolean | null;
+  weight?: number | string | null;
 }
 
 /**
@@ -2742,7 +2916,7 @@ export interface SessionOverview {
   join_closes_at?: string | null;
   /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
   can_join_now?: boolean;
-  /** True when a recording exists to play back. */
+  /** True when this caller has a recording to watch -- either one stored in the LMS or one on the provider that the session page can frame. */
   has_recording?: boolean;
   public_id: string;
   number: number;
@@ -2782,6 +2956,8 @@ export interface SessionRecordingAttachRequest {
 export interface SessionRecordingResponse {
   /** Relative to the API root (the same base every other call uses), so a browser that reaches this API through a proxy composes it the same way it composes everything else. Streams the recording after re-checking permission on every request, including every seek. Present only for recordings stored in the LMS. */
   playback_url?: string | null;
+  /** Relative to the API root, like `playback_url`. Frame this to watch a recording that lives on the provider: the path re-checks permission on every request and then redirects to the player. Present only when there is no recording stored in the LMS -- a stored one plays in our own player and wins. */
+  embed_url?: string | null;
   /** The provider's own link. Only ever given to callers who may edit the session -- it is a link out of the LMS and past its checks. */
   external_url?: string | null;
   name?: string | null;
@@ -2796,7 +2972,7 @@ export interface SessionSessionResponse {
   join_closes_at?: string | null;
   /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
   can_join_now?: boolean;
-  /** True when a recording exists to play back. */
+  /** True when this caller has a recording to watch -- either one stored in the LMS or one on the provider that the session page can frame. */
   has_recording?: boolean;
   public_id: string;
   session_start_time?: string | null;
@@ -2833,7 +3009,7 @@ export interface SessionSummary {
   join_closes_at?: string | null;
   /** True when this caller could join at this moment. The API re-checks on join; this only decides whether the button is live. */
   can_join_now?: boolean;
-  /** True when a recording exists to play back. */
+  /** True when this caller has a recording to watch -- either one stored in the LMS or one on the provider that the session page can frame. */
   has_recording?: boolean;
   public_id: string;
   session_start_time?: string | null;
@@ -2897,10 +3073,38 @@ export interface SettingWriteRequest {
   description?: string | null;
 }
 
+/**
+ * A person who may be given a file, and enough to tell them apart.
+ *
+ * Carries no email address and no login name by construction -- there is no
+ * field for one, which is the difference between a response that declines to
+ * populate a leak and one that cannot express it.
+ */
+export interface ShareCandidateResponse {
+  public_id: string;
+  name: string;
+  /** Administrator, Tutor, Student, Guardian or Manager. */
+  role: string;
+  /** Batches and courses this person is in, within the sharer's own scope. */
+  placements?: SharePlacement[];
+  /** How a guardian reaches this list, e.g. "Guardian of Jane Doe". */
+  relation?: string | null;
+  /** Cohorts beyond the ones listed. */
+  more_placements?: number;
+}
+
 export interface ShareLinkResponse {
   share_token?: string | null;
   /** Relative path a recipient can open without signing in. */
   url_path?: string | null;
+}
+
+/**
+ * One cohort a candidate belongs to, from the sharer's point of view.
+ */
+export interface SharePlacement {
+  batch_code?: string | null;
+  course_title?: string | null;
 }
 
 export interface ShareResourceRequest {
@@ -2915,9 +3119,15 @@ export interface SharedResourceResponse {
   resource_name?: string | null;
   /** What the recipient may do with it. */
   level: ResourcePermissionLevel;
-  shared_with_username?: string | null;
-  shared_by_username?: string | null;
+  shared_with_user_id?: string | null;
+  /** The recipient's name. Never their login name: in this deployment that is their email address, and a share list is not a place to publish one. */
+  shared_with_name?: string | null;
+  shared_with_role?: string | null;
+  shared_by_name?: string | null;
   created_at: string;
+  resource_type?: ResourceType | null;
+  mime_type?: string | null;
+  size?: number | null;
 }
 
 export interface SheetBatch {
@@ -3050,6 +3260,24 @@ export interface StudentPanel {
   next_deadlines?: AssignmentBrief[];
 }
 
+/**
+ * One attached file, and where to get it.
+ *
+ * No `path`: the storage key is the server's business, and the thing that
+ * used to leak it -- a JSON column written from the request body -- is what
+ * this replaced. `download_url` is a path on this API that re-authorises on
+ * every request.
+ */
+export interface SubmissionFileResponse {
+  public_id: string;
+  filename: string;
+  mime_type?: string | null;
+  size: number;
+  uploaded_at: string;
+  /** Relative to the API root. Re-checks permission on every request. */
+  download_url: string;
+}
+
 export interface SubmissionResponse {
   public_id: string;
   assignment_id: string;
@@ -3057,7 +3285,8 @@ export interface SubmissionResponse {
   student_id: string;
   student_username?: string | null;
   submitted_at: string;
-  files?: unknown | null;
+  /** The attached work. Built from stored rows, never from the request body. */
+  files?: SubmissionFileResponse[];
   content?: string | null;
   grade?: string | null;
   feedback?: string | null;
@@ -3103,12 +3332,78 @@ export const SubmissionTypeValues = ["FILE_UPLOAD", "TEXT", "LINK"] as const;
  */
 export interface SubmitAssignmentRequest {
   content?: string | null;
-  /** File metadata, e.g. [{'filename': 'project.zip', 'path': '...'}]. */
-  files?: unknown | null;
 }
 
 export interface SubmitAttemptRequest {
   answers?: AnswerInput[];
+}
+
+/**
+ * One step of one pipeline.
+ */
+export interface SyncJobResponse {
+  public_id: string;
+  /** USERS | MANAGERS | COURSES | BATCHES | SESSIONS | ENROLLMENTS */
+  step: string;
+  /** Dependency order, as the server ran it. */
+  position: number;
+  /** PENDING | RUNNING | COMPLETED | FAILED | SKIPPED */
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  processed?: number;
+  succeeded?: number;
+  failed?: number;
+  /** Per-step counts, as the step reported them. */
+  detail?: Record<string, unknown> | null;
+  /** A short reason. Never an upstream response body. */
+  error?: string | null;
+  /** The step's name for people, resolved server-side so the console and */
+  /** the server cannot disagree about what a step is called. */
+  label: string;
+}
+
+/**
+ * One press of the button.
+ */
+export interface SyncPipelineResponse {
+  public_id: string;
+  /** MANUAL | SCHEDULED */
+  trigger_type: string;
+  /** RUNNING | COMPLETED | PARTIAL | FAILED */
+  status: string;
+  started_at: string;
+  finished_at?: string | null;
+  failure_reason?: string | null;
+  jobs?: SyncJobResponse[];
+  /** Overall progress, 0-100. */
+
+  /** Computed from settled steps rather than from records, because the steps */
+  /** are wildly different sizes and a record-weighted bar would sit at 4% */
+  /** through the whole user import and then jump. A running step counts as */
+  /** half, so the bar moves while a long step is in flight. */
+  progress_percent: number;
+  processed_total: number;
+  succeeded_total: number;
+  failed_total: number;
+}
+
+/**
+ * What the dashboard panel needs in one request.
+ */
+export interface SyncPipelineStatusResponse {
+  /** The pipeline in flight, if any. */
+  running?: SyncPipelineResponse | null;
+  /** The most recent pipeline, running or not. */
+  latest?: SyncPipelineResponse | null;
+  /** When a pipeline last completed with every step succeeding. */
+  last_successful_at?: string | null;
+  /** Whether the scheduled worker is switched on. */
+  schedule_enabled?: boolean;
+  /** Hours between scheduled runs. */
+  schedule_interval_hours?: number | null;
+  /** Whether this caller may change the two settings above. */
+  can_configure_schedule?: boolean;
 }
 
 export interface SyncResultResponse {
@@ -3131,6 +3426,15 @@ export interface SyncRunResponse {
   stats?: Record<string, unknown> | null;
   errors?: (Record<string, unknown>)[] | null;
   failure_reason?: string | null;
+}
+
+/**
+ * Enable, disable or re-time the scheduled synchronisation.
+ */
+export interface SyncScheduleRequest {
+  enabled: boolean;
+  /** Between 15 minutes and a week. A tighter loop would spend the upstream rate limit without importing anything new. */
+  interval_hours?: number;
 }
 
 export interface TagResponse {
@@ -3199,7 +3503,7 @@ export interface TeamMemberDetail {
   organization?: string | null;
   department?: string | null;
   employee_code?: string | null;
-  /** A guardian's relationship to this ward. */
+  /** How the caller is connected to this person -- a guardian's relationship to their ward, or a manager's to their student. */
   relationship?: string | null;
   enrollments_active?: number;
   enrollments_completed?: number;
@@ -3230,7 +3534,7 @@ export interface TeamMemberSummary {
   organization?: string | null;
   department?: string | null;
   employee_code?: string | null;
-  /** A guardian's relationship to this ward. */
+  /** How the caller is connected to this person -- a guardian's relationship to their ward, or a manager's to their student. */
   relationship?: string | null;
   enrollments_active?: number;
   enrollments_completed?: number;
@@ -3354,6 +3658,11 @@ export interface UpdateDiscussionRequest {
 }
 
 export interface UpdateGuardianLinkRequest {
+  relationship_type?: string | null;
+  is_primary?: boolean | null;
+}
+
+export interface UpdateManagedStudentRequest {
   relationship_type?: string | null;
   is_primary?: boolean | null;
 }

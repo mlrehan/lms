@@ -5,13 +5,19 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from typing import Sequence
+
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
 from backend.core.privacy import visible_username
-from backend.api.deps import CurrentUser, require_permissions
+from backend.api.deps import CurrentUser, require_permissions, resolve_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
-from backend.models.assignment import Assignment, AssignmentSubmission
+from backend.models.assignment import (
+    Assignment,
+    AssignmentSubmission,
+    AssignmentSubmissionFile,
+)
 from backend.schemas.assignment import (
     AssignmentCreateRequest,
     AssignmentResponse,
@@ -20,10 +26,12 @@ from backend.schemas.assignment import (
     GradeSubmissionRequest,
     PublishResultsRequest,
     ResubmissionRequest,
+    SubmissionFileResponse,
     SubmissionResponse,
     SubmissionStateRequest,
     SubmitAssignmentRequest,
 )
+from backend.api.v1.resources import _stream
 from backend.schemas.base import Page, PageParams
 from backend.services.assessment_scope import AssessmentTarget, describe as describe_scope
 from backend.services.assignment_service import AssignmentService
@@ -37,7 +45,27 @@ def _assignment_response(
     submission_count: int = 0,
     my_submission_id: uuid.UUID | None = None,
     eligible_count: int | None = None,
+    staff: bool = True,
 ) -> AssignmentResponse:
+    """One assignment.
+
+    `staff=False` withholds three fields a candidate has no use for and some
+    claim on nothing:
+
+    * **`instructions_path`** is a storage key. Nothing in the console reads
+      it -- the generated types are its only other mention -- so it was a
+      decorative field that happened to describe the server's filesystem to
+      every student set the work. The same shape as the submission `path`
+      that `assignment_submission_files` replaced.
+    * **`submission_count`** and **`eligible_count`** are facts about the
+      cohort: how many classmates have handed in, and how many were set it.
+      A tutor runs the assignment and needs both; a candidate is being told
+      about other people.
+
+    Everything a student actually needs -- the brief, the deadline, what it
+    is out of, the accepted file types and size, the late penalty, the pass
+    mark -- is unchanged.
+    """
     return AssignmentResponse(
         public_id=a.public_id,
         title=a.title,
@@ -46,11 +74,11 @@ def _assignment_response(
         submission_type=a.submission_type,
         allow_late_submissions=a.allow_late_submissions,
         description=a.description,
-        instructions_path=a.instructions_path,
+        instructions_path=a.instructions_path if staff else None,
         rubric=a.rubric,
         course_id=a.course.public_id,
         course_title=a.course.title,
-        submission_count=submission_count,
+        submission_count=submission_count if staff else 0,
         my_submission_id=my_submission_id,
         scope=a.scope,
         state=a.state,
@@ -60,7 +88,7 @@ def _assignment_response(
         scope_description=describe_scope(
             AssessmentTarget.of(a), batch_code=a.batch.batch_code if a.batch else None
         ),
-        eligible_count=eligible_count,
+        eligible_count=eligible_count if staff else None,
         publish_at=a.publish_at,
         available_from=a.available_from,
         passing_score=a.passing_score,
@@ -73,8 +101,30 @@ def _assignment_response(
     )
 
 
+def _file_response(f: AssignmentSubmissionFile) -> SubmissionFileResponse:
+    return SubmissionFileResponse(
+        public_id=f.public_id,
+        filename=f.filename,
+        mime_type=f.mime_type,
+        size=f.size,
+        uploaded_at=f.uploaded_at,
+        download_url=f"/submission-files/{f.public_id}/download",
+    )
+
+
+async def _with_files(
+    service: AssignmentService, s: AssignmentSubmission, *, staff: bool = True
+) -> SubmissionResponse:
+    """One submission, with whatever is attached to it."""
+    files = await service.files_for_submissions([s.id])
+    return _submission_response(s, staff=staff, files=files.get(s.id, []))
+
+
 def _submission_response(
-    s: AssignmentSubmission, *, staff: bool = True
+    s: AssignmentSubmission,
+    *,
+    staff: bool = True,
+    files: Sequence[AssignmentSubmissionFile] = (),
 ) -> SubmissionResponse:
     """One submission.
 
@@ -90,7 +140,7 @@ def _submission_response(
         student_id=s.student.public_id,
         student_username=visible_username(s.student),
         submitted_at=s.submitted_at,
-        files=s.files,
+        files=[_file_response(f) for f in files],
         content=s.content,
         grade=s.grade,
         feedback=s.feedback,
@@ -171,6 +221,9 @@ async def get_assignment(
         row,
         submission_count=await service.assignments.count_submissions(row.id),
         my_submission_id=mine.public_id if mine else None,
+        # The one read a candidate makes. Setting coursework is what makes
+        # somebody staff here -- reading it is not.
+        staff=perm(Module.ASSIGNMENT, Action.UPDATE) in resolve_permissions(actor),
     )
 
 
@@ -236,9 +289,8 @@ async def submit_assignment(
     assignment allows late work, and refused outright once graded — replacing
     marked work would silently invalidate the grade beside it.
     """
-    return _submission_response(
-        await AssignmentService(session).submit(assignment_id, payload, actor=actor)
-    )
+    service = AssignmentService(session)
+    return await _with_files(service, await service.submit(assignment_id, payload, actor=actor))
 
 
 @router.get(
@@ -264,7 +316,96 @@ async def list_submissions(
         student_public_id=student_id,
         graded=graded,
     )
-    return Page.build([_submission_response(s) for s in rows], total=total, params=params)
+    files = await AssignmentService(session).files_for_submissions([s.id for s in rows])
+    return Page.build(
+        [_submission_response(s, files=files.get(s.id, [])) for s in rows],
+        total=total,
+        params=params,
+    )
+
+
+@router.post(
+    "/assignments/{assignment_id}/attachments",
+    response_model=SubmissionFileResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Attach a file to your own work",
+)
+async def attach_submission_file(
+    assignment_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.SUBMIT)))
+    ],
+    file: Annotated[UploadFile, File()],
+) -> SubmissionFileResponse:
+    """Multipart, one file per call, before submitting.
+
+    The caller is always the owner -- there is no student id -- and the
+    storage key is generated server-side. `files` used to be a JSON blob in
+    the submit body carrying a client-chosen `path`, so a submission could
+    name bytes nobody had written.
+
+    Checked against the platform's upload rules *and* the assignment's own
+    (`allowed_file_types`, `max_upload_mb`), because those are the limits the
+    student was told about.
+    """
+    row = await AssignmentService(session).attach_file(assignment_id, upload=file, actor=actor)
+    return _file_response(row)
+
+
+@router.get(
+    "/assignments/{assignment_id}/attachments",
+    response_model=list[SubmissionFileResponse],
+    summary="Your own attachments on this assignment",
+)
+async def list_submission_files(
+    assignment_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.READ)))
+    ],
+) -> list[SubmissionFileResponse]:
+    """What the caller has attached but may not have submitted yet. A tutor
+    reads a student's files from the submission, not from here."""
+    rows = await AssignmentService(session).attachments_for(assignment_id, actor=actor)
+    return [_file_response(f) for f in rows]
+
+
+@router.get(
+    "/submission-files/{file_id}/download",
+    summary="Download an attached file",
+)
+async def download_submission_file(
+    file_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.READ)))
+    ],
+):
+    """Re-authorised on every request: the student who attached it, or
+    whoever may mark that assignment. Streamed through this server rather
+    than redirected to a presigned URL -- a presigned URL outlives the check
+    that produced it, and a student's work is not something to leave a
+    standing link to."""
+    row = await AssignmentService(session).resolve_attachment(file_id, actor=actor)
+    return await _stream(row.path, filename=row.filename, mime_type=row.mime_type)
+
+
+@router.delete(
+    "/submission-files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a file you attached",
+)
+async def remove_submission_file(
+    file_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.SUBMIT)))
+    ],
+) -> Response:
+    """The student's own, and only before it has been marked."""
+    await AssignmentService(session).remove_attachment(file_id, actor=actor)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -279,9 +420,8 @@ async def get_submission(
         CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.READ)))
     ],
 ) -> SubmissionResponse:
-    return _submission_response(
-        await AssignmentService(session).get_submission(submission_id, actor=actor)
-    )
+    service = AssignmentService(session)
+    return await _with_files(service, await service.get_submission(submission_id, actor=actor))
 
 
 @router.put(
@@ -298,9 +438,8 @@ async def grade_submission(
     ],
 ) -> SubmissionResponse:
     """The grade cannot exceed the assignment's `max_score`."""
-    return _submission_response(
-        await AssignmentService(session).grade(submission_id, payload, actor=actor)
-    )
+    service = AssignmentService(session)
+    return await _with_files(service, await service.grade(submission_id, payload, actor=actor))
 
 # =============================================================================
 # RESULT LIFECYCLE (spec §14)
@@ -357,10 +496,10 @@ async def request_resubmission(
     """A distinct state rather than deleting the mark: the student needs to
     know they were asked, and the performance engine needs to know this
     component is not finished."""
-    return _submission_response(
-        await AssignmentService(session).request_resubmission(
-            submission_id, actor=actor, reason=payload.reason
-        )
+    service = AssignmentService(session)
+    return await _with_files(
+        service,
+        await service.request_resubmission(submission_id, actor=actor, reason=payload.reason),
     )
 
 

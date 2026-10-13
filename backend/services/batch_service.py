@@ -43,18 +43,38 @@ class BatchService:
         query: str | None = None,
         sort: str | None = None,
         descending: bool = False,
+        tutor_public_id: uuid.UUID | None = None,
+        student_public_id: uuid.UUID | None = None,
     ) -> tuple[Sequence[Batch], int]:
         """Row-scoped: a Tutor sees the batches they teach, a Student the
         batch they are enrolled in, a Guardian/Manager the batches of the
-        people they are responsible for."""
+        people they are responsible for.
+
+        The tutor and student filters narrow *within* that scope -- they are
+        applied on top of it, never instead of it, so filtering by somebody
+        else's name cannot widen what the caller sees.
+        """
         course_id = None
         if course_public_id is not None:
             course = await self.courses.get(course_public_id, actor=actor)
             course_id = course.id
 
+        async def person(public_id: uuid.UUID | None) -> int | None:
+            if public_id is None:
+                return None
+            found = (
+                await self.session.execute(select(User.id).where(User.public_id == public_id))
+            ).scalar_one_or_none()
+            # An unknown id filters to nothing rather than being ignored: a
+            # filter that silently does not apply shows the unfiltered list and
+            # reads as "this person is in every batch".
+            return found if found is not None else -1
+
         scope = await self.scopes.visible_batch_ids(actor)
         return await self.batches.search(
-            params, scope=scope, course_id=course_id, is_active=is_active, query=query, sort=sort, descending=descending
+            params, scope=scope, course_id=course_id, is_active=is_active, query=query,
+            sort=sort, descending=descending,
+            tutor_id=await person(tutor_public_id), student_id=await person(student_public_id),
         )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Batch:

@@ -13,6 +13,7 @@ import { Badge, Card } from "@/components/ui/primitives";
 import { Select } from "@/components/ui/select";
 import { Column, DataTable, Pagination, type SortState } from "@/components/ui/data-table";
 import { TableToolbar } from "@/components/ui/table-toolbar";
+import { UserPicker, useCanPickUsers } from "@/components/domain/user-picker";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { BooleanBadge } from "@/components/domain/status-badge";
@@ -37,16 +38,20 @@ export default function BatchesPage() {
   // Ten to a page by default: a batch row is dense, and a long page hides the calendar beneath it.
   const { limit, offset, search, debouncedSearch, setSearch, setPage } = useListState(10);
   const [active, setActive] = useState("");
+  const [tutorId, setTutorId] = useState<string | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const [selected, setSelected] = useState<BatchSummary | null>(null);
   const [recreate, setRecreate] = useState<BatchSummary | null>(null);
 
   const { data, isPending, isFetching, error, refetch } = useQuery({
-    queryKey: ["batches", "list", active, debouncedSearch, sort?.key, sort?.dir, limit, offset],
+    queryKey: ["batches", "list", active, tutorId, studentId, debouncedSearch, sort?.key, sort?.dir, limit, offset],
     queryFn: () =>
       api.get<PageBatchSummary>("/batches", {
         query: {
           is_active: active === "" ? undefined : active === "true",
+          tutor_id: tutorId || undefined,
+          student_id: studentId || undefined,
           q: debouncedSearch || undefined,
           sort: sort?.key,
           dir: sort?.dir,
@@ -58,6 +63,9 @@ export default function BatchesPage() {
   });
 
   const canRecreate = permissions.has("session.create") && permissions.has("session.delete");
+
+  const canSeePricing = permissions.has("course.view_pricing");
+  const canPickUsers = useCanPickUsers();
 
   const columns: Column<BatchSummary>[] = [
     {
@@ -155,14 +163,26 @@ export default function BatchesPage() {
         </span>
       ),
     },
-    {
-      key: "fee",
-      header: "Fee",
-      sortable: true,
-      align: "right",
-      hideBelow: "xl",
-      cell: (batch) => (batch.batch_fee == null ? <span className="text-subtle-foreground">—</span> : `£${batch.batch_fee.toLocaleString("en-GB")}`),
-    },
+    // Dropped entirely rather than drawn as a column of dashes: the server
+    // withholds `batch_fee` from anyone without the grant, so the column
+    // would be empty for every row and invite "why is this blank?".
+    ...(canSeePricing
+      ? [
+          {
+            key: "fee",
+            header: "Fee",
+            sortable: true,
+            align: "right" as const,
+            hideBelow: "xl" as const,
+            cell: (batch: BatchSummary) =>
+              batch.batch_fee == null ? (
+                <span className="text-subtle-foreground">&mdash;</span>
+              ) : (
+                `£${batch.batch_fee.toLocaleString("en-GB")}`
+              ),
+          },
+        ]
+      : []),
     {
       key: "state",
       header: "State",
@@ -195,15 +215,46 @@ export default function BatchesPage() {
           }}
           searchPlaceholder="Search code, course, days or method"
           filters={
-            <Select
-              className="h-8 w-auto text-[13px]"
-              aria-label="Filter by state"
-              value={(active) || null}
-              onValueChange={(next) => {
-                setActive((next ?? ""));
-                setPage({ limit, offset: 0 });
-              }}
-             placeholder="Any state" clearable options={[{ value: "true", label: "Active only" }, { value: "false", label: "Closed only" }]} />
+            <>
+              <Select
+                className="h-8 w-auto text-[13px]"
+                aria-label="Filter by state"
+                value={(active) || null}
+                onValueChange={(next) => {
+                  setActive((next ?? ""));
+                  setPage({ limit, offset: 0 });
+                }}
+               placeholder="Any state" clearable options={[{ value: "true", label: "Active only" }, { value: "false", label: "Closed only" }]} />
+              {/* A tutor filtering by tutor would be filtering a list that is
+                  already only their own batches, so it is offered to whoever
+                  can see the whole institution. */}
+              {permissions.has("institution.view_all") ? (
+                <UserPicker
+                  role="TUTOR"
+                  value={tutorId}
+                  placeholder="Any tutor"
+                  onChange={(next) => {
+                    setTutorId(next);
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              ) : null}
+              {/* Dropped entirely for a caller who cannot look people up --
+                  a student. It used to degrade to a free-text box, and a
+                  single letter typed into it became `student_id=a`, a 422,
+                  and "Something went wrong" over the whole list. */}
+              {canPickUsers ? (
+                <UserPicker
+                  role="STUDENT"
+                  value={studentId}
+                  placeholder="Any student"
+                  onChange={(next) => {
+                    setStudentId(next);
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              ) : null}
+            </>
           }
           summary={isFetching && !isPending ? "Updating…" : undefined}
         />

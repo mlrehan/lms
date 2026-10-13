@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { use, useState } from "react";
+import { use, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { Send, Trash2 } from "lucide-react";
-import { api, segment } from "@/lib/api/client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download, Paperclip, Send, Trash2 } from "lucide-react";
+import { api, apiPath, segment } from "@/lib/api/client";
 import type {
   AssignmentResponse,
   PageSubmissionResponse,
+  SubmissionFileResponse,
   SubmissionResponse,
 } from "@/lib/api/types";
 import { useApiMutation, useListState } from "@/lib/api/hooks";
@@ -26,10 +27,13 @@ import {
   TabsTab,
 } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
+import { InlineSpinner } from "@/components/ui/states";
+import { formatBytes } from "@/components/domain/resources/drive-view";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormActions, Input, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
+import { RichText } from "@/components/domain/rich-text";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
@@ -115,6 +119,11 @@ function GradeDialog({
             </p>
           </div>
         ) : null}
+        {/* The marker has to be able to open what was handed in; before this
+            there was nothing to open. */}
+        <div className="mb-3">
+          <AttachedFiles files={submission?.files ?? []} label="Submitted files" />
+        </div>
         <div className="space-y-4">
           <Field label="Score" required>
             {({ id }) => (
@@ -167,8 +176,111 @@ function GradeDialog({
   );
 }
 
+/**
+ * The files attached to one submission, with a link to each.
+ *
+ * `download_url` is a path on this API that re-authorises per request -- the
+ * student who attached it, or whoever may mark it. There is no storage key in
+ * the payload to render, which is the point of the table that replaced the
+ * old JSON column.
+ */
+function AttachedFiles({
+  files,
+  label = "Attached files",
+}: {
+  files: SubmissionFileResponse[];
+  label?: string;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
+        {files.map((file) => (
+          <li key={file.public_id} className="flex items-center gap-2 px-3 py-1.5">
+            <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-sm" title={file.filename}>
+              {file.filename}
+            </span>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              {formatBytes(file.size)}
+            </span>
+            <a
+              href={apiPath(file.download_url)}
+              download={file.filename}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Download className="size-3.5" aria-hidden />
+              <span className="sr-only sm:not-sr-only">Download</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SubmitPanel({ assignment }: { assignment: AssignmentResponse }) {
+  const queryClient = useQueryClient();
   const [content, setContent] = useState("");
+  const picker = useRef<HTMLInputElement>(null);
+  const takesFiles = assignment.submission_type === "FILE_UPLOAD";
+
+  /*
+   * The files are uploaded before the work is submitted, not with it.
+   *
+   * The submit endpoint carries the written answer only; attachments go to
+   * `.../attachments` one at a time and are claimed when the submission is
+   * written. That is what lets the server own the storage key -- the old
+   * shape had the *client* name a `path` in the submit body, so a submission
+   * could cite bytes nobody had written.
+   */
+  const attached = useQuery({
+    queryKey: ["assignments", assignment.public_id, "attachments"],
+    queryFn: () =>
+      api.get<SubmissionFileResponse[]>(
+        `/assignments/${segment(assignment.public_id)}/attachments`,
+      ),
+    enabled: takesFiles,
+  });
+
+  const refreshFiles = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["assignments", assignment.public_id, "attachments"],
+    });
+
+  const upload = useApiMutation<SubmissionFileResponse[], FileList>({
+    mutationFn: async (chosen) => {
+      const saved: SubmissionFileResponse[] = [];
+      // Sequentially: a dropped folder of twenty should not open twenty
+      // connections, and a per-file refusal is easier to attribute.
+      for (const file of Array.from(chosen)) {
+        const form = new FormData();
+        form.append("file", file);
+        saved.push(
+          await api.post<SubmissionFileResponse>(
+            `/assignments/${segment(assignment.public_id)}/attachments`,
+            { body: form },
+          ),
+        );
+      }
+      return saved;
+    },
+    success: (saved) => `Attached ${saved.length === 1 ? "1 file" : saved.length + " files"}.`,
+    onSuccess: () => {
+      void refreshFiles();
+      if (picker.current) picker.current.value = "";
+    },
+  });
+
+  const remove = useApiMutation<void, string>({
+    mutationFn: (fileId) => api.delete<void>(`/submission-files/${segment(fileId)}`),
+    success: "File removed.",
+    onSuccess: () => void refreshFiles(),
+  });
+
+  const files = attached.data ?? [];
+  const canSubmit = content.trim() !== "" || files.length > 0;
 
   const submit = useApiMutation<SubmissionResponse, string>({
     mutationFn: (text) =>
@@ -177,22 +289,88 @@ function SubmitPanel({ assignment }: { assignment: AssignmentResponse }) {
       }),
     success: "Submitted.",
     invalidate: [["assignments"], ["submissions"], ["dashboard"]],
+    onSuccess: () => void refreshFiles(),
   });
+
+  const accept = assignment.allowed_file_types
+    ? assignment.allowed_file_types
+        .split(",")
+        .map((part) => "." + part.trim().replace(/^[.]/, ""))
+        .join(",")
+    : undefined;
 
   return (
     <Card>
       <CardHeader
         title={assignment.my_submission_id ? "Replace your submission" : "Submit your work"}
         description={
-          assignment.submission_type === "FILE_UPLOAD"
-            ? "This assignment expects a file. The API's submission endpoint takes text and file metadata but has no upload of its own -- upload the file under Resources and paste its link here."
+          takesFiles
+            ? "Attach your files, add anything you want to say, then submit. Re-submitting before the deadline replaces what you sent."
             : "Re-submitting before the deadline replaces what you sent; it does not create a second submission."
         }
       />
       <CardBody className="space-y-3">
+        {takesFiles ? (
+          <Field
+            label="Your files"
+            hint={[
+              assignment.allowed_file_types ? "Accepted: " + assignment.allowed_file_types + "." : null,
+              assignment.max_upload_mb ? "Up to " + assignment.max_upload_mb + " MB each." : null,
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {({ id }) => (
+              <div className="space-y-2">
+                <input
+                  id={id}
+                  ref={picker}
+                  type="file"
+                  multiple
+                  disabled={upload.isPending}
+                  accept={accept}
+                  className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-sm file:font-medium"
+                  onChange={(event) => {
+                    const chosen = event.target.files;
+                    if (chosen && chosen.length > 0) upload.mutate(chosen);
+                  }}
+                />
+                {upload.isPending ? (
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <InlineSpinner /> Uploading&hellip;
+                  </p>
+                ) : null}
+                {files.length > 0 ? (
+                  <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
+                    {files.map((file) => (
+                      <li key={file.public_id} className="flex items-center gap-2 px-3 py-1.5">
+                        <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className="min-w-0 flex-1 truncate text-sm">{file.filename}</span>
+                        <span className="text-2xs text-muted-foreground">
+                          {formatBytes(file.size)}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={"Remove " + file.filename}
+                          disabled={remove.isPending}
+                          onClick={() => remove.mutate(file.public_id)}
+                        >
+                          <Trash2 className="size-3.5 text-danger" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+          </Field>
+        ) : null}
+
         <Field
           label={assignment.submission_type === "LINK" ? "Link to your work" : "Your answer"}
-          required
+          required={!takesFiles}
+          hint={takesFiles ? "Optional once you have attached a file." : undefined}
         >
           {({ id }) => (
             <Textarea
@@ -206,7 +384,9 @@ function SubmitPanel({ assignment }: { assignment: AssignmentResponse }) {
         <FormActions>
           <Button
             loading={submit.isPending}
-            disabled={content.trim() === ""}
+            // The server asks the same question of both halves; this only
+            // saves the round trip in the obvious case.
+            disabled={!canSubmit}
             onClick={() => submit.mutate(content)}
           >
             <Send /> {assignment.my_submission_id ? "Replace submission" : "Submit"}
@@ -311,6 +491,34 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
           {row.graded_at ? ` · ${formatDateTime(row.graded_at, { timeZone })}` : ""}
         </span>
       ),
+    },
+    {
+      key: "files",
+      header: "Files",
+      hideBelow: "md",
+      // Downloadable from the row, not only from inside the grading dialog:
+      // a marker reading thirty scripts opens the files first and marks
+      // afterwards, and making them open a dialog per student to find out
+      // whether there is anything to read is the wrong way round.
+      cell: (row) =>
+        (row.files ?? []).length === 0 ? (
+          <span className="text-subtle-foreground">&mdash;</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1">
+            {(row.files ?? []).map((file) => (
+              <a
+                key={file.public_id}
+                href={apiPath(file.download_url)}
+                download={file.filename}
+                title={file.filename + " \u00b7 " + formatBytes(file.size)}
+                className="inline-flex max-w-40 items-center gap-1 rounded-md border border-border-subtle px-1.5 py-0.5 text-2xs hover:bg-muted"
+              >
+                <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate">{file.filename}</span>
+              </a>
+            ))}
+          </div>
+        ),
     },
     {
       key: "actions",
@@ -473,7 +681,7 @@ export default function AssignmentDetailPage({
         <Card>
           <CardHeader title="Brief" />
           <CardBody>
-            <p className="whitespace-pre-wrap break-words text-sm">{data.description}</p>
+            <RichText html={data.description} />
           </CardBody>
         </Card>
       ) : null}

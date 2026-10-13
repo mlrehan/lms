@@ -10,10 +10,12 @@ import { AttendanceStatusValues } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { Card, CardHeader } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
-import { Field, Input} from "@/components/ui/form";
+import { Field } from "@/components/ui/form";
 import { Select, optionsFromValues } from "@/components/ui/select";
 import { Stat, StatGrid } from "@/components/ui/stat";
 import { StatusBadge } from "@/components/domain/status-badge";
+import { BatchPicker } from "@/components/domain/entity-pickers";
+import { UserPicker, useCanPickUsers } from "@/components/domain/user-picker";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime } from "@/lib/format/datetime";
@@ -23,6 +25,7 @@ import { humanise } from "@/lib/utils";
 export function AttendanceRecords() {
   const timeZone = useDisplayTimeZone();
   const { limit, offset, setPage } = useListState();
+  const canPickUsers = useCanPickUsers();
   const [status, setStatus] = useState("");
   const [batchId, setBatchId] = useState("");
   const [studentId, setStudentId] = useState("");
@@ -122,32 +125,48 @@ export function AttendanceRecords() {
                placeholder="Any status" clearable options={optionsFromValues(AttendanceStatusValues, humanise)} />
             )}
           </Field>
-          <Field label="Batch id" className="w-64">
+          {/*
+            Both of these were free-text boxes asking for a raw uuid. Nobody
+            has one -- a public id appears on no screen -- so the realistic
+            input was a few letters, which the API answered with a 422 and
+            the list rendered as "Something went wrong".
+          */}
+          <Field label="Batch" className="w-64">
             {({ id }) => (
-              <Input
+              <BatchPicker
                 id={id}
-                value={batchId}
-                placeholder="Scope to one batch"
-                onChange={(event) => {
-                  setBatchId(event.target.value.trim());
+                value={batchId || null}
+                placeholder="Any batch"
+                onValueChange={(next) => {
+                  setBatchId(next ?? "");
                   setPage({ limit, offset: 0 });
                 }}
               />
             )}
           </Field>
-          <Field label="Student id" className="w-64">
-            {({ id }) => (
-              <Input
-                id={id}
-                value={studentId}
-                placeholder="Scope to one student"
-                onChange={(event) => {
-                  setStudentId(event.target.value.trim());
-                  setPage({ limit, offset: 0 });
-                }}
-              />
-            )}
-          </Field>
+          {/*
+            A student's register is already their own -- the server scopes it
+            by `ScopeResolver`, whatever the request asks for -- so filtering
+            it by student narrows a list of one. Absent rather than disabled,
+            and absent with its label, so the row does not keep a gap where
+            the field was.
+          */}
+          {canPickUsers ? (
+            <Field label="Student" className="w-64">
+              {({ id }) => (
+                <UserPicker
+                  id={id}
+                  role="STUDENT"
+                  value={studentId || null}
+                  placeholder="Any student"
+                  onChange={(next) => {
+                    setStudentId(next ?? "");
+                    setPage({ limit, offset: 0 });
+                  }}
+                />
+              )}
+            </Field>
+          ) : null}
         </div>
       </Card>
 

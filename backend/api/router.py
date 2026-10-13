@@ -26,6 +26,7 @@ from backend.api.v1 import (
     gradebook,
     grading_schemes,
     guardians,
+    managed_students,
     team,
     google_calendar,
     integrations,
@@ -71,6 +72,7 @@ router.include_router(class_performance.router)
 router.include_router(resources.router)
 router.include_router(organizations.router)
 router.include_router(guardians.router)
+router.include_router(managed_students.router)
 router.include_router(team.router)
 router.include_router(messages.router)
 router.include_router(notifications.router)

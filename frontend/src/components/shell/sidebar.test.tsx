@@ -81,13 +81,74 @@ describe("sidebar navigation matrix", () => {
 
     for (const section of NAVIGATION) {
       for (const item of section.items) {
-        const reachable = !item.permission || granted.has(item.permission);
+        const reachable =
+          (!item.permission || granted.has(item.permission)) &&
+          (!item.alsoRequires || granted.has(item.alsoRequires));
         expect({ label: item.label, shown: labels.has(item.label) }).toEqual({
           label: item.label,
           shown: reachable,
         });
       }
     }
+  });
+
+  /**
+   * Uploading and sharing is the Super Admin's, an Administrator's and a
+   * Tutor's job. Everyone else gets "Shared with me" -- the files somebody
+   * sent them -- and no way into the library, whose every control would
+   * answer 403.
+   *
+   * Written out per role rather than left to the matrix above, because the
+   * matrix only proves the link matches *whatever* permission the item
+   * names. Changing that permission back to `resource.read` would keep the
+   * matrix green and put the library in front of every student again.
+   */
+  it.each([
+    "SUPER_ADMIN",
+    "ADMIN",
+    "TUTOR",
+    "STUDENT",
+    "GUARDIAN",
+    "CORPORATE_MANAGER",
+  ] as const)("offers %s the user directory only if they administer users", (role) => {
+    renderFor(ROLE_GRANTS[role] ?? []);
+    // Browsing everyone is an administrator's screen. Reading *one* person --
+    // which a Tutor, Guardian and Corporate Manager all need, and which the
+    // pickers across the console depend on -- is `user.read` and is untouched.
+    expect(visibleLabels().includes("Users")).toBe(
+      ["SUPER_ADMIN", "ADMIN"].includes(role),
+    );
+  });
+
+  it.each([
+    ["SUPER_ADMIN", true],
+    ["ADMIN", true],
+    ["TUTOR", true],
+    ["STUDENT", false],
+    ["GUARDIAN", false],
+    ["CORPORATE_MANAGER", false],
+  ] as const)("offers %s the resource library: %s", (role, expected) => {
+    renderFor(ROLE_GRANTS[role] ?? []);
+    const labels = visibleLabels();
+    expect(labels.includes("Resources")).toBe(expected);
+    // Everyone keeps the files that were shared with them.
+    expect(labels).toContain("Shared with me");
+  });
+
+  it.each([
+    "SUPER_ADMIN",
+    "ADMIN",
+    "TUTOR",
+    "GUARDIAN",
+    "CORPORATE_MANAGER",
+    "STUDENT",
+  ] as const)("offers %s the enrolment register only if they administer people", (role) => {
+    const granted = ROLE_GRANTS[role] ?? [];
+    renderFor(granted);
+    // Every role here holds `enrollment.read` -- a student holds it to see
+    // their own -- so the grant that separates them is `user.read`.
+    expect(granted).toContain("enrollment.read");
+    expect(visibleLabels().includes("Enrollments")).toBe(granted.includes("user.read"));
   });
 
   it("gives an Administrator the read-only administration screens but not the write-only ones", () => {
@@ -128,7 +189,12 @@ describe("sidebar navigation matrix", () => {
     renderFor(ROLE_GRANTS.STUDENT ?? []);
     const labels = visibleLabels();
     expect(labels).toContain("Courses");
-    expect(labels).toContain("Enrollments"); // their own; the server scopes the rows
+    // Not Enrollments. The screen is the register of everybody else's, and
+    // its filters are people pickers a student cannot use; their own
+    // enrolments are reachable through Courses and Batches. `enrollment.read`
+    // alone could not tell them from a tutor, which is what `alsoRequires`
+    // exists for.
+    expect(labels).not.toContain("Enrollments");
     expect(labels).not.toContain("Users");
     expect(labels).not.toContain("Roles");
     expect(labels).not.toContain("Audit log");
@@ -139,18 +205,35 @@ describe("sidebar navigation matrix", () => {
 
   it("gives a Guardian read screens and no write screen", () => {
     const granted = ROLE_GRANTS.GUARDIAN ?? [];
-    // A guardian can look someone up -- scoped by the server to their wards.
+    // A guardian can look someone up -- scoped by the server to their wards --
+    // but the directory itself is an administrator's screen, so the nav gates
+    // on `user.update` and they do not get the link.
     expect(granted).toContain("user.read");
     expect(granted).not.toContain("user.update");
 
     renderFor(granted);
     const labels = visibleLabels();
-    expect(labels).toContain("Users");
+    expect(labels).not.toContain("Users");
     expect(labels).toContain("Guardians");
     expect(labels).not.toContain("Roles");
     expect(labels).not.toContain("System settings");
     expect(labels).not.toContain("Audit log");
     expect(labels).not.toContain("Discussions"); // no discussion.read grant
+  });
+
+  it("gives a Corporate Manager their roster and not the ability to write it", () => {
+    const granted = ROLE_GRANTS.CORPORATE_MANAGER ?? [];
+    // Reading their own assignments is theirs; choosing them is not. The
+    // screen appears either way -- `managed_student.read` is what opens it --
+    // and the Assign button is what the write grant controls.
+    expect(granted).toContain("managed_student.read");
+    expect(granted).not.toContain("managed_student.create");
+
+    renderFor(granted);
+    const labels = visibleLabels();
+    expect(labels).toContain("Manager assignments");
+    expect(labels).not.toContain("Guardians");
+    expect(labels).not.toContain("System settings");
   });
 
   it("hides a whole section when none of its screens are reachable", () => {

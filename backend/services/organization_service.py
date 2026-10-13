@@ -14,12 +14,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
 from backend.models.identity.user import User
 from backend.models.organization import (
+    ManagedStudent,
     Organization,
     OrganizationManager,
     OrganizationMembership,
@@ -255,6 +256,16 @@ class OrganizationService:
         # thing an audit would ask about.
         appointment.is_active = False
 
+        # The roster goes with it, and for the same reason the membership
+        # case above does: `is_active` used to be read on every resolution,
+        # so revoking an appointment ended that manager's access at once.
+        # The links are what grant it now, so the links are what have to go.
+        # Only the students of *this* company -- a manager who also looks
+        # after someone elsewhere keeps that.
+        unlinked = await self._unlink_manager_from_org_students(
+            manager_id=appointment.user_id, organization_id=org.id
+        )
+
         audit_service.record(
             self.session,
             action=AuditAction.PERMISSION_CHANGE,
@@ -262,7 +273,10 @@ class OrganizationService:
             actor_email=actor.email,
             entity_type="organization",
             entity_id=org.id,
-            details={"revoked_manager": appointment.user.username},
+            details={
+                "revoked_manager": appointment.user.username,
+                "manager_links_removed": unlinked,
+            },
         )
 
     # -- memberships ---------------------------------------------------------
@@ -321,6 +335,29 @@ class OrganizationService:
         )
         await self.memberships.add_and_flush(membership)
 
+        # A manager who brings somebody in gets that one person, and nobody
+        # else.
+        #
+        # Before the roster became a direct link, adding an employee made
+        # them visible to *every* manager of the company, immediately,
+        # because visibility was derived from the membership row. Dropping
+        # that entirely would leave a manager inviting an employee they then
+        # cannot see until an administrator intervenes -- a dead end in a
+        # workflow `organization.invite` exists to support.
+        #
+        # So the inviting manager is linked, and only them. The difference
+        # from the old behaviour is the one the change is about: a colleague
+        # managing the same company still sees nothing until somebody says
+        # so. An administrator adding a member links nobody, because they are
+        # not the person who will be looking after them.
+        linked_to_actor = False
+        if await self._is_active_manager_of(user_id=actor.id, organization_id=org.id):
+            self.session.add(
+                ManagedStudent(manager_id=actor.id, student_id=user.id)
+            )
+            await self.session.flush()
+            linked_to_actor = True
+
         audit_service.record(
             self.session,
             action=AuditAction.CREATE,
@@ -332,6 +369,7 @@ class OrganizationService:
                 "organization": org.name,
                 "employee": user.username,
                 "status": status.value,
+                "assigned_to_inviter": linked_to_actor,
             },
         )
         return await self.memberships.get_by_public_id_full(membership.public_id)  # type: ignore[return-value]
@@ -371,6 +409,26 @@ class OrganizationService:
         if new_status is OrganizationMembershipStatus.ACTIVE and membership.joined_at is None:
             membership.joined_at = datetime.now(UTC)
 
+        unlinked = 0
+        if new_status is OrganizationMembershipStatus.REMOVED:
+            # Leaving the company ends the managers' access, and it has to be
+            # done explicitly now.
+            #
+            # It used to happen by itself: visibility was derived from this
+            # row, so a REMOVED status stopped resolving. With the roster held
+            # in `manager_students`, nothing would notice -- a former employee
+            # would keep showing up on their old manager's dashboard, with
+            # their current coursework, indefinitely. That is the single
+            # safety property most easily lost in a change like this one, so
+            # it is enforced here and asserted by a test.
+            #
+            # Scoped to *this organization's* managers: a link made by another
+            # company's manager was never justified by this employment and is
+            # not theirs to lose.
+            unlinked = await self._unlink_from_org_managers(
+                student_id=membership.user_id, organization_id=org.id
+            )
+
         audit_service.record(
             self.session,
             action=AuditAction.UPDATE,
@@ -378,11 +436,55 @@ class OrganizationService:
             actor_email=actor.email,
             entity_type="organization_membership",
             entity_id=membership.id,
-            details={"status": f"{current.value} -> {new_status.value}"},
+            details={
+                "status": f"{current.value} -> {new_status.value}",
+                **({"manager_links_removed": unlinked} if unlinked else {}),
+            },
         )
         return membership
 
     # -- helpers -------------------------------------------------------------
+
+    async def _is_active_manager_of(self, *, user_id: int, organization_id: int) -> bool:
+        stmt = select(OrganizationManager.id).where(
+            OrganizationManager.user_id == user_id,
+            OrganizationManager.organization_id == organization_id,
+            OrganizationManager.is_active.is_(True),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def _unlink_from_org_managers(self, *, student_id: int, organization_id: int) -> int:
+        """Drop this student's links to every manager of this organization.
+
+        Returns how many went, for the audit entry -- "the membership was
+        removed" and "and four managers lost sight of them" are different
+        facts, and the second is the one an access review asks about.
+        """
+        managers = select(OrganizationManager.user_id).where(
+            OrganizationManager.organization_id == organization_id
+        )
+        result = await self.session.execute(
+            delete(ManagedStudent).where(
+                ManagedStudent.student_id == student_id,
+                ManagedStudent.manager_id.in_(managers),
+            )
+        )
+        return int(result.rowcount or 0)
+
+    async def _unlink_manager_from_org_students(
+        self, *, manager_id: int, organization_id: int
+    ) -> int:
+        """Drop this manager's links to every member of this organization."""
+        members = select(OrganizationMembership.user_id).where(
+            OrganizationMembership.organization_id == organization_id
+        )
+        result = await self.session.execute(
+            delete(ManagedStudent).where(
+                ManagedStudent.manager_id == manager_id,
+                ManagedStudent.student_id.in_(members),
+            )
+        )
+        return int(result.rowcount or 0)
 
     async def _load_user(self, public_id: uuid.UUID) -> User:
         stmt = select(User).where(User.public_id == public_id)

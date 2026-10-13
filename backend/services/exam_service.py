@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.logging import get_logger
 from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
 from backend.models.exam import Exam, ExamInvigilator, ExamResult
@@ -26,6 +27,7 @@ from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.course_service import CourseService
+from backend.services.gradebook_service import GradeBookService
 from backend.services.assessment_scope import (
     AssessmentScopeResolver,
     AssessmentTarget,
@@ -34,7 +36,10 @@ from backend.services.assessment_scope import (
 from backend.core.notification_types import NotificationType
 from backend.services.notification_service import NotificationService
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import Roles
+from backend.utils.enums import GradeComponentType, Roles
+
+
+logger = get_logger(__name__)
 
 
 class ExamService:
@@ -403,7 +408,53 @@ class ExamService:
         )
 
         rows = await self.results.existing_by_student(exam.id)
+        for row in rows.values():
+            await self._record_in_gradebook(exam, row)
         return sorted(rows.values(), key=lambda r: r.id)
+
+    async def _record_in_gradebook(self, exam: Exam, result: ExamResult) -> None:
+        """Put a recorded exam mark into the grade book straight away (§47).
+
+        The third and last of the marking paths to be wired -- quizzes and
+        coursework came first. Until this, an exam mark only reached the grade
+        book when somebody pressed Sync, so the grade book disagreed with the
+        mark sheet it derives from for as long as nobody did.
+
+        **At recording, not at publication**, which reads backwards against
+        §47's wording but is the only choice that keeps the two writers in
+        agreement: `_sync_exams` writes every result that has a mark,
+        published or not. Holding back here would mean the next sweep
+        introduced rows this path had declined to write, and the grade book
+        would change without anything being marked. Releasing a mark to the
+        student is a separate act and stays that way -- `is_published` governs
+        what the student sees, not what the institution has recorded.
+
+        **The row the sweep would have written**, out of the exam's own
+        `total_marks`, through the same `record_component`. A course-scoped
+        exam has no `batch_id`, and `record_component` then fans the mark out
+        across the student's active cohorts of that course, exactly as
+        sweeping each batch in turn would.
+
+        Fail-open: the mark has been recorded and must not be lost because a
+        derived row could not be written. `sync_batch` is the reconciler.
+        """
+        if result.marks_obtained is None:
+            return
+        try:
+            await GradeBookService(self.session).record_component(
+                student_id=result.student_id,
+                course_id=exam.course_id,
+                batch_id=exam.batch_id,
+                component_type=GradeComponentType.FINAL_EXAM,
+                reference_id=result.id,
+                score=Decimal(str(result.marks_obtained)),
+                max_score=Decimal(str(exam.total_marks)),
+            )
+        except Exception:  # noqa: BLE001 - a derived row must not undo a mark
+            logger.exception(
+                "Failed to record exam result in the grade book",
+                extra={"exam_result_id": result.id},
+            )
 
     async def publish_results(
         self, public_id: uuid.UUID, is_published: bool, *, actor: User

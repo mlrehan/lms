@@ -63,6 +63,12 @@ class RecordingView:
     session: BatchSession
     resource: Resource | None
     playback_url: str | None
+    #: A path on this API that re-checks permission and then hands the browser
+    #: on to the provider's player, for framing inside the session page. Given
+    #: to everyone who may read the session, which is the audience entitled to
+    #: watch the class back.
+    embed_url: str | None
+    #: The provider's own URL, in the clear. Staff only -- see `recording`.
     external_url: str | None
 
 
@@ -93,18 +99,34 @@ class SessionService:
         batch_public_id: uuid.UUID | None = None,
         starts_after: datetime | None = None,
         starts_before: datetime | None = None,
+        tutor_public_id: uuid.UUID | None = None,
+        student_public_id: uuid.UUID | None = None,
         mine_only: bool = False,
     ) -> tuple[Sequence[BatchSession], int]:
         batch_id = None
         if batch_public_id is not None:
             batch_id = (await self.batches.get(batch_public_id, actor=actor)).id
 
+        async def person(public_id: uuid.UUID | None) -> int | None:
+            if public_id is None:
+                return None
+            found = (
+                await self.session.execute(select(User.id).where(User.public_id == public_id))
+            ).scalar_one_or_none()
+            # An unknown id narrows to nothing. A filter that quietly does not
+            # apply shows the whole timetable and reads as "this person takes
+            # every class".
+            return found if found is not None else -1
+
         scope = await self.scopes.visible_session_ids(actor)
         return await self.sessions.search(
             params,
             scope=scope,
             batch_id=batch_id,
-            tutor_id=actor.id if mine_only else None,
+            # `mine_only` is the tutor's own timetable and wins over a filter:
+            # both narrow the same column, and the caller cannot be two people.
+            tutor_id=actor.id if mine_only else await person(tutor_public_id),
+            student_id=await person(student_public_id),
             starts_after=starts_after,
             starts_before=starts_before,
         )
@@ -249,11 +271,25 @@ class SessionService:
     ) -> RecordingView:
         """Where this caller may play the class back.
 
-        `playback_url` is a path on this API, not a URL to the file: every
-        request for the bytes is re-checked, so revoking someone's place in the
-        batch revokes the recording with it. `external_url` is the provider's
-        own page, which does none of that, and is therefore only ever given to
-        someone who may edit the session -- they set it.
+        Two shapes of recording, and they are watched differently.
+
+        A recording **stored in the LMS** gets `playback_url`: a path on this
+        API, not a URL to the file, so every request for the bytes is
+        re-checked and revoking someone's place in the batch revokes the
+        recording with it.
+
+        A recording that lives on the **provider** (a Zoom cloud recording,
+        say) cannot be served that way -- the signed media URL behind Zoom's
+        player is bound to Zoom's own session and refuses our server outright.
+        So it gets `embed_url`, which is also a path on this API: it re-checks
+        permission on every request and then hands the browser on to the
+        provider's player, which the session page frames. The point of the
+        indirection is that the provider's URL is not in this payload and not
+        in the page's own DOM, and that the only route to it is one that
+        checks, each time, that this caller is still entitled to the class.
+
+        `external_url` is that same provider URL in the clear, for staff only.
+        They set it, and they need to be able to check what they entered.
         """
         row = await self.get(public_id, actor=actor)
 
@@ -271,7 +307,8 @@ class SessionService:
                 )
             ).scalar_one_or_none()
 
-        if stored is not None and audit:
+        watchable = stored is not None or bool(row.recording_link)
+        if watchable and audit:
             # Recorded here rather than on the byte stream: a player issues a
             # request per seek, and a viewer who scrubs through an hour would
             # otherwise write dozens of rows saying the same thing. The
@@ -284,7 +321,11 @@ class SessionService:
                 actor_email=actor.email,
                 entity_type="batch_session",
                 entity_id=row.id,
-                details={"resource_id": stored.id, "name": stored.name},
+                details=(
+                    {"resource_id": stored.id, "name": stored.name}
+                    if stored is not None
+                    else {"source": "provider_link"}
+                ),
             )
 
         return RecordingView(
@@ -293,8 +334,30 @@ class SessionService:
             playback_url=(
                 f"/sessions/{row.public_id}/recording/stream" if stored else None
             ),
+            # A stored recording is the better answer and wins: it plays
+            # inside our own player, with no download control we do not
+            # control. The provider embed is what is offered when that is all
+            # there is.
+            embed_url=(
+                f"/sessions/{row.public_id}/recording/embed"
+                if stored is None and row.recording_link
+                else None
+            ),
             external_url=row.recording_link if self.can_manage(actor) else None,
         )
+
+    async def resolve_recording_embed(self, public_id: uuid.UUID, *, actor: User) -> str:
+        """Authorise watching, and hand back the provider URL to redirect to.
+
+        Separate from `recording` so the redirect is its own authorised act:
+        the browser asks for this when it frames the player, and a caller who
+        has since lost the class is refused here rather than at the end of a
+        token's life.
+        """
+        row = await self.get(public_id, actor=actor)
+        if not row.recording_link:
+            raise NotFoundError("No recording is published for this class.")
+        return row.recording_link
 
     async def resolve_recording_stream(
         self, public_id: uuid.UUID, *, actor: User

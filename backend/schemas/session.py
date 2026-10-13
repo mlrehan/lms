@@ -34,7 +34,12 @@ class JoinFields(APIModel):
         ),
     )
     has_recording: bool = Field(
-        default=False, description="True when a recording exists to play back."
+        default=False,
+        description=(
+            "True when this caller has a recording to watch -- either one "
+            "stored in the LMS or one on the provider that the session page "
+            "can frame."
+        ),
     )
 
 
@@ -224,6 +229,16 @@ class SessionRecordingResponse(APIModel):
             "same way it composes everything else. Streams the recording after "
             "re-checking permission on every request, including every seek. "
             "Present only for recordings stored in the LMS."
+        ),
+    )
+    embed_url: str | None = Field(
+        default=None,
+        description=(
+            "Relative to the API root, like `playback_url`. Frame this to "
+            "watch a recording that lives on the provider: the path re-checks "
+            "permission on every request and then redirects to the player. "
+            "Present only when there is no recording stored in the LMS -- a "
+            "stored one plays in our own player and wins."
         ),
     )
     external_url: str | None = Field(

@@ -193,9 +193,74 @@ class SharedResourceResponse(APIModel):
     level: ResourcePermissionLevel = Field(
         description="What the recipient may do with it."
     )
-    shared_with_username: str | None = None
-    shared_by_username: str | None = None
+    shared_with_user_id: uuid.UUID | None = None
+    shared_with_name: str | None = Field(
+        default=None,
+        description=(
+            "The recipient's name. Never their login name: in this deployment "
+            "that is their email address, and a share list is not a place to "
+            "publish one."
+        ),
+    )
+    shared_with_role: str | None = None
+    shared_by_name: str | None = None
     created_at: datetime
+    # Enough for a viewer to choose how to render the file without a second
+    # request per row. The list screen draws a type icon and a filter from
+    # these, and the viewer decides which renderer to mount -- both before any
+    # of the bytes are fetched, which is the point.
+    resource_type: ResourceType | None = None
+    mime_type: str | None = None
+    size: int | None = None
+
+
+class SharePlacement(APIModel):
+    """One cohort a candidate belongs to, from the sharer's point of view."""
+
+    batch_code: str | None = None
+    course_title: str | None = None
+
+
+class ShareCandidateResponse(APIModel):
+    """A person who may be given a file, and enough to tell them apart.
+
+    Carries no email address and no login name by construction -- there is no
+    field for one, which is the difference between a response that declines to
+    populate a leak and one that cannot express it.
+    """
+
+    public_id: uuid.UUID
+    name: str
+    role: str = Field(description="Administrator, Tutor, Student, Guardian or Manager.")
+    placements: list[SharePlacement] = Field(
+        default_factory=list,
+        description="Batches and courses this person is in, within the sharer's own scope.",
+    )
+    relation: str | None = Field(
+        default=None,
+        description='How a guardian reaches this list, e.g. "Guardian of Jane Doe".',
+    )
+    more_placements: int = Field(
+        default=0, description="Cohorts beyond the ones listed."
+    )
+
+
+class BulkShareRequest(RequestModel):
+    """Several files, several people, one decision."""
+
+    resource_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=100, description="Files to share."
+    )
+    user_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=200, description="People to share them with."
+    )
+    level: ResourcePermissionLevel = Field(
+        default=ResourcePermissionLevel.VIEW,
+        description=(
+            "What the recipients may do. VIEW lets them read or watch it in "
+            "place; DOWNLOAD hands over the bytes. Defaults to the narrower."
+        ),
+    )
 
 
 class ShareResourceRequest(RequestModel):

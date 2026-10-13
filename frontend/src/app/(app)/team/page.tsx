@@ -18,7 +18,10 @@ import { formatDateTime } from "@/lib/format/datetime";
 import { cn } from "@/lib/utils";
 
 /**
- * The people in the caller's care: a corporate manager's employees, or a guardian's wards.
+ * The people in the caller's care: the students assigned to a corporate manager, or a guardian's wards.
+ *
+ * A manager's list is their assignments, not their company's payroll -- working for the same employer puts
+ * nobody here.
  *
  * The server decides who appears (the caller's own scope; there is nothing here to tamper with) and it never
  * sends an email address or phone number, so this page shows how people are doing, not how to reach them.

@@ -55,6 +55,7 @@ from backend.services import audit_service
 from backend.core.permissions import Action as _Act, Module as _Mod, perm as _perm
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
+from backend.services.resource_audience import ResourceShareAudience
 from backend.services.course_service import CourseService
 from backend.services.scope import ScopeResolver
 from backend.storage import get_storage
@@ -760,12 +761,25 @@ class ResourceService:
     #: document that can carry script, and both execute in this origin if served
     #: inline -- which would turn "preview the file a tutor shared" into session
     #: theft. They are downloadable, just not rendered.
+    #:
+    #: The two OOXML entries are here for the same reason the two above are
+    #: not, read the other way round. **The browser never interprets them**:
+    #: the console fetches the bytes with `fetch`, unzips them, parses the XML
+    #: with `DOMParser` (which executes nothing) and builds elements from the
+    #: result. Nothing is ever handed to `innerHTML`, and the response still
+    #: carries `nosniff` and the sandbox CSP, so a crafted `.docx` has nothing
+    #: to be interpreted *as*. The legacy binary `.doc` and `.xls` stay out:
+    #: they are not ZIPs, the console cannot read them, and admitting a type
+    #: nothing can render would turn a clear "download this" into a parse
+    #: error.
     PREVIEWABLE_TYPES: frozenset[str] = frozenset({
         "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp",
         "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm",
         "video/mp4", "video/webm", "video/ogg", "video/quicktime",
-        "text/plain", "text/markdown", "text/csv",
+        "text/plain", "text/markdown", "text/csv", "text/tab-separated-values",
     })
 
     @classmethod
@@ -931,18 +945,20 @@ class ResourceService:
         read it, but nothing ever set it, so every share took the server default
         and "let them watch it without keeping a copy" could not be expressed --
         which is the whole of what the brief asks for.
+
+        **Who may receive it is checked here, not in the picker.** Holding
+        `resource.update` used to mean a tutor could share any file they
+        managed with any user id in the system -- a colleague's whole class,
+        or a corporate manager at an unrelated employer -- because the request
+        body named the recipients and nothing read it back against a rule.
+        `ResourceShareAudience` is that rule, and it is the same one the
+        picker is drawn from, so the list a sharer sees and the list the
+        server accepts cannot drift apart.
         """
         resource = await self.get(public_id, actor=actor)
         await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
 
-        stmt = select(User).where(User.public_id.in_(list(user_public_ids)))
-        users = list((await self.session.execute(stmt)).scalars().unique().all())
-        missing = set(user_public_ids) - {u.public_id for u in users}
-        if missing:
-            raise ValidationError(
-                "Unknown user(s).",
-                details={"unknown_users": sorted(str(m) for m in missing)},
-            )
+        users = await ResourceShareAudience(self.session).resolve(actor, list(user_public_ids))
 
         if resource.is_restricted:
             # Sharing is how staff material travels, so it is allowed -- but
@@ -982,9 +998,94 @@ class ResourceService:
             actor_email=actor.email,
             entity_type="resource",
             entity_id=resource.id,
-            details={"shared_with": sorted(u.username for u in users), "level": level.value},
+            details={
+                # The audit trail records *who*, by stable id, not by login
+                # name -- which in this deployment is an email address, and
+                # the one thing a share must not copy into another table.
+                "shared_with": sorted(str(u.public_id) for u in users),
+                "level": level.value,
+            },
         )
         return await self.shares.for_resource(resource.id)
+
+    async def share_many(
+        self,
+        resource_public_ids: Sequence[uuid.UUID],
+        user_public_ids: Sequence[uuid.UUID],
+        *,
+        actor: User,
+        level: ResourcePermissionLevel = ResourcePermissionLevel.VIEW,
+    ) -> list[SharedResource]:
+        """Hand several files to several people in one act.
+
+        All or nothing, and that is the point: "share this week's material
+        with the class" is one decision, and a partial result -- four of six
+        files delivered, with no indication which two were refused -- leaves
+        the sharer believing they did something they did not. Every file is
+        authorised and every recipient resolved before the first row is
+        written, so the refusal arrives before anything has happened.
+
+        One pass over the audience rather than one per file: the answer cannot
+        change within a request, and asking six times is six times the work for
+        the same answer.
+        """
+        if not resource_public_ids:
+            raise ValidationError("Choose at least one file to share.")
+
+        users = await ResourceShareAudience(self.session).resolve(actor, list(user_public_ids))
+
+        resources: list[Resource] = []
+        for resource_public_id in dict.fromkeys(resource_public_ids):
+            resource = await self.get(resource_public_id, actor=actor)
+            await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
+            resources.append(resource)
+
+        restricted = [r for r in resources if r.is_restricted]
+        if restricted:
+            blocked = [u for u in users if not self.may_see_restricted(u)]
+            if blocked:
+                raise ValidationError(
+                    "Some of these files are staff-only and cannot be shared with "
+                    "these people.",
+                    details={"files": sorted(r.name or str(r.public_id) for r in restricted)},
+                )
+
+        written: list[SharedResource] = []
+        for resource in resources:
+            for user in users:
+                existing = await self.shares.existing(resource_id=resource.id, user_id=user.id)
+                if existing is not None:
+                    existing.level = level
+                    continue
+                row = SharedResource(
+                    resource_id=resource.id,
+                    shared_with_user_id=user.id,
+                    shared_by_user_id=actor.id,
+                    level=level,
+                    created_at=datetime.now(UTC),
+                )
+                self.session.add(row)
+                written.append(row)
+        await self.session.flush()
+
+        for resource in resources:
+            audit_service.record(
+                self.session,
+                action=AuditAction.UPDATE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource",
+                entity_id=resource.id,
+                details={
+                    "shared_with": sorted(str(u.public_id) for u in users),
+                    "level": level.value,
+                },
+            )
+
+        rows: list[SharedResource] = []
+        for resource in resources:
+            rows.extend(await self.shares.for_resource(resource.id))
+        return rows
 
     async def unshare(
         self, public_id: uuid.UUID, user_public_id: uuid.UUID, *, actor: User

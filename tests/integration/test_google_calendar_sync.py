@@ -31,7 +31,7 @@ from backend.models.guardian import StudentGuardian
 from backend.models.attendance import Attendance
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
-from backend.models.organization import Organization, OrganizationManager
+from backend.models.organization import ManagedStudent, Organization, OrganizationManager
 from backend.models.user_sync import UserSyncRun
 from backend.services.google_calendar_service import GoogleCalendarSyncService
 from backend.utils.enums import CourseStatus, EnrollmentStatus, Platforms, UserStatus
@@ -208,9 +208,15 @@ def env():
             s.add(u)
             return u
 
-        tutor, s1, s2, s3, noemail, gdn, mgr, tutor2 = (
+        tutor, s1, s2, s3, noemail, gdn, mgr, mgr2, tutor2 = (
             user("tutor", f"{tag}.tutor@t.test", "TUTOR"), user("s1", f"{tag}.s1@t.test", "STUDENT"), user("s2", f"{tag}.s2@t.test", "STUDENT"),
             user("s3", f"{tag}.s3@t.test", "STUDENT"), user("noemail", None, "STUDENT"), user("guardian", f"{tag}.guardian@t.test"), user("manager", f"{tag}.manager@t.test"),
+            # A second manager of the same company, linked to nobody. Without
+            # them the fixture cannot tell "the student's manager" from "a
+            # manager of the company that paid" -- one person satisfies both,
+            # and a mutation restoring the old company-wide query survived
+            # exactly that way.
+            user("manager2", f"{tag}.manager2@t.test"),
             user("tutor2", f"{tag}.tutor2@t.test", "TUTOR"))
         user("boss", f"{tag}.boss@t.test", "SUPER_ADMIN")
         user("admin", f"{tag}.admin@t.test", "ADMIN")
@@ -222,7 +228,13 @@ def env():
         s.add_all([course, org])
         await s.flush()
         s.add_all([StudentGuardian(guardian_id=gdn.id, student_id=s1.id, created_at=datetime.now(timezone.utc)),
-                   OrganizationManager(organization_id=org.id, user_id=mgr.id, is_active=True, invited_at=datetime.now(timezone.utc))])
+                   OrganizationManager(organization_id=org.id, user_id=mgr.id, is_active=True, invited_at=datetime.now(timezone.utc)),
+                   # The manager is invited because s2 is *theirs*, not because
+                   # s2's enrolment was paid for by a company they manage. The
+                   # enrolment keeps its sponsoring organization below, which
+                   # is what the company is still for.
+                   ManagedStudent(manager_id=mgr.id, student_id=s2.id, created_at=datetime.now(timezone.utc)),
+                   OrganizationManager(organization_id=org.id, user_id=mgr2.id, is_active=True, invited_at=datetime.now(timezone.utc))])
 
         def batch(code: str) -> Batch:
             b = Batch(batch_code=f"{tag}-{code}", course_id=course.id, start_date=date.today(), end_date=date.today() + timedelta(days=7), is_active=True, capacity=25)
@@ -261,6 +273,7 @@ def env():
                 await s.execute(text(f"DELETE FROM batch_sessions WHERE batch_id IN {ids}"), p)
                 await s.execute(text("DELETE FROM batches WHERE batch_code LIKE :c"), p)
                 await s.execute(text("DELETE FROM student_guardians WHERE guardian_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
+                await s.execute(text("DELETE FROM manager_students WHERE manager_id IN (SELECT id FROM users WHERE username LIKE :u) OR student_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organization_managers WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organizations WHERE name LIKE :t"), p)
                 await s.execute(text("DELETE FROM courses WHERE title LIKE :t"), p)
@@ -312,7 +325,13 @@ def test_a_first_sync_builds_one_calendar_with_one_event_per_session(env) -> Non
     assert len(e.fake.events(cal)) == 2 and run.stats["events"]["created"] == 2 and run.stats["calendars"]["created"] == 1
 
 
-def test_guests_are_the_tutor_the_enrolled_their_guardians_and_their_employers_managers(env) -> None:
+def test_guests_are_the_tutor_the_enrolled_their_guardians_and_their_managers(env) -> None:
+    """Their *own* manager, not every manager of the company that paid.
+
+    A guest list is outward-facing: resolving managers through the enrolment's
+    sponsoring organization put every manager of a large employer on the
+    invitation for a class none of their own people were in.
+    """
     e = env
     e.sync()
     for event in e.fake.events(e.fake.only_calendar()).values():

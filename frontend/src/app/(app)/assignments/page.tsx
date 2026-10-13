@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus } from "lucide-react";
@@ -17,13 +17,14 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, Switch } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { Field, FormGrid, Input, Textarea } from "@/components/ui/form";
+import { Field, FormGrid, Input } from "@/components/ui/form";
 import { FormSelect } from "@/components/ui/form-controls";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative, fromLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { RichTextEditor } from "@/components/domain/rich-text";
 import { CoursePicker, FormBatchPicker, FormCoursePicker } from "@/components/domain/entity-pickers";
 
 const createSchema = z
@@ -269,8 +270,27 @@ function CreateAssignmentDialog({
               )}
             </Field>
           </FormGrid>
-          <Field label="Description">
-            {({ id }) => <Textarea id={id} {...register("description")} />}
+          <Field
+            label="Description"
+            hint="The brief students read. Tables and code blocks are kept; styling and scripts are stripped on save."
+          >
+            {() => (
+              // Through `Controller`, not `register`: the editor's value is
+              // HTML it emits on change, not an input's `value`/`onChange`
+              // pair, so there is no DOM node for the form to register.
+              <Controller
+                control={control}
+                name="description"
+                render={({ field }) => (
+                  <RichTextEditor
+                    ariaLabel="Description"
+                    placeholder="What the students have to do"
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            )}
           </Field>
           <fieldset className="space-y-3 rounded-lg border border-border-subtle p-3">
             <legend className="px-1 text-xs font-medium text-muted-foreground">

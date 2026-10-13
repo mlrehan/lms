@@ -8,7 +8,7 @@ import { api } from "@/lib/api/client";
 import type { PageSessionSummary, SessionSummary } from "@/lib/api/types";
 import { useListState } from "@/lib/api/hooks";
 import { PageHeader } from "@/components/page-header";
-import { Badge, Card, Switch } from "@/components/ui/primitives";
+import { Badge, Card } from "@/components/ui/primitives";
 import { Column, DataTable, Pagination } from "@/components/ui/data-table";
 import { Field, Input } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -16,16 +16,21 @@ import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, fromLocalInputValue } from "@/lib/format/datetime";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { humanise } from "@/lib/utils";
+import { BatchPicker } from "@/components/domain/entity-pickers";
+import { UserPicker, useCanPickUsers } from "@/components/domain/user-picker";
 
 export default function TimetablePage() {
   const timeZone = useDisplayTimeZone();
   const { limit, offset, setPage } = useListState(25);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [mineOnly, setMineOnly] = useState(false);
+  const canPickUsers = useCanPickUsers();
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [tutorId, setTutorId] = useState<string | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null);
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ["sessions", "list", from, to, mineOnly, limit, offset],
+    queryKey: ["sessions", "list", from, to, batchId, tutorId, studentId, limit, offset],
     queryFn: () =>
       api.get<PageSessionSummary>("/sessions", {
         query: {
@@ -33,7 +38,9 @@ export default function TimetablePage() {
           // resolved against the display timezone before being sent.
           starts_after: from ? fromLocalInputValue(`${from}T00:00`, timeZone) : undefined,
           starts_before: to ? fromLocalInputValue(`${to}T23:59`, timeZone) : undefined,
-          mine_only: mineOnly || undefined,
+          batch_id: batchId || undefined,
+          tutor_id: tutorId || undefined,
+          student_id: studentId || undefined,
           limit,
           offset,
         },
@@ -126,6 +133,55 @@ export default function TimetablePage() {
               />
             )}
           </Field>
+          <Field label="Batch" className="w-56">
+            {({ id }) => (
+              <BatchPicker
+                id={id}
+                value={batchId}
+                placeholder="Any batch"
+                onValueChange={(next) => {
+                  setBatchId(next);
+                  setPage({ limit, offset: 0 });
+                }}
+              />
+            )}
+          </Field>
+          {/* Both are for narrowing a timetable that already spans other
+              people. A student's does not, and they cannot look anybody up,
+              so the fields -- and their labels -- are absent rather than
+              present and unusable. */}
+          {canPickUsers ? (
+            <>
+              <Field label="Tutor" className="w-56">
+                {({ id }) => (
+                  <UserPicker
+                    id={id}
+                    role="TUTOR"
+                    value={tutorId}
+                    placeholder="Any tutor"
+                    onChange={(next) => {
+                      setTutorId(next);
+                      setPage({ limit, offset: 0 });
+                    }}
+                  />
+                )}
+              </Field>
+              <Field label="Student" className="w-56">
+                {({ id }) => (
+                  <UserPicker
+                    id={id}
+                    role="STUDENT"
+                    value={studentId}
+                    placeholder="Any student"
+                    onChange={(next) => {
+                      setStudentId(next);
+                      setPage({ limit, offset: 0 });
+                    }}
+                  />
+                )}
+              </Field>
+            </>
+          ) : null}
           <Field label="To" className="w-44">
             {({ id }) => (
               <Input
@@ -139,16 +195,15 @@ export default function TimetablePage() {
               />
             )}
           </Field>
-          <label className="flex items-center gap-2 pb-2 text-sm">
-            <Switch
-              checked={mineOnly}
-              onCheckedChange={(checked) => {
-                setMineOnly(checked);
-                setPage({ limit, offset: 0 });
-              }}
-            />
-            Only sessions I teach
-          </label>
+          {/*
+            "Only sessions I teach" used to live here. It was never offered
+            to anybody it helped: a student teaches nothing, an administrator
+            teaches nothing, and a tutor's timetable is already scoped to the
+            batches they take sessions in. The server-side scope
+            (`ScopeResolver.visible_session_ids`) is what enforces that, and
+            it does so whether or not a switch is on -- so removing the
+            control narrows nothing and clears a row of the filter bar.
+          */}
         </div>
 
         {isPending ? (

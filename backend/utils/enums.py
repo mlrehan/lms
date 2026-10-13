@@ -129,6 +129,14 @@ class QuestionType(str, Enum):
     TRUE_FALSE = "TRUE_FALSE"
     SHORT_ANSWER = "SHORT_ANSWER"
     ESSAY = "ESSAY"
+    # Four more a machine can mark, each needing its own answer-key shape --
+    # which is why they are separate types rather than one "other". The
+    # column is a VARCHAR (`native_enum=False`) with no CHECK constraint, so
+    # adding a member needs no DDL; existing rows are untouched.
+    FILL_BLANK = "FILL_BLANK"
+    MATCHING = "MATCHING"
+    ORDERING = "ORDERING"
+    NUMERIC = "NUMERIC"
 
 
 class ExamType(str, Enum):

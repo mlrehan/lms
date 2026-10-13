@@ -45,6 +45,11 @@ class Module:
     GRADE: Final = "grade"
     ORGANIZATION: Final = "organization"
     GUARDIAN: Final = "guardian"
+    # Who a Corporate Manager may see. Separate from `organization`, which is
+    # about the company itself -- appointing a manager and handing them a
+    # student are different acts, and an institution may well delegate the
+    # first without the second.
+    MANAGED_STUDENT: Final = "managed_student"
     ANNOUNCEMENT: Final = "announcement"
     MESSAGE: Final = "message"
     TEAM: Final = "team"
@@ -256,6 +261,7 @@ _register(
     "corporate organizations",
 )
 _register(Module.GUARDIAN, _CRUD, "guardian relationships")
+_register(Module.MANAGED_STUDENT, _CRUD, "corporate manager-student links")
 _register(Module.ANNOUNCEMENT, _CRUD, "announcements")
 _register(Module.MESSAGE, (Action.CREATE, Action.READ, Action.DELETE), "messages")
 _register(Module.DISCUSSION, _CRUD, "course discussions")
@@ -286,7 +292,7 @@ _register(Module.GOOGLE, (Action.READ, Action.UPDATE, Action.SYNC), "the Google 
 # The scope modifier. Every other permission answers "may this role do X at
 # all"; this one answers "to which rows". Without it a caller sees only what
 # they are connected to -- a Tutor their own batches' students, a Guardian
-# their wards, a Corporate Manager their organization's employees. With it
+# their wards, a Corporate Manager the students assigned to them. With it
 # they see the whole institution.
 #
 # Deliberately a permission rather than a check on role name: an institution
@@ -373,7 +379,8 @@ _ADMIN: set[str] = (
         Module.USER, Module.COURSE, Module.BATCH, Module.SESSION,
         Module.ENROLLMENT, Module.ATTENDANCE, Module.RESOURCE,
         Module.ASSIGNMENT, Module.QUIZ, Module.EXAM, Module.GRADE,
-        Module.ORGANIZATION, Module.GUARDIAN, Module.ANNOUNCEMENT,
+        Module.ORGANIZATION, Module.GUARDIAN, Module.MANAGED_STUDENT,
+        Module.ANNOUNCEMENT,
         Module.DISCUSSION, Module.ACADEMIC, Module.REPORT,
         # Running the academic office is daily operations: an administrator
         # views performance and issues transcripts. Defining the weighting
@@ -431,6 +438,11 @@ _ADMIN: set[str] = (
     # Other people's email addresses, phone numbers and login names (which are often the email). Super Admin only;
     # an Administrator works from names.
     perm(Module.USER, Action.VIEW_CONTACT),
+    # What a course costs. Commercial terms belong to whoever sets them, and
+    # every other role -- Administrator included -- runs the academic side
+    # without needing the margin on screen. Withdrawn from Student, Guardian
+    # and Corporate Manager above for the same reason; a Tutor never held it.
+    perm(Module.COURSE, Action.VIEW_PRICING),
     # Taking attendance for a tutor is a Super Admin act: it puts words in the assigned tutor's mouth, and is audited.
     perm(Module.ATTENDANCE, Action.OVERRIDE),
     # Deciding that examinations are 45% of the mark re-grades every student
@@ -535,10 +547,9 @@ _TUTOR: set[str] = {
 # --- Student ---------------------------------------------------------------
 _STUDENT: set[str] = {
     perm(Module.COURSE, Action.READ),
-    # The catalogue, and what it costs: both are on the public website, and a
-    # student who cannot browse courses cannot see what is on offer.
+    # The catalogue, but not what it costs: a student browsing courses is a
+    # different thing from a student seeing the commercial terms.
     perm(Module.COURSE, Action.VIEW_ALL),
-    perm(Module.COURSE, Action.VIEW_PRICING),
     perm(Module.BATCH, Action.READ),
     perm(Module.SESSION, Action.READ),
     perm(Module.ENROLLMENT, Action.READ),
@@ -578,22 +589,28 @@ _STUDENT: set[str] = {
 
 
 # --- Corporate Manager -----------------------------------------------------
-# Scoped in the service layer to their own organization's employees, via
-# organization_managers -> organization_memberships. The grants below say
-# "may do this at all"; the org join says "to these people".
+# Scoped in the service layer to the students linked to them, via
+# `manager_students` -- the same shape as a guardian and their wards. The
+# grants below say "may do this at all"; the link says "to these people".
+#
+# `managed_student.read` and not `.create`: a manager seeing their own roster
+# is reading, and a manager adding somebody to it would be asserting their
+# own access. That is an administrator's act, exactly as creating a guardian
+# link is -- "these thirty are mine" is a claim, and the institution has to
+# be the one making it.
 _CORPORATE_MANAGER: set[str] = {
     perm(Module.TEAM, Action.READ),
+    perm(Module.MANAGED_STUDENT, Action.READ),
     perm(Module.ORGANIZATION, Action.READ),
     perm(Module.ORGANIZATION, Action.UPDATE),
     perm(Module.ORGANIZATION, Action.INVITE),
     perm(Module.ORGANIZATION, Action.ENROLL),
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),
-    # Browsing is how a manager finds a course to enrol employees into -- the
-    # reason the catalogue is open at all -- and the price is what they are
-    # committing to.
+    # Browsing is how a manager finds a course to enrol employees into, which
+    # is the reason the catalogue is open at all. Pricing is quoted to them
+    # rather than read off the screen -- see `_SUPER_ADMIN_ONLY_PRICING`.
     perm(Module.COURSE, Action.VIEW_ALL),
-    perm(Module.COURSE, Action.VIEW_PRICING),
     perm(Module.BATCH, Action.READ),
     # Attendance records reference a session, so without `session.read` a
     # manager could see that an employee missed a class but not look the
@@ -635,7 +652,6 @@ _GUARDIAN: set[str] = {
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),
     perm(Module.COURSE, Action.VIEW_ALL),
-    perm(Module.COURSE, Action.VIEW_PRICING),
     # A guardian can already see which batch their ward is in via the
     # enrollment record; without `batch.read` they could see the batch's name
     # but not open it, which is an inconsistency rather than a safeguard.
@@ -686,6 +702,6 @@ ROLE_DESCRIPTIONS: Final[dict[str, str]] = {
     Roles.ADMIN.value: "Day-to-day operations. Cannot modify system settings or manage permissions.",
     Roles.TUTOR.value: "Teaches assigned courses and batches; grades work and records attendance.",
     Roles.STUDENT.value: "Enrolled learner.",
-    Roles.CORPORATE_MANAGER.value: "Manages a corporate organization's employees and their enrollments.",
+    Roles.CORPORATE_MANAGER.value: "Manages the students assigned to them, and their enrollments.",
     Roles.GUARDIAN.value: "Views the progress of linked students.",
 }

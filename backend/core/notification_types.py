@@ -45,9 +45,11 @@ class NotificationType:
     QUIZ_PUBLISHED: Final = "quiz_published"
     EXAM_SCHEDULED: Final = "exam_scheduled"
     EXAM_RESULT_PUBLISHED: Final = "exam_result_published"
+    QUIZ_RESULT_PUBLISHED: Final = "quiz_result_published"
     ENROLLED_IN_BATCH: Final = "enrolled_in_batch"
     ENROLLMENT_STATUS_CHANGED: Final = "enrollment_status_changed"
     GUARDIAN_LINKED: Final = "guardian_linked"
+    MANAGER_LINKED: Final = "manager_linked"
     # A guardian's own copies. Deliberately distinct codes rather than sending a student's type to their
     # guardian: every description below is written in the second person about its subject ("Your submission
     # was graded"), so reusing them would tell a parent that *their* work was marked, and would leave the two
@@ -56,6 +58,7 @@ class NotificationType:
     WARD_ASSIGNMENT_PUBLISHED: Final = "ward_assignment_published"
     WARD_ENROLLED_IN_BATCH: Final = "ward_enrolled_in_batch"
     WARD_EXAM_RESULT_PUBLISHED: Final = "ward_exam_result_published"
+    WARD_QUIZ_RESULT_PUBLISHED: Final = "ward_quiz_result_published"
     ACCOUNT_LOCKED: Final = "account_locked"
     ACCOUNT_UNLOCKED: Final = "account_unlocked"
     SESSIONS_REVOKED: Final = "sessions_revoked"
@@ -92,6 +95,10 @@ _KINDS: tuple[NotificationKind, ...] = (
         "An examination result was published.",
     ),
     NotificationKind(
+        NotificationType.QUIZ_RESULT_PUBLISHED, "grades",
+        "A quiz result was released.",
+    ),
+    NotificationKind(
         NotificationType.ENROLLED_IN_BATCH, "enrollment",
         "You were enrolled in a batch.",
     ),
@@ -102,6 +109,10 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.GUARDIAN_LINKED, "enrollment",
         "A guardian was linked to your account, or you to a student.",
+    ),
+    NotificationKind(
+        NotificationType.MANAGER_LINKED, "enrollment",
+        "A corporate manager was linked to your account, or you to a student.",
     ),
     # --- guardians ----------------------------------------------------------
     # "Ward" matches the vocabulary the data model already uses: `User.wards` is the guardian side of
@@ -118,6 +129,10 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.WARD_ENROLLED_IN_BATCH, "guardian",
         "A student in your care was enrolled in a batch.",
+    ),
+    NotificationKind(
+        NotificationType.WARD_QUIZ_RESULT_PUBLISHED, "guardian",
+        "A student in your care had a quiz result released.",
     ),
     NotificationKind(
         NotificationType.WARD_EXAM_RESULT_PUBLISHED, "guardian",

@@ -29,7 +29,7 @@ class TeamMemberSummary(APIModel):
     organization: str | None = None
     department: str | None = None
     employee_code: str | None = None
-    relationship: str | None = Field(default=None, description="A guardian's relationship to this ward.")
+    relationship: str | None = Field(default=None, description="How the caller is connected to this person -- a guardian's relationship to their ward, or a manager's to their student.")
 
     enrollments_active: int = 0
     enrollments_completed: int = 0

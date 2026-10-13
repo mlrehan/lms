@@ -34,6 +34,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 /**
@@ -200,6 +202,8 @@ export interface DriveActions {
   onDownload: (resource: ResourceSummary) => void;
   onCopy: (resource: ResourceSummary) => void;
   onShare: (resource: ResourceSummary) => void;
+  /** Everything currently ticked, handed over in one act. */
+  onShareMany: (resourceIds: string[]) => void;
   onDelete: (resource: ResourceSummary) => void;
   onRestore: (resource: ResourceSummary) => void;
   onRenameFolder: (folder: FolderSummary) => void;
@@ -275,10 +279,37 @@ export function DriveView({
   formatDate: (iso: string) => string;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  /*
+   * Ticked files, for "share these six with this class".
+   *
+   * Separate from `selected`, which is the one file whose details are open --
+   * conflating them would mean opening a file's details cleared the batch
+   * somebody was halfway through assembling.
+   *
+   * Pruned during render against what is actually listed: navigating into a
+   * folder, searching, or emptying the bin would otherwise leave ticks for
+   * rows nobody can see, and the count in the bar would not match anything on
+   * screen. Done here rather than in an effect so the bar never paints a
+   * number it is about to correct.
+   */
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set());
+  const onScreen = new Set(resources.map((r) => r.public_id));
+  const live = [...ticked].filter((id) => onScreen.has(id));
+  if (live.length !== ticked.size) setTicked(new Set(live));
+
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [fileDragDepth, setFileDragDepth] = useState(0);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+
+  function toggleTick(resourceId: string, next: boolean): void {
+    setTicked((current) => {
+      const copy = new Set(current);
+      if (next) copy.add(resourceId);
+      else copy.delete(resourceId);
+      return copy;
+    });
+  }
 
   /** A desktop file drag, as opposed to a resource being dragged within the app. */
   function isFileDrag(event: DragEvent): boolean {
@@ -330,6 +361,34 @@ export function DriveView({
       {fileDragDepth > 0 ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-accent/80">
           <p className="text-sm font-medium text-accent-foreground">Drop files to upload here</p>
+        </div>
+      ) : null}
+
+      {ticked.size > 0 ? (
+        // Sticky, because a selection assembled by scrolling through sixty
+        // files is useless if the only way to act on it has scrolled away.
+        // The click is stopped: the surface clears `selected` on click, and
+        // the bar sits inside it.
+        <div
+          onClick={(event) => event.stopPropagation()}
+          className="sticky top-0 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-accent/80 px-3 py-2 backdrop-blur"
+        >
+          <span className="text-sm font-medium">
+            {ticked.size} {ticked.size === 1 ? "file" : "files"} selected
+          </span>
+          <div className="ms-auto flex items-center gap-2">
+            <Button type="button" size="sm" onClick={() => actions.onShareMany([...ticked])}>
+              <Share2 className="size-4" aria-hidden /> Share
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setTicked(new Set())}
+            >
+              Clear
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -393,6 +452,12 @@ export function DriveView({
                     inBin={inBin}
                     formatDate={formatDate}
                     actions={actions}
+                    ticked={ticked.has(resource.public_id)}
+                    onTicked={
+                      canWrite && !inBin
+                        ? (next) => toggleTick(resource.public_id, next)
+                        : undefined
+                    }
                     onSelect={() => setSelected(resource.public_id)}
                     onContextMenu={(event) =>
                       openMenu(event, { x: event.clientX, y: event.clientY, resource })
@@ -408,6 +473,11 @@ export function DriveView({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-muted-foreground">
+                {canWrite && !inBin ? (
+                  <th className="w-8 px-3 py-2">
+                    <span className="sr-only">Select</span>
+                  </th>
+                ) : null}
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="hidden px-3 py-2 text-left font-medium sm:table-cell">Type</th>
                 <th className="hidden px-3 py-2 text-left font-medium md:table-cell">Added</th>
@@ -425,6 +495,7 @@ export function DriveView({
                   selected={selected === folder.public_id}
                   dragOver={dragOverFolder === folder.public_id}
                   canWrite={canWrite}
+                  selectable={canWrite && !inBin}
                   formatDate={formatDate}
                   onSelect={() => setSelected(folder.public_id)}
                   onOpen={() => actions.onOpenFolder(folder)}
@@ -451,6 +522,12 @@ export function DriveView({
                   inBin={inBin}
                   formatDate={formatDate}
                   actions={actions}
+                  ticked={ticked.has(resource.public_id)}
+                  onTicked={
+                    canWrite && !inBin
+                      ? (next) => toggleTick(resource.public_id, next)
+                      : undefined
+                  }
                   onSelect={() => setSelected(resource.public_id)}
                   onContextMenu={(event) =>
                     openMenu(event, { x: event.clientX, y: event.clientY, resource })
@@ -559,7 +636,9 @@ function FolderTile(props: FolderTargetProps) {
   );
 }
 
-function FolderRow(props: FolderTargetProps & { formatDate: (iso: string) => string }) {
+function FolderRow(
+  props: FolderTargetProps & { formatDate: (iso: string) => string; selectable?: boolean },
+) {
   const drop = useFolderDropTarget(props);
   return (
     <tr
@@ -579,6 +658,10 @@ function FolderRow(props: FolderTargetProps & { formatDate: (iso: string) => str
             : "hover:bg-muted/50",
       )}
     >
+      {/* A folder cannot be shared, but its row still has to line up with the
+          header's select column -- a missing cell shifts every column after
+          it by one for the whole folder block. */}
+      {props.selectable ? <td className="w-8 px-3 py-2" /> : null}
       <td className="px-3 py-2">
         <button
           type="button"
@@ -651,6 +734,9 @@ function FolderMenu({
 interface FileProps {
   resource: ResourceSummary;
   selected: boolean;
+  /** Ticked for a bulk action. Absent in the bin, where there is none. */
+  ticked?: boolean;
+  onTicked?: (next: boolean) => void;
   canWrite: boolean;
   inBin: boolean;
   formatDate: (iso: string) => string;
@@ -699,6 +785,21 @@ function FileTile(props: FileProps) {
       )}
     >
       <div className="flex items-start gap-2">
+        {props.onTicked ? (
+          <span
+            // The click must not reach the tile, whose job is to select and
+            // open; ticking a file for a bulk share is a different act.
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            className="mt-0.5"
+          >
+            <Checkbox
+              checked={props.ticked ?? false}
+              onCheckedChange={(next) => props.onTicked?.(next === true)}
+              aria-label={`Select ${props.resource.name ?? "Untitled"}`}
+            />
+          </span>
+        ) : null}
         <ResourceIcon
           type={props.resource.resource_type}
           mime={props.resource.mime_type}
@@ -737,6 +838,19 @@ function FileRow(props: FileProps) {
         props.selected ? "bg-accent/60" : "hover:bg-muted/50",
       )}
     >
+      {props.onTicked ? (
+        <td
+          className="w-8 px-3 py-2"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <Checkbox
+            checked={props.ticked ?? false}
+            onCheckedChange={(next) => props.onTicked?.(next === true)}
+            aria-label={`Select ${props.resource.name ?? "Untitled"}`}
+          />
+        </td>
+      ) : null}
       <td className="px-3 py-2">
         <button
           type="button"

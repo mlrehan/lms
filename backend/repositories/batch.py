@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Sequence
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from backend.models.batch import Batch
+from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
@@ -55,6 +55,8 @@ class BatchRepository(BaseRepository[Batch]):
         query: str | None = None,
         sort: str | None = None,
         descending: bool = False,
+        tutor_id: int | None = None,
+        student_id: int | None = None,
     ) -> tuple[Sequence[Batch], int]:
         stmt = scope.apply(self._base(), Batch.id)
         # The course title is searchable and sortable, so the list joins it once (it is also loaded, for display).
@@ -75,6 +77,17 @@ class BatchRepository(BaseRepository[Batch]):
             stmt = stmt.where(Batch.course_id == course_id)
         if is_active is not None:
             stmt = stmt.where(Batch.is_active.is_(is_active))
+        if tutor_id is not None:
+            # "Teaches" is taking sessions for it, the same definition
+            # `ScopeResolver._taught_batch_ids` uses -- being tutor of record
+            # for the course deliberately does not grant a cohort.
+            stmt = stmt.where(
+                Batch.id.in_(select(BatchSession.batch_id).where(BatchSession.tutor_id == tutor_id))
+            )
+        if student_id is not None:
+            stmt = stmt.where(
+                Batch.id.in_(select(Enrollments.batch_id).where(Enrollments.student_id == student_id))
+            )
 
         column = SORTABLE.get(sort or "", Batch.batch_code)
         ordering = column.desc().nulls_last() if descending else column.asc().nulls_last()

@@ -12,7 +12,11 @@ from backend.core.errors import ConflictError, NotFoundError, ValidationError
 from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
 from backend.models.identity.user import User
-from backend.models.organization import OrganizationManager, OrganizationMembership
+from backend.models.organization import (
+    ManagedStudent,
+    OrganizationManager,
+    OrganizationMembership,
+)
 from backend.repositories.batch import BatchRepository
 from backend.repositories.enrollment import ACTIVE_STATUSES, EnrollmentRepository
 from backend.schemas.base import PageParams
@@ -69,6 +73,7 @@ class EnrollmentService:
         actor: User,
         batch_public_id: uuid.UUID | None = None,
         student_public_id: uuid.UUID | None = None,
+        tutor_public_id: uuid.UUID | None = None,
         status: EnrollmentStatus | None = None,
     ) -> tuple[Sequence[Enrollments], int]:
         batch_id = None
@@ -83,12 +88,18 @@ class EnrollmentService:
             student = await self._load_user(student_public_id)
             student_id = student.id
 
+        tutor_id = None
+        if tutor_public_id is not None:
+            tutor = await self._load_user(tutor_public_id)
+            tutor_id = tutor.id
+
         visibility = await self.scopes.enrollment_visibility(actor)
         return await self.enrollments.search(
             params,
             visibility=visibility,
             batch_id=batch_id,
             student_id=student_id,
+            tutor_id=tutor_id,
             status=status,
         )
 
@@ -230,28 +241,39 @@ class EnrollmentService:
     async def _sponsoring_organization(self, *, actor: User, student: User) -> int | None:
         """Which organization, if any, is sponsoring this enrollment.
 
-        Set only when a Corporate Manager enrols one of their own employees.
-        It is derived from the actor's managed organization rather than
-        accepted from the request body -- a caller-supplied organization_id
-        would let anyone attribute an enrollment to a company they have
-        nothing to do with.
+        Two separate questions, and they used to be one:
+
+        * **May this manager enrol this student?** Their roster says so, and
+          only their roster -- `manager_students`, the same table everything
+          else about a manager's reach reads. Enrolling somebody who is not
+          yours is refused rather than absorbed, exactly as before; the
+          message now names the real relationship instead of the company.
+        * **Who is paying?** The student's own current employment. Still
+          derived, never accepted from the request body -- a caller-supplied
+          organization_id would let anyone attribute an enrollment to a
+          company they have nothing to do with.
+
+        A managed student with no employment on file is enrolled **unsponsored**
+        rather than refused. That combination could not happen before and is
+        ordinary now: the link is what the manager has, and a company is a
+        separate fact that may simply not be recorded.
         """
-        managed = (
-            await self.session.execute(
-                select(OrganizationManager.organization_id).where(
-                    OrganizationManager.user_id == actor.id,
-                    OrganizationManager.is_active.is_(True),
-                )
-            )
-        ).scalars().all()
-        if not managed:
+        if not await self._is_corporate_manager(actor):
             return None
+
+        managed = await self.session.execute(
+            select(ManagedStudent.id).where(
+                ManagedStudent.manager_id == actor.id,
+                ManagedStudent.student_id == student.id,
+            )
+        )
+        if managed.scalar_one_or_none() is None:
+            raise ConflictError("This student is not one of yours to enrol.")
 
         membership = (
             await self.session.execute(
                 select(OrganizationMembership).where(
                     OrganizationMembership.user_id == student.id,
-                    OrganizationMembership.organization_id.in_(list(managed)),
                     OrganizationMembership.status.in_(
                         (
                             OrganizationMembershipStatus.INVITED,
@@ -263,14 +285,21 @@ class EnrollmentService:
             )
         ).scalar_one_or_none()
 
-        if membership is None:
-            # The actor manages an organization but this student is not in
-            # it. Refused rather than silently enrolling them unsponsored --
-            # a manager acting outside their own roster is a mistake worth
-            # reporting, not absorbing.
-            raise ConflictError("This student is not an employee of your organization.")
+        return membership.organization_id if membership else None
 
-        return membership.organization_id
+    async def _is_corporate_manager(self, actor: User) -> bool:
+        """Whether this caller enrols people as a manager at all.
+
+        Asked by appointment rather than by role name, so the answer stays
+        true for a custom role doing the same job -- and so an administrator
+        enrolling somebody is never put through the roster check, which is
+        not their constraint.
+        """
+        stmt = select(OrganizationManager.id).where(
+            OrganizationManager.user_id == actor.id,
+            OrganizationManager.is_active.is_(True),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
 
     # -- lifecycle -----------------------------------------------------------
 

@@ -102,14 +102,26 @@ function PublishControls({ sessionId, attached }: { sessionId: string; attached:
  * our own API, re-authorised on every request, including every seek. There is
  * no URL in this DOM that works for someone who is not in the batch.
  *
- * `external_url` is the provider's own page (a Zoom cloud recording). The API
- * only ever populates it for callers who may edit the session -- they set it --
- * so rendering it here is not a leak; if the field is absent, nothing shows.
+ * A recording that lives on the provider instead -- a Zoom cloud recording,
+ * which is how most classes here are published -- cannot be served that way:
+ * the signed media URL behind Zoom's player is bound to Zoom's own session and
+ * refuses our server. So the API hands back `embed_url`, another path on our
+ * API, and it is framed below. The provider's URL is in neither the response
+ * nor this DOM, and the only route to it re-checks on every request that this
+ * viewer still has the class.
  *
- * This is not DRM. Anything a browser plays can be captured, and `nodownload`
- * only hides the player's own save button. What it does buy is that the obvious
- * routes -- copy the link, share the URL, open it signed out -- all lead back
- * through the permission check rather than around it.
+ * `external_url` is that provider URL in the clear. The API only ever
+ * populates it for callers who may edit the session -- they set it -- so
+ * rendering it is not a leak; if the field is absent, nothing shows.
+ *
+ * This is not DRM, and the two cases do not promise the same thing. Anything a
+ * browser plays can be captured, and `nodownload` only hides our player's own
+ * save button; an embedded provider player comes with whatever controls that
+ * provider offers, including a download control we do not own. What the
+ * indirection buys in both cases is that the obvious routes -- copy the link,
+ * share the URL, open it signed out -- lead back through the permission check
+ * rather than around it. A recording that must not be downloadable at all
+ * belongs in the library, where we serve the bytes ourselves.
  */
 export function ClassRecording({
   sessionId,
@@ -141,29 +153,53 @@ export function ClassRecording({
 
   const audio = (data?.mime_type ?? "").startsWith("audio/");
 
+  if (data?.embed_url && !data.playback_url) {
+    return (
+      <div className={cn("space-y-2", className)}>
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border-subtle bg-black">
+          <iframe
+            // Our own path, not the provider's URL: same-origin, so the
+            // browser sends the session cookie and the redirect behind it is
+            // authorised per request.
+            src={apiPath(data.embed_url)}
+            title={data.name ?? "Class recording"}
+            // The player inside needs to be able to ask for the whole screen;
+            // `allowFullScreen` is what lets it, and the 16:9 box above is what
+            // keeps it watchable at every width before it does.
+            allow="fullscreen; autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="no-referrer"
+            className="absolute inset-0 size-full border-0"
+          />
+        </div>
+        <p className="text-2xs text-subtle-foreground">
+          {data.name ?? "Class recording"} &middot; played inside the LMS, re-checked on every
+          request
+        </p>
+        {data.external_url ? (
+          <a
+            href={data.external_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-2xs text-subtle-foreground underline-offset-4 hover:underline"
+          >
+            <ExternalLink className="size-3" />
+            Provider recording (staff only)
+          </a>
+        ) : null}
+        {canManage ? <PublishControls sessionId={sessionId} attached={false} /> : null}
+      </div>
+    );
+  }
+
   if (!data?.playback_url) {
     return (
       <div className={className}>
         <EmptyState
           icon={<Film />}
           title="No recording yet"
-          description={
-            data?.external_url
-              ? "This class has a provider link but no recording stored in the LMS. Students cannot watch it back here until one is attached."
-              : "When a recording is published to this class it will play here."
-          }
+          description="When a recording is published to this class it will play here."
         />
-        {data?.external_url ? (
-          <a
-            href={data.external_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 text-xs text-primary underline-offset-4 hover:underline"
-          >
-            <ExternalLink className="size-3.5" />
-            Open the provider&rsquo;s recording
-          </a>
-        ) : null}
         {canManage ? <PublishControls sessionId={sessionId} attached={false} /> : null}
       </div>
     );
@@ -195,7 +231,7 @@ export function ClassRecording({
             preload="metadata"
             onContextMenu={(event) => event.preventDefault()}
             playsInline
-            className="max-h-[70vh] w-full"
+            className="h-auto max-h-[80svh] w-full"
           >
             Your browser cannot play this recording.
           </video>

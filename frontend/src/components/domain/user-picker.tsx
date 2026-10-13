@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import type { PageUserSummary, UserSummary } from "@/lib/api/types";
 import { Combobox, useDebounced } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/form";
 import type { SelectOption } from "@/components/ui/select";
 import { useSession } from "@/lib/auth/session";
 
@@ -24,10 +23,26 @@ import { useSession } from "@/lib/auth/session";
  * label" logic. All three now live in one place, so the async-search behaviour
  * is identical here, in the tenant picker and in anything added later.
  *
- * A caller without `user.read` cannot search at all. Rather than showing an
- * empty picker that looks broken, it degrades to a plain identifier field,
- * which still works for someone who was given an id to enter.
+ * **A caller without `user.read` gets nothing at all.**
+ *
+ * This used to degrade to a plain identifier field, on the reasoning that
+ * somebody handed an id could still type it. Nobody is ever handed one: a
+ * public id appears in no screen a student can reach. What the fallback
+ * actually produced was a free-text box that sent whatever was typed as a
+ * `student_id`, and the API -- which expects a uuid -- answered **422**. The
+ * list then rendered its error state, whose title is "Something went wrong".
+ * Typing a single letter was enough.
+ *
+ * So the control is absent instead. `useCanPickUsers()` lets a call site drop
+ * the surrounding `Field` as well, rather than leaving a labelled gap where
+ * the input used to be.
  */
+
+/** Whether this caller can look people up at all. */
+export function useCanPickUsers(): boolean {
+  return useSession().permissions.has("user.read");
+}
+
 export function UserPicker({
   value,
   onChange,
@@ -106,17 +121,10 @@ export function UserPicker({
     return list;
   }, [search.data, known.data]);
 
-  if (!canSearch) {
-    return (
-      <Input
-        id={id}
-        value={value ?? ""}
-        disabled={disabled}
-        placeholder="User identifier"
-        onChange={(event) => onChange(event.target.value || null, null)}
-      />
-    );
-  }
+  // Nothing, rather than a box whose every keystroke is a 422. Call sites
+  // check `useCanPickUsers()` too so the label goes with it; this is the
+  // backstop for one that forgets.
+  if (!canSearch) return null;
 
   return (
     <Combobox

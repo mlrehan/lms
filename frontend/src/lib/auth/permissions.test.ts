@@ -64,7 +64,10 @@ describe("route permission map", () => {
   it("matches the longest prefix, so a detail route inherits its list's gate", () => {
     expect(permissionForPath("/courses")).toBe("course.read");
     expect(permissionForPath("/courses/abc-123")).toBe("course.read");
-    expect(permissionForPath("/users/abc-123")).toBe("user.read");
+    // The directory and its detail pages are gated on `user.update`: a
+    // Tutor or Guardian reads the people they are responsible for through
+    // /team, not by browsing everyone.
+    expect(permissionForPath("/users/abc-123")).toBe("user.update");
   });
 
   it("leaves unlisted routes ungated here, because the server gates them", () => {

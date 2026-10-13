@@ -28,15 +28,16 @@ import pytest
 from sqlalchemy import select, text
 
 from backend.core.config import get_settings
-from backend.core.errors import NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.db.manager import DatabaseManager
 from backend.models.course import Course, TutorCourse
 from backend.models.enrollment import Enrollments
-from backend.models.batch import Batch
+from backend.models.batch import Batch, BatchSession
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.role import Role
 from backend.models.organization import (
     Organization,
+    ManagedStudent,
     OrganizationManager,
     OrganizationMembership,
 )
@@ -49,6 +50,7 @@ from backend.utils.enums import (
     CourseStatus,
     EnrollmentStatus,
     OrganizationMembershipStatus,
+    Platforms,
     ResourcePermissionLevel as L,
     ResourceType,
     UserStatus,
@@ -115,6 +117,21 @@ def env():
         s.add(OrganizationMembership(organization_id=org.id, user_id=people["student"].id,
                                      status=OrganizationMembershipStatus.ACTIVE,
                                      joined_at=datetime.now(UTC)))
+        # Employment puts them at the same company; the link is what lets the
+        # manager see them. Both, because this suite is about what a manager
+        # may open, not about how they came to be one.
+        s.add(ManagedStudent(manager_id=people["manager"].id, student_id=people["student"].id,
+                             relationship_type="Line manager", created_at=datetime.now(UTC)))
+
+        # The tutor takes a class in this batch, which is what "teaches" means
+        # here: `_taught_batch_ids` reads sessions, not course ownership, and
+        # being tutor of record has deliberately not granted a cohort since
+        # that narrowing. Without this the fixture's tutor teaches nobody, and
+        # the share tests below would pass or fail for reasons that have
+        # nothing to do with restricted media.
+        s.add(BatchSession(batch_id=batch.id, tutor_id=people["tutor"].id,
+                           session_start_time=datetime.now(UTC),
+                           duration_minutes=60, platform=Platforms.Zoom))
 
         s.add(Enrollments(batch_id=batch.id, student_id=people["student"].id,
                           enrollment_date=datetime.now(UTC), status=EnrollmentStatus.CONFIRMED,
@@ -149,10 +166,12 @@ def env():
                 await s.execute(text(f"DELETE FROM resource_versions WHERE resource_id IN {res}"), p)
                 await s.execute(text("DELETE FROM resources WHERE name LIKE :n"), p)
                 await s.execute(text("DELETE FROM enrollments WHERE batch_id IN (SELECT id FROM batches WHERE batch_code LIKE :c)"), p)
+                await s.execute(text("DELETE FROM batch_sessions WHERE batch_id IN (SELECT id FROM batches WHERE batch_code LIKE :c)"), p)
                 await s.execute(text("DELETE FROM batches WHERE batch_code LIKE :c"), p)
                 await s.execute(text("DELETE FROM tutor_courses WHERE course_id IN (SELECT id FROM courses WHERE code LIKE :c)"), p)
                 await s.execute(text("DELETE FROM courses WHERE code LIKE :c"), p)
                 await s.execute(text("DELETE FROM student_guardians WHERE guardian_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
+                await s.execute(text("DELETE FROM manager_students WHERE manager_id IN (SELECT id FROM users WHERE username LIKE :u) OR student_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organization_managers WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organization_memberships WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organizations WHERE code LIKE :c"), p)
@@ -248,12 +267,26 @@ def test_sharing_staff_material_with_a_student_is_refused(env) -> None:
     assert env.run(f)
 
 
-def test_sharing_it_with_another_tutor_works(env) -> None:
+def test_sharing_it_sideways_to_a_colleague_is_refused(env) -> None:
+    """Staff material travels *upwards*, not between peers.
+
+    A tutor may still hold it -- `resource.view_restricted` is theirs -- and
+    may pass it to an administrator. Who else sees a class's material is the
+    institution's decision, not a courtesy between colleagues.
+    """
     def f(s):  # noqa: ANN001, ANN202
         async def go():  # noqa: ANN202
             made = await env.build(s)
+            with pytest.raises(AuthorizationError):
+                await ResourceService(s).share(
+                    made["staff"].public_id, [made["other_tutor"].public_id], actor=made["tutor"]
+                )
+            # Not vacuous: the same file reaches an administrator.
+            admin = (await s.execute(
+                select(User).join(User.roles).where(Role.name.in_(("SUPER_ADMIN", "ADMIN")))
+            )).scalars().first()
             rows = await ResourceService(s).share(
-                made["staff"].public_id, [made["other_tutor"].public_id], actor=made["tutor"]
+                made["staff"].public_id, [admin.public_id], actor=made["tutor"]
             )
             return [r.level for r in rows]
         return go()

@@ -7,11 +7,17 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import UploadFile
 
+from backend.core.logging import get_logger
 from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
-from backend.models.assignment import Assignment, AssignmentSubmission
+from backend.models.assignment import (
+    Assignment,
+    AssignmentSubmission,
+    AssignmentSubmissionFile,
+)
 from backend.models.enrollment import Enrollments
 from backend.models.batch import Batch
 from backend.models.identity.user import User
@@ -25,9 +31,13 @@ from backend.schemas.assignment import (
 )
 from backend.schemas.base import PageParams
 from backend.services import audit_service
+from backend.services.rich_text import sanitize_rich_text
+from backend.storage import get_storage
+from backend.storage.base import build_key
 from backend.core.notification_types import NotificationType
 from backend.services.audit_service import AuditAction
 from backend.services.integration_service import WebhookEvent, WebhookService
+from backend.services.gradebook_service import GradeBookService
 from backend.services.notification_service import NotificationService
 from backend.services.course_service import CourseService
 from backend.services.assessment_scope import (
@@ -36,7 +46,24 @@ from backend.services.assessment_scope import (
     validate as validate_scope,
 )
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import AssessmentScope, AssessmentState, SubmissionState
+from backend.utils.enums import (
+    AssessmentScope,
+    AssessmentState,
+    GradeComponentType,
+    SubmissionState,
+    SubmissionType,
+)
+
+
+logger = get_logger(__name__)
+
+#: Work a mark has already been put against. Replacing or withdrawing any of
+#: it would silently invalidate that mark, so all three paths -- re-submit,
+#: attach, remove -- ask the same question of the same set.
+_MARKED_STATES = frozenset(
+    {SubmissionState.GRADED, SubmissionState.PUBLISHED, SubmissionState.REASSESSED}
+)
+
 
 
 class AssignmentService:
@@ -128,7 +155,10 @@ class AssignmentService:
             allow_resubmission=payload.allow_resubmission,
             late_penalty_percent_per_day=payload.late_penalty_percent_per_day,
             title=payload.title,
-            description=payload.description,
+            # Formatted text, so it is re-parsed here rather than trusted.
+            # The console composes it; the server decides what is stored, and
+            # nothing downstream re-sanitises -- `rich_text` is the one place.
+            description=sanitize_rich_text(payload.description) or None,
             instructions_path=payload.instructions_path,
             due_date=payload.due_date,
             max_score=payload.max_score,
@@ -221,6 +251,9 @@ class AssignmentService:
                     details={"highest_awarded": str(highest), "requested_max": str(new_max)},
                 )
 
+        if "description" in changes:
+            changes["description"] = sanitize_rich_text(changes["description"]) or None
+
         for field, value in changes.items():
             setattr(row, field, value)
 
@@ -303,6 +336,198 @@ class AssignmentService:
                 raise NotFoundError("Submission not found.")
         return row
 
+    # -- attachments ---------------------------------------------------------
+
+    async def files_for_submissions(
+        self, submission_ids: Sequence[int]
+    ) -> dict[int, list[AssignmentSubmissionFile]]:
+        """`{submission_id: [files]}` for a page of submissions, in one query.
+
+        A per-row lookup would be one query per student on a roster of forty,
+        which is the shape of the problem `performance_service` was rewritten
+        to avoid.
+        """
+        if not submission_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(AssignmentSubmissionFile)
+                .where(AssignmentSubmissionFile.submission_id.in_(list(submission_ids)))
+                .order_by(AssignmentSubmissionFile.uploaded_at)
+            )
+        ).scalars().all()
+
+        found: dict[int, list[AssignmentSubmissionFile]] = {}
+        for row in rows:
+            if row.submission_id is not None:
+                found.setdefault(row.submission_id, []).append(row)
+        return found
+
+    async def attach_file(
+        self, assignment_public_id: uuid.UUID, *, upload: UploadFile, actor: User
+    ) -> AssignmentSubmissionFile:
+        """Store one file against the caller's own work on this assignment.
+
+        Uploaded *before* the submission exists, because that is the order a
+        student does it in: attach, check, submit. The row is claimed when
+        they submit.
+
+        The caller is always the owner -- there is no student id in the
+        request -- and the storage key is generated here, so nothing about
+        where the bytes live comes from the client. That is the whole reason
+        this replaced a JSON column of caller-supplied paths.
+        """
+        assignment = await self.get(assignment_public_id, actor=actor)
+
+        if not await self.targets.is_eligible(AssessmentTarget.of(assignment), actor.id):
+            raise ConflictError("This assignment was not set for you.")
+        if assignment.state is not AssessmentState.PUBLISHED:
+            raise ConflictError("This assignment is not open for submission.")
+        if assignment.submission_type is SubmissionType.TEXT:
+            # Offering an upload box on a text-only assignment and then
+            # refusing the file is worse than not offering it; the console
+            # hides it, and this is the half that cannot be bypassed.
+            raise ValidationError("This assignment takes a written answer, not files.")
+
+        existing = await self.submissions.get_for_student(
+            assignment_id=assignment.id, student_id=actor.id
+        )
+        if existing is not None and existing.state in _MARKED_STATES:
+            raise ConflictError("This submission has already been graded and cannot be changed.")
+
+        data = await self._read_attachment(upload, assignment)
+        key = build_key(
+            prefix=f"submissions/{assignment.public_id}/{actor.public_id}",
+            filename=upload.filename,
+        )
+        stored = await get_storage().save(key, data, content_type=upload.content_type)
+
+        row = AssignmentSubmissionFile(
+            assignment_id=assignment.id,
+            student_id=actor.id,
+            # Claimed now if the work is already in, so replacing a file on an
+            # ungraded submission does not leave the new one unattached.
+            submission_id=existing.id if existing is not None else None,
+            filename=(upload.filename or "attachment")[:255],
+            path=stored.key,
+            mime_type=stored.mime_type,
+            size=stored.size,
+            uploaded_at=datetime.now(UTC),
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def _read_attachment(self, upload: UploadFile, assignment: Assignment) -> bytes:
+        """The platform's upload rules, then the assignment's own.
+
+        A tutor may narrow both -- "PDF only, 5 MB" -- and those are the
+        limits a student was told about, so they are the ones whose refusal
+        has to name them.
+        """
+        from backend.services.resource_service import ResourceService  # circular at module scope
+
+        data = await ResourceService(self.session)._read_and_validate(upload)
+
+        if assignment.max_upload_mb:
+            cap = assignment.max_upload_mb * 1024 * 1024
+            if len(data) > cap:
+                raise ValidationError(
+                    f"This assignment accepts files up to {assignment.max_upload_mb} MB.",
+                    details={"max_bytes": cap, "received_bytes": len(data)},
+                )
+
+        allowed = [
+            part.strip().lower().lstrip(".")
+            for part in (assignment.allowed_file_types or "").split(",")
+            if part.strip()
+        ]
+        if allowed:
+            name = (upload.filename or "").lower()
+            extension = name.rsplit(".", 1)[-1] if "." in name else ""
+            if extension not in allowed:
+                raise ValidationError(
+                    "That file type is not accepted for this assignment.",
+                    details={"allowed": allowed, "given": extension or None},
+                )
+        return data
+
+    async def attachments_for(
+        self, assignment_public_id: uuid.UUID, *, actor: User
+    ) -> Sequence[AssignmentSubmissionFile]:
+        """The caller's own attachments on this assignment, submitted or not."""
+        assignment = await self.get(assignment_public_id, actor=actor)
+        rows = await self.session.execute(
+            select(AssignmentSubmissionFile)
+            .where(
+                AssignmentSubmissionFile.assignment_id == assignment.id,
+                AssignmentSubmissionFile.student_id == actor.id,
+            )
+            .order_by(AssignmentSubmissionFile.uploaded_at)
+        )
+        return rows.scalars().all()
+
+    async def remove_attachment(self, file_public_id: uuid.UUID, *, actor: User) -> None:
+        """Withdraw a file. The student's own, and only before it is marked."""
+        row = await self._attachment(file_public_id)
+        if row.student_id != actor.id:
+            # Not 403: whether somebody else's attachment exists is not this
+            # caller's to learn.
+            raise NotFoundError("Attachment not found.")
+
+        if row.submission_id is not None:
+            submission = await self.submissions.get_by_id(row.submission_id)
+            if submission is not None and submission.state in _MARKED_STATES:
+                raise ConflictError("This work has been marked and cannot be changed.")
+
+        await get_storage().delete(row.path)
+        await self.session.delete(row)
+
+    async def resolve_attachment(
+        self, file_public_id: uuid.UUID, *, actor: User
+    ) -> AssignmentSubmissionFile:
+        """Authorise a download: the student who wrote it, or whoever may mark it.
+
+        `get(assignment)` is the marker's half -- it is already scoped to the
+        courses the caller teaches and answers 404 for anything else -- so a
+        tutor cannot reach a colleague's cohort through an attachment id.
+        """
+        row = await self._attachment(file_public_id)
+        if row.student_id == actor.id:
+            return row
+
+        # The same predicate `get_submission` uses, and it has to be: an
+        # attachment *is* part of a submission, so anything that could reach
+        # the submission can reach its files and nothing else can.
+        #
+        # The first version of this asked `get(assignment)` instead, reasoning
+        # that it is scoped to the courses a caller teaches. It is not scoped
+        # that way for a *student* -- their own assignment is one they can get
+        # -- so a classmate set the same work could download anybody's
+        # coursework. Caught by the test below, not by reading it.
+        visibility = await self.scopes.work_visibility(actor)
+        if not visibility.unrestricted:
+            assignment = await self.assignments.get_by_id(row.assignment_id)
+            reachable = assignment is not None and (
+                assignment.course_id in visibility.taught_course_ids
+                or row.student_id in visibility.cared_for_student_ids
+            )
+            if not reachable:
+                raise NotFoundError("Attachment not found.")
+        return row
+
+    async def _attachment(self, file_public_id: uuid.UUID) -> AssignmentSubmissionFile:
+        row = (
+            await self.session.execute(
+                select(AssignmentSubmissionFile).where(
+                    AssignmentSubmissionFile.public_id == file_public_id
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise NotFoundError("Attachment not found.")
+        return row
+
     async def submit(
         self, assignment_public_id: uuid.UUID, payload: SubmitAssignmentRequest, *, actor: User
     ) -> AssignmentSubmission:
@@ -344,13 +569,29 @@ class AssignmentService:
             assignment_id=assignment.id, student_id=actor.id
         )
 
+        # "Something was submitted" used to be a rule on the request body, and
+        # cannot be any more: the files are uploaded separately, so the body
+        # is only ever the written part. Asked here, where both halves are
+        # visible -- otherwise an empty submission marks the student as having
+        # submitted and hands the tutor nothing to grade.
+        attached = (
+            await self.session.execute(
+                select(AssignmentSubmissionFile.id).where(
+                    AssignmentSubmissionFile.assignment_id == assignment.id,
+                    AssignmentSubmissionFile.student_id == actor.id,
+                )
+            )
+        ).first()
+        if not (payload.content or "").strip() and attached is None:
+            raise ValidationError(
+                "Write an answer or attach a file before submitting."
+            )
+
         if existing is not None:
             # Replacing marked work would silently invalidate the grade beside
             # it -- unless the tutor asked for a resubmission, which is the
             # whole point of that state.
-            marked = existing.state in {
-                SubmissionState.GRADED, SubmissionState.PUBLISHED, SubmissionState.REASSESSED
-            }
+            marked = existing.state in _MARKED_STATES
             invited = existing.state is SubmissionState.RESUBMISSION_REQUIRED
             if marked and not invited:
                 raise ConflictError(
@@ -363,7 +604,6 @@ class AssignmentService:
                 pass
 
             existing.content = payload.content
-            existing.files = payload.files
             existing.submitted_at = now
             existing.attempt_number = (existing.attempt_number or 1) + 1 if invited else existing.attempt_number
             existing.state = SubmissionState.LATE if is_late else SubmissionState.SUBMITTED
@@ -374,13 +614,27 @@ class AssignmentService:
                 student_id=actor.id,
                 submitted_at=now,
                 content=payload.content,
-                files=payload.files,
                 # Recorded at submission time, not derived on read: whether
                 # work was late is a fact about when it arrived, and a due date
                 # the tutor later extends must not retroactively rewrite it.
                 state=SubmissionState.LATE if is_late else SubmissionState.SUBMITTED,
             )
             await self.submissions.add_and_flush(row)
+
+        await self.session.flush()
+        # Claim the files uploaded before this moment. They were written with
+        # no submission -- a student attaches, then submits -- and this is
+        # what binds them to the work. Scoped to this student on this
+        # assignment, so nothing anybody else uploaded can be swept in.
+        await self.session.execute(
+            update(AssignmentSubmissionFile)
+            .where(
+                AssignmentSubmissionFile.assignment_id == assignment.id,
+                AssignmentSubmissionFile.student_id == actor.id,
+                AssignmentSubmissionFile.submission_id.is_(None),
+            )
+            .values(submission_id=row.id)
+        )
 
         audit_service.record(
             self.session,
@@ -391,6 +645,7 @@ class AssignmentService:
             entity_id=row.id,
             details={"assignment": assignment.title, "late": is_late},
         )
+
         return await self.submissions.get_by_public_id_full(row.public_id)  # type: ignore[return-value]
 
     async def grade(
@@ -454,6 +709,8 @@ class AssignmentService:
                 "state": row.state.value,
             },
         )
+
+        await self._record_in_gradebook(row, row.assignment)
 
         # The student hears about it when it is released, not when it is
         # entered. Publishing is what sends this.
@@ -582,6 +839,47 @@ class AssignmentService:
         return row
 
     # -- helpers -------------------------------------------------------------
+
+    async def _record_in_gradebook(
+        self, submission: AssignmentSubmission, assignment: Assignment
+    ) -> None:
+        """Put a marked submission into the grade book straight away (§47).
+
+        The grade book was a materialised view that only `sync_batch`
+        refreshed, so between a tutor marking work and somebody pressing Sync
+        it disagreed with the marks it derives from, and nothing said so. The
+        quiz path was wired first; this is the same hook for coursework.
+
+        **The row the sweep would have written**, through the same
+        `record_component`, so running `sync_batch` afterwards finds it
+        unchanged rather than rewriting it -- out of the assignment's own
+        `max_score`, matching `_sync_assignments`.
+
+        **Reached only with a mark set.** `grade` assigns `row.grade` from a
+        required, non-null payload field immediately above the call, so a
+        `grade is None` guard here would be unreachable -- one was written,
+        and no test could tell it from its absence. A caller added later that
+        does not hold that invariant must check before calling, as the exam
+        path does.
+
+        Fail-open: the mark has been given, and losing a derived row must not
+        undo it. `sync_batch` remains the reconciler.
+        """
+        try:
+            await GradeBookService(self.session).record_component(
+                student_id=submission.student_id,
+                course_id=assignment.course_id,
+                batch_id=assignment.batch_id,
+                component_type=GradeComponentType.ASSIGNMENT,
+                reference_id=submission.id,
+                score=Decimal(str(submission.grade)),
+                max_score=Decimal(str(assignment.max_score)),
+            )
+        except Exception:  # noqa: BLE001 - a derived row must not undo a mark
+            logger.exception(
+                "Failed to record submission in the grade book",
+                extra={"submission_id": submission.id},
+            )
 
     @staticmethod
     def _late_penalty(row: AssignmentSubmission) -> Decimal:

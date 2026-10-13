@@ -13,11 +13,12 @@ from __future__ import annotations
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.core.logging import get_logger
 from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
@@ -36,8 +37,10 @@ from backend.schemas.quiz import (
     QuestionUpdateRequest,
     QuizCreateRequest,
     QuizUpdateRequest,
+    answer_key_problem,
 )
 from backend.services import audit_service
+from backend.services.rich_text import sanitize_rich_text
 from backend.services.audit_service import AuditAction
 from backend.services.course_service import CourseService
 from backend.services.gradebook_service import GradeBookService
@@ -58,6 +61,63 @@ _SUBMIT_GRACE = timedelta(seconds=30)
 
 
 logger = get_logger(__name__)
+
+
+def _numeric(typed: str) -> str:
+    """What a person typed, as a number.
+
+    Spaces and thousands separators are not what makes an answer wrong, and
+    marking `1,000` wrong for a question whose answer is 1000 is the kind of
+    thing that makes a tutor stop trusting automatic marking.
+
+    **A comma is a decimal point when it is used like one.** Much of the
+    world writes 3,14 for 3.14, and stripping that comma as a separator would
+    silently turn it into 314 -- a correct answer marked wrong, with nothing
+    anywhere saying why. So a single comma followed by one or two digits, in a
+    string with no dot, is read as a decimal separator; every other comma is
+    grouping and is removed. `1,000` is a thousand and `3,14` is three and a
+    bit, which is what both writers meant.
+    """
+    cleaned = typed.strip().replace(" ", "").replace(" ", "")
+    if "." not in cleaned and cleaned.count(",") == 1:
+        whole, _, fraction = cleaned.partition(",")
+        if 1 <= len(fraction) <= 2 and fraction.isdigit():
+            return f"{whole}.{fraction}"
+    return cleaned.replace(",", "")
+
+
+def _normalise(text: str, *, fold: bool = True) -> str:
+    """Compare what a person typed with what an author typed.
+
+    Trailing spaces, a double space between words and a capital letter are
+    not what makes an answer wrong -- marking them wrong is the thing that
+    makes automatic text marking untrustworthy. Case folding is skipped when
+    the question says the case matters (a chemical formula, a case-sensitive
+    identifier), which is why it is a parameter rather than a rule.
+    """
+    collapsed = " ".join(text.split())
+    return collapsed.casefold() if fold else collapsed
+
+
+def _scrambled_options(question: Question, seed: str) -> list[QuestionOption]:
+    """The options in a stable but not-authored order.
+
+    Used wherever the authored order is itself the answer. A new list, never
+    a sort in place, for the same reason as `_ordered_options`.
+    """
+    options = _ordered_options(question)
+    random.Random(seed).shuffle(options)
+    return options
+
+
+def _ordered_options(question: Question) -> list[QuestionOption]:
+    """The authored option order, as a new list.
+
+    A new list rather than a sort in place: `question.options` is a mapped
+    collection, and reordering it would mark the relationship dirty and
+    invite SQLAlchemy to write a display choice back to the answer key.
+    """
+    return sorted(question.options, key=lambda o: (o.order, o.id))
 
 
 class QuizService:
@@ -311,42 +371,147 @@ class QuizService:
         quiz = await self.get(public_id, actor=actor)
         questions = list(await self.quizzes.questions_for(quiz.id))
 
-        def ordered(question: Question) -> list[QuestionOption]:
-            return sorted(question.options, key=lambda o: (o.order, o.id))
-
         attempt = await self.attempts.get_in_progress(quiz_id=quiz.id, student_id=actor.id)
         if attempt is None:
             # Not sitting it: an author previewing, or a student who has not
             # started. The canonical order is the honest answer -- inventing a
-            # shuffle here would show a different paper from the one they get.
-            return [(q, ordered(q)) for q in questions]
+            # shuffle, or drawing a sample, here would show a different paper
+            # from the one they get.
+            #
+            # **Except for the two types whose order is the answer.** An
+            # ordering question served in its authored order hands over the
+            # sequence the student is about to be asked for, and they can read
+            # this before pressing start. Seeded by the question rather than
+            # the attempt, because there is no attempt yet: that makes the
+            # scramble the same for everybody, which is fine -- what has to
+            # stay hidden is the authored order, not the fact that two
+            # students saw the same one. An author who wants the real order
+            # has the answer-key route, which exists for exactly that.
+            return [
+                (
+                    q,
+                    _scrambled_options(q, f"preview:{q.public_id}")
+                    if q.question_type in (QuestionType.ORDERING, QuestionType.MATCHING)
+                    else _ordered_options(q),
+                )
+                for q in questions
+            ]
+
+        return self._paper_for(quiz, attempt, questions)
+
+    def _paper_for(
+        self, quiz: Quiz, attempt: QuizAttempt, questions: Sequence[Question]
+    ) -> list[tuple[Question, list[QuestionOption]]]:
+        """The exact paper one sitting was served, questions and options.
+
+        **The single definition, and it has to be**: the same list decides
+        what the student is shown, what their submission is allowed to answer,
+        and what their percentage is calculated out of. Two copies of this
+        reasoning would eventually mark people against questions they were
+        never asked.
+
+        Three seeds, deliberately different, all derived from the attempt's
+        own id and never from the clock:
+
+        * `p:` draws the sample for `questions_per_attempt`. Separate from the
+          display seed so that toggling `shuffle_questions` on an unsat quiz
+          does not change *which* questions are drawn;
+        * `q:` orders the questions;
+        * `a:...:<question>` orders each question's options, per question, or
+          every question in the paper would be permuted identically and the
+          correct answer's position would be guessable from one of them.
+        """
+        drawn = self._drawn(quiz, attempt, questions)
 
         if quiz.shuffle_questions:
-            random.Random(f"q:{attempt.public_id}").shuffle(questions)
+            random.Random(f"q:{attempt.public_id}").shuffle(drawn)
 
         out: list[tuple[Question, list[QuestionOption]]] = []
-        for question in questions:
-            options = ordered(question)
-            if quiz.shuffle_answers:
-                # Seeded per question as well as per attempt, or every
-                # question in the paper would be permuted identically.
+        for question in drawn:
+            options = _ordered_options(question)
+            if question.question_type in (QuestionType.ORDERING, QuestionType.MATCHING):
+                # The authored order *is* the answer key for ORDERING, and the
+                # authored pairing is the key for MATCHING, so these are
+                # always presented scrambled -- `shuffle_answers` does not
+                # come into it. Serving them in order would be serving the
+                # answers.
+                random.Random(f"s:{attempt.public_id}:{question.id}").shuffle(options)
+            elif quiz.shuffle_answers:
                 random.Random(f"a:{attempt.public_id}:{question.id}").shuffle(options)
             out.append((question, options))
         return out
+
+    @staticmethod
+    def _drawn(
+        quiz: Quiz, attempt: QuizAttempt, questions: Sequence[Question]
+    ) -> list[Question]:
+        """`questions_per_attempt` applied: which questions this sitting got.
+
+        Null, or a number at or above the size of the bank, means the whole
+        bank -- so a tutor who sets 20 on a 12-question quiz gets 12 rather
+        than an error, which is the only sensible reading of "draw 20".
+
+        The draw is random by design even when `shuffle_questions` is off:
+        taking the first N in authored order would hand every student the same
+        subset, and a pool nobody draws differently from is not a pool.
+        """
+        pool = sorted(questions, key=lambda q: (q.order, q.id))
+        wanted = quiz.questions_per_attempt
+        if not wanted or wanted >= len(pool):
+            return pool
+
+        random.Random(f"p:{attempt.public_id}").shuffle(pool)
+        # Back into authored order afterwards: the draw decides *which*,
+        # `shuffle_questions` decides *in what order*, and conflating them
+        # would make a quiz that draws a sample always appear shuffled.
+        return sorted(pool[:wanted], key=lambda q: (q.order, q.id))
+
+    async def _assert_within_total(
+        self, quiz: Quiz, *, adding: Decimal, replacing: Decimal = Decimal("0")
+    ) -> None:
+        """Refuse marks that would take the paper past its stated total.
+
+        Only when a total was stated: `total_marks` is nullable, and a quiz
+        written before it existed has no ceiling to breach. `replacing` is the
+        points the question being edited already contributed, so lowering a
+        question on a full paper is allowed -- which is what makes the limit
+        recoverable rather than a dead end.
+        """
+        if quiz.total_marks is None:
+            return
+
+        total = Decimal(str(quiz.total_marks))
+        _, written = await self.quizzes.question_stats(quiz.id)
+        after = Decimal(str(written)) - replacing + adding
+        if after > total:
+            raise ValidationError(
+                "That would take this paper past its total.",
+                details={
+                    "total_marks": str(total),
+                    "already_written": str(Decimal(str(written)) - replacing),
+                    "remaining": str(total - (Decimal(str(written)) - replacing)),
+                    "given": str(adding),
+                },
+            )
 
     async def add_question(
         self, public_id: uuid.UUID, payload: QuestionCreateRequest, *, actor: User
     ) -> Question:
         quiz = await self.get(public_id, actor=actor)
         await self._assert_question_bank_editable(quiz)
+        await self._assert_within_total(quiz, adding=Decimal(str(payload.points)))
 
         question = Question(
             quiz_id=quiz.id,
-            question_text=payload.question_text,
+            # Formatted text, re-parsed here. A question is shown to every
+            # student set the quiz, so what the editor produced is a request
+            # and the stored result is the only thing anybody sees.
+            question_text=sanitize_rich_text(payload.question_text) or payload.question_text,
             question_type=payload.question_type,
             points=payload.points,
             order=payload.order,
             settings=payload.settings,
+            explanation=payload.explanation,
         )
         self.session.add(question)
         await self.session.flush()
@@ -358,6 +523,7 @@ class QuizService:
                     option_text=option.option_text,
                     is_correct=option.is_correct,
                     order=option.order,
+                    match_text=option.match_text,
                 )
             )
         await self.session.flush()
@@ -386,11 +552,49 @@ class QuizService:
         changes = payload.model_dump(exclude_unset=True)
         options = changes.pop("options", None)
 
+        if changes.get("question_text") is not None:
+            # `or` the original: a question written entirely as, say, a bare
+            # `<` would sanitise to nothing, and storing an empty question is
+            # worse than storing the text that was typed.
+            changes["question_text"] = (
+                sanitize_rich_text(changes["question_text"]) or changes["question_text"]
+            )
+
+        if "points" in changes and changes["points"] is not None:
+            # `replacing` is what this question already contributes, so
+            # raising it is checked against the room left *after* removing
+            # its own current marks -- otherwise a question could never be
+            # edited at all on a paper that is exactly full.
+            await self._assert_within_total(
+                quiz,
+                adding=Decimal(str(changes["points"])),
+                replacing=Decimal(str(question.points)),
+            )
+
         for field, value in changes.items():
             setattr(question, field, value)
 
+        # Re-checked whenever *either* half of the key changes, because for
+        # four of the types the key is not the options: editing a numeric
+        # question's `settings.answer` to something unparseable, with no
+        # option touched, would otherwise store a question that can never be
+        # answered correctly.
+        if options is not None or "settings" in changes:
+            await self.session.flush()
+            current = options
+            if current is None:
+                current = [
+                    {
+                        "option_text": o.option_text,
+                        "is_correct": o.is_correct,
+                        "order": o.order,
+                        "match_text": o.match_text,
+                    }
+                    for o in _ordered_options(question)
+                ]
+            self._validate_options(question.question_type, current, question.settings)
+
         if options is not None:
-            self._validate_options(question.question_type, options)
             await self.quizzes.delete_options_for(question.id)
             await self.session.flush()
             for option in options:
@@ -400,6 +604,7 @@ class QuizService:
                         option_text=option["option_text"],
                         is_correct=option["is_correct"],
                         order=option["order"],
+                        match_text=option.get("match_text"),
                     )
                 )
             await self.session.flush()
@@ -504,6 +709,12 @@ class QuizService:
             )
 
         in_progress = await self.attempts.get_in_progress(quiz_id=quiz.id, student_id=actor.id)
+        if in_progress is not None and await self._auto_submit_if_expired(in_progress):
+            # §9's `auto_submit_on_expiry`, and it fixes a real trap: an
+            # attempt whose timer ran out while the tab was closed stayed
+            # "in progress" for ever, so the student was refused every
+            # further attempt and the tutor saw a result that never arrived.
+            in_progress = None
         if in_progress is not None:
             # Without this, the attempt limit is trivially bypassed: open
             # several at once and submit only the best one.
@@ -556,12 +767,26 @@ class QuizService:
         quiz = attempt.quiz
         now = datetime.now(UTC)
 
-        late = False
-        if quiz.duration_minutes:
-            deadline = attempt.started_at + timedelta(minutes=quiz.duration_minutes) + _SUBMIT_GRACE
-            late = now > deadline
+        cutoff = self._cutoff(attempt)
+        late = cutoff is not None and now > cutoff
 
-        questions = {q.public_id: q for q in await self.quizzes.questions_for(quiz.id)}
+        if late and quiz.auto_submit_on_expiry:
+            # The timer is a limit, not a suggestion, when the quiz says so.
+            # Refusing writes nothing -- the attempt is closed on the
+            # student's next `start_attempt`, or by `close_expired_attempts`,
+            # because recording the closure *and* raising from the same
+            # transaction would roll the closure back.
+            raise ConflictError(
+                "The time limit for this attempt has passed and it can no longer be submitted.",
+                details={"expired_at": cutoff.isoformat() if cutoff else None},
+            )
+
+        # Only the questions this sitting was actually served. A quiz drawing
+        # a sample from a bank would otherwise be marked out of the whole
+        # bank, so a student answering all ten of their ten questions
+        # correctly would score 20% of a fifty-question quiz.
+        paper = self._paper_for(quiz, attempt, await self.quizzes.questions_for(quiz.id))
+        questions = {q.public_id: q for q, _options in paper}
         unknown = [str(a.question_id) for a in answers if a.question_id not in questions]
         if unknown:
             raise ValidationError(
@@ -587,7 +812,7 @@ class QuizService:
         attempt.finished_at = now
         attempt.submitted_late = late
         await self.session.flush()
-        await self._recompute_score(attempt, questions.values())
+        await self._recompute_score(attempt)
 
         audit_service.record(
             self.session,
@@ -642,7 +867,7 @@ class QuizService:
             attempt.feedback = payload.feedback
 
         await self.session.flush()
-        await self._recompute_score(attempt, questions.values())
+        await self._recompute_score(attempt)
 
         audit_service.record(
             self.session,
@@ -654,6 +879,220 @@ class QuizService:
             details={"manually_graded": len(payload.answers)},
         )
         return await self.attempts.get_by_public_id_full(public_id)  # type: ignore[return-value]
+
+    # -- the clock (spec §9's `auto_submit_on_expiry`) ------------------------
+
+    @staticmethod
+    def _cutoff(attempt: QuizAttempt) -> datetime | None:
+        """The last instant this attempt may still be submitted.
+
+        `None` for an untimed quiz, which has no cutoff at all rather than an
+        infinite one -- callers check for `None` instead of comparing against
+        a sentinel date.
+
+        The grace is wall-clock slack for the round trip and a slow client,
+        not extra exam time: it is the same window that decides whether a
+        submission is stamped late.
+        """
+        minutes = attempt.quiz.duration_minutes
+        if not minutes:
+            return None
+        return attempt.started_at + timedelta(minutes=minutes) + _SUBMIT_GRACE
+
+    async def _auto_submit_if_expired(self, attempt: QuizAttempt) -> bool:
+        """Close an attempt the clock has ended. Returns whether it did.
+
+        Only for a quiz that asked for it: with `auto_submit_on_expiry` off
+        the timer is advisory, and a late submission is accepted and stamped
+        `submitted_late` instead.
+
+        **What gets marked is what the server has, which is nothing.** No
+        answer is stored until the student presses submit, so an attempt
+        closed this way scores zero on every machine-marked question. That is
+        the honest outcome of "they did not submit in time", and it is better
+        than the alternative this replaces -- an attempt stuck in progress for
+        ever, blocking every further attempt the student was entitled to. It
+        is also the strongest argument for saving answers as they are chosen,
+        which this system does not yet do.
+
+        `finished_at` is the cutoff, not now: the attempt ended when the time
+        ran out, and recording the moment somebody happened to notice would
+        put a false duration on the record.
+        """
+        if attempt.finished_at is not None or not attempt.quiz.auto_submit_on_expiry:
+            return False
+        cutoff = self._cutoff(attempt)
+        if cutoff is None or datetime.now(UTC) <= cutoff:
+            return False
+
+        paper = self._paper_for(
+            attempt.quiz, attempt, await self.quizzes.questions_for(attempt.quiz_id)
+        )
+        answered = {a.question_id for a in attempt.answers}
+        negative = self._negative_marking(attempt.quiz)
+        for question, _options in paper:
+            if question.id in answered:
+                continue
+            score, stored = self._grade_one(question, None, negative_marking=negative)
+            self.session.add(
+                QuizAnswer(
+                    attempt_id=attempt.id,
+                    question_id=question.id,
+                    selected_options=stored,
+                    score_awarded=score,
+                )
+            )
+
+        attempt.finished_at = cutoff
+        attempt.auto_submitted = True
+        await self.session.flush()
+        await self._recompute_score(attempt)
+
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=attempt.student_id,
+            actor_email=None,
+            entity_type="quiz_attempt",
+            entity_id=attempt.id,
+            details={"auto_submitted": True, "expired_at": cutoff.isoformat()},
+        )
+        return True
+
+    async def close_expired_attempts(
+        self, quiz_public_id: uuid.UUID, *, actor: User
+    ) -> int:
+        """Close every attempt on this quiz that the clock has ended.
+
+        The recovery action for the gap `_auto_submit_if_expired` leaves: a
+        student whose attempts are all used up never calls `start_attempt`
+        again, so nothing would ever close their abandoned sitting and the
+        tutor would be left marking a result that cannot arrive. There is no
+        scheduler in this system, so somebody has to be able to ask.
+
+        Gated on marking rather than authoring: it finalises results, which is
+        the marker's job, and it changes no question.
+        """
+        quiz = await self.get(quiz_public_id, actor=actor)
+        if not await self._can_mark(actor):
+            raise AuthorizationError("You may not close attempts on this quiz.")
+
+        rows = await self.attempts.list_in_progress(quiz.id)
+        closed = 0
+        for attempt in rows:
+            if await self._auto_submit_if_expired(attempt):
+                closed += 1
+
+        if closed:
+            audit_service.record(
+                self.session,
+                action=AuditAction.UPDATE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="quiz",
+                entity_id=quiz.id,
+                details={"expired_attempts_closed": closed},
+            )
+        return closed
+
+    # -- releasing results (spec §9, §14) ------------------------------------
+
+    async def release_results(
+        self, public_id: uuid.UUID, is_released: bool, *, actor: User
+    ) -> Quiz:
+        """Release (or withhold) marks for a quiz that does not show them.
+
+        The separate, deliberate act §14 requires, and the thing
+        `show_result_immediately` was waiting for: with that setting off, a
+        marked attempt's score was withheld from the student with no way for
+        anybody to ever release it, because nothing could.
+
+        Refused on a quiz that shows results immediately, rather than
+        accepted and ignored: such a quiz is already released by definition,
+        and a tutor pressing a button that does nothing would believe marks
+        had just gone out.
+        """
+        quiz = await self.get(public_id, actor=actor)
+        if not await self._can_mark(actor):
+            raise AuthorizationError("You may not release results for this quiz.")
+
+        if quiz.show_result_immediately:
+            raise ConflictError(
+                "This quiz shows results as soon as they are marked, so there is "
+                "nothing to release. Turn off 'show results immediately' first."
+            )
+
+        already = quiz.results_released_at is not None
+        quiz.results_released_at = datetime.now(UTC) if is_released else None
+
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=actor.id,
+            actor_email=actor.email,
+            entity_type="quiz",
+            entity_id=quiz.id,
+            details={"results_released": is_released},
+        )
+
+        # Only the transition into release, and only once -- the same rule
+        # `set_published` follows. Withholding is deliberately quiet: "your
+        # result is available" arriving as it is taken back is worse than
+        # silence.
+        if is_released and not already:
+            await self._announce_results(quiz)
+        return quiz
+
+    async def _announce_results(self, quiz: Quiz) -> None:
+        """Tell the students who actually have a marked attempt.
+
+        Not everyone eligible: a student who never sat it has nothing to
+        read, and a notification pointing at nothing is a worse message than
+        none. Guardians get their own code rather than a copy, because every
+        description in the catalogue is written in the second person about its
+        subject.
+        """
+        student_ids = sorted(await self.attempts.marked_student_ids(quiz.id))
+        if not student_ids:
+            return
+
+        meta = {"quiz_id": str(quiz.public_id)}
+        notifications = NotificationService(self.session)
+        await notifications.notify_many(
+            student_ids,
+            type_=NotificationType.QUIZ_RESULT_PUBLISHED,
+            title=f"Result published: {quiz.title}",
+            body="Your mark is now available.",
+            meta=meta,
+        )
+        await notifications.notify_guardians_of(
+            student_ids,
+            type_=NotificationType.WARD_QUIZ_RESULT_PUBLISHED,
+            title=f"Result published for {{student}}: {quiz.title}",
+            body="The mark is now available.",
+            meta=meta,
+        )
+
+    async def results_visible_to(self, attempt: QuizAttempt, *, actor: User) -> bool:
+        """Whether this reader may see this attempt's mark.
+
+        Three cases, and the middle one is the feature:
+
+        * staff who can mark see everything, always -- they are the ones
+          entering the marks;
+        * a quiz with `show_result_immediately` off withholds the score from
+          the student *and their care circle* until it is released, exactly as
+          an exam does. Releasing to the student but not the parent, or the
+          other way round, would be a leak in one direction and a bug in the
+          other;
+        * anything else is visible as soon as it is marked, which is what
+          every quiz did before this existed.
+        """
+        if await self._can_mark(actor):
+            return True
+        if attempt.quiz.show_result_immediately:
+            return True
+        return attempt.quiz.results_released_at is not None
 
     # -- grading engine ------------------------------------------------------
 
@@ -684,6 +1123,82 @@ class QuizService:
         if question.question_type not in AUTO_GRADABLE:
             return None, {"text": (given.text_answer if given else None)}
 
+        points = Decimal(str(question.points))
+        kind = question.question_type
+
+        if kind is QuestionType.ORDERING:
+            sequence = list(given.selected_option_ids or []) if given else []
+            # Stored in the order given, never sorted: the sequence *is* the
+            # answer, and `sorted()` would throw it away and mark everyone
+            # who got it right as wrong.
+            stored = {"ordered_option_ids": sequence}
+            if not sequence:
+                return Decimal("0"), stored
+            correct_sequence = [o.id for o in _ordered_options(question)]
+            return (
+                (points, stored)
+                if sequence == correct_sequence
+                else (points * negative_marking * Decimal("-1"), stored)
+            )
+
+        if kind is QuestionType.MATCHING:
+            pairs = dict(given.matches or {}) if given else {}
+            stored = {"matches": pairs}
+            if not pairs:
+                return Decimal("0"), stored
+            expected = {
+                str(o.id): _normalise(o.match_text or "")
+                for o in question.options
+            }
+            answered = {str(k): _normalise(str(v)) for k, v in pairs.items()}
+            # All-or-nothing, like MCQ_MULTIPLE: partial credit needs a rule
+            # nobody has specified, and inventing one would silently decide
+            # how every matching question in the institution is marked.
+            return (
+                (points, stored)
+                if answered == expected
+                else (points * negative_marking * Decimal("-1"), stored)
+            )
+
+        if kind is QuestionType.FILL_BLANK:
+            typed = (given.text_answer if given else None) or ""
+            stored = {"text": typed or None}
+            if not typed.strip():
+                return Decimal("0"), stored
+            raw = question.settings if isinstance(question.settings, dict) else {}
+            cased = bool(raw.get("case_sensitive"))
+            accepted = [str(a) for a in (raw.get("accepted") or [])]
+            got = _normalise(typed, fold=not cased)
+            is_right = any(got == _normalise(a, fold=not cased) for a in accepted)
+            return (
+                (points, stored)
+                if is_right
+                else (points * negative_marking * Decimal("-1"), stored)
+            )
+
+        if kind is QuestionType.NUMERIC:
+            typed = (given.text_answer if given else None) or ""
+            stored = {"text": typed or None}
+            if not typed.strip():
+                return Decimal("0"), stored
+            raw = question.settings if isinstance(question.settings, dict) else {}
+            try:
+                target = Decimal(str(raw.get("answer")))
+                tolerance = Decimal(str(raw.get("tolerance") or 0))
+                got = Decimal(_numeric(typed))
+            except (InvalidOperation, ValueError, TypeError):
+                # An unparseable answer is **wrong, not unmarkable**: the
+                # student typed something that is not a number into a numeric
+                # question. A malformed *key* lands here too, which is why
+                # `answer_key_problem` refuses one at authoring time.
+                return Decimal("0"), stored
+            is_right = abs(got - target) <= abs(tolerance)
+            return (
+                (points, stored)
+                if is_right
+                else (points * negative_marking * Decimal("-1"), stored)
+            )
+
         selected = set(given.selected_option_ids or []) if given else set()
         stored = {"option_ids": sorted(selected)}
 
@@ -693,9 +1208,8 @@ class QuizService:
             return Decimal("0"), stored
 
         correct = {o.id for o in question.options if o.is_correct}
-        points = Decimal(str(question.points))
 
-        if question.question_type in (QuestionType.MCQ_SINGLE, QuestionType.TRUE_FALSE):
+        if kind in (QuestionType.MCQ_SINGLE, QuestionType.TRUE_FALSE):
             is_right = len(selected) == 1 and selected == correct
         else:
             # MCQ_MULTIPLE is all-or-nothing: partial credit needs a rule
@@ -707,19 +1221,26 @@ class QuizService:
             return points, stored
         return (points * negative_marking * Decimal("-1")), stored
 
-    async def _recompute_score(
-        self, attempt: QuizAttempt, questions: Sequence[Question]
-    ) -> None:
+    async def _recompute_score(self, attempt: QuizAttempt) -> None:
         """Recompute the attempt's percentage score and pass flag.
 
         Left as `None` while any answer is still unmarked: reporting a score
         that ignores an ungraded essay would understate the student, and
         marking them failed on it would be worse.
+
+        **The denominator comes from the answer rows, not from the quiz.**
+        There is one row per question this sitting was served, so a quiz that
+        draws ten questions from a bank of fifty is marked out of those ten.
+        The caller used to pass the question list, and both callers passed the
+        whole bank -- which was right only while every attempt got every
+        question.
         """
         rows = (
             (
                 await self.session.execute(
-                    select(QuizAnswer).where(QuizAnswer.attempt_id == attempt.id)
+                    select(QuizAnswer)
+                    .options(selectinload(QuizAnswer.question))
+                    .where(QuizAnswer.attempt_id == attempt.id)
                 )
             )
             .scalars()
@@ -731,7 +1252,9 @@ class QuizService:
             attempt.is_passed = None
             return
 
-        total_points = sum((Decimal(str(q.points)) for q in questions), Decimal("0"))
+        total_points = sum(
+            (Decimal(str(r.question.points)) for r in rows), Decimal("0")
+        )
         earned = sum((Decimal(str(r.score_awarded)) for r in rows), Decimal("0"))
         # Negative marking can drive a total below zero; a negative percentage
         # is not a meaningful result, so the floor is zero.
@@ -790,25 +1313,21 @@ class QuizService:
     # -- guards --------------------------------------------------------------
 
     @staticmethod
-    def _validate_options(question_type: QuestionType, options: list[dict]) -> None:
-        correct = [o for o in options if o.get("is_correct")]
-        if question_type in AUTO_GRADABLE:
-            if len(options) < 2:
-                raise ValidationError(
-                    f"{question_type.value} requires at least two options."
-                )
-            if not correct:
-                raise ValidationError(
-                    f"{question_type.value} requires at least one correct option."
-                )
-            if question_type in (QuestionType.MCQ_SINGLE, QuestionType.TRUE_FALSE) and len(correct) > 1:
-                raise ValidationError(
-                    f"{question_type.value} allows exactly one correct option."
-                )
-        elif options:
-            raise ValidationError(
-                f"{question_type.value} is graded manually and takes no options."
-            )
+    def _validate_options(
+        question_type: QuestionType,
+        options: list[dict],
+        settings: dict | None = None,
+    ) -> None:
+        """The same rules the create schema applies, re-applied on an edit.
+
+        One rule set in `schemas/quiz.py`, raised here as the API's own
+        `ValidationError` -- the rules had been written out twice, and the
+        copies had already drifted apart once the four new question types
+        arrived with keys that are not options at all.
+        """
+        problem = answer_key_problem(question_type, options, settings)
+        if problem:
+            raise ValidationError(f"{problem}.")
 
     async def _assert_question_bank_editable(self, quiz: Quiz) -> None:
         if await self._has_attempts(quiz.id):
@@ -827,6 +1346,20 @@ class QuizService:
         from backend.core.permissions import Action, Module, perm
 
         return perm(Module.QUIZ, Action.UPDATE) in resolve_permissions(actor)
+
+    async def _can_mark(self, actor: User) -> bool:
+        """Holds the marking permission.
+
+        The same split `ExamService` makes, and for the same reason: a
+        Guardian holds `grade.read` and must not be handed a withheld mark,
+        while a Tutor who marks the paper obviously sees it. Asked as a
+        permission rather than a role so a custom role with the same job
+        behaves the same way.
+        """
+        from backend.api.deps import resolve_permissions
+        from backend.core.permissions import Action, Module, perm
+
+        return perm(Module.QUIZ, Action.GRADE) in resolve_permissions(actor)
 
     async def _assert_enrolled_in_course(self, student: User, course_id: int) -> None:
         stmt = (

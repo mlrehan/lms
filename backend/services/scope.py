@@ -10,8 +10,10 @@ Three scoped relationships, each a join that already exists in the schema:
 * **Tutor** -> students enrolled in batches they teach, via `tutor_courses`
   (course-level assignment) or `batch_sessions.tutor_id` (session-level).
 * **Guardian** -> their linked students, via `student_guardians`.
-* **Corporate Manager** -> their organization's employees, via
-  `organization_managers` -> `organization_memberships`.
+* **Corporate Manager** -> their linked students, via `manager_students`.
+  The same shape as a guardian, deliberately: it used to be derived from the
+  company (`organization_managers` -> `organization_memberships`), which made
+  every manager of an employer see every one of its employees.
 
 A caller holding `institution.view_all` bypasses all of it. Roles are
 *additive*: someone who is both a Tutor and a Guardian sees the union of both
@@ -37,20 +39,15 @@ from backend.models.course import TutorCourse
 from backend.models.enrollment import Enrollments
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.user import User
-from backend.models.organization import OrganizationManager, OrganizationMembership
-from backend.utils.enums import OrganizationMembershipStatus
+from backend.models.organization import ManagedStudent, OrganizationManager
 
 _VIEW_ALL = perm(Module.INSTITUTION, Action.VIEW_ALL)
 
-# A membership that has been REMOVED no longer grants a manager visibility of
-# that person. The row is kept (historical enrollments reference the
-# organization) but the individual has left the company, and their ongoing
-# coursework is not the former employer's to read.
-_VISIBLE_MEMBERSHIP_STATUSES = (
-    OrganizationMembershipStatus.INVITED,
-    OrganizationMembershipStatus.ACTIVE,
-    OrganizationMembershipStatus.SUSPENDED,
-)
+# "A REMOVED membership no longer grants visibility" used to be enforced by a
+# status filter here. It is still true, and it is now enforced where the
+# status changes: `OrganizationService.set_member_status` deletes that
+# student's links to the company's managers, because a derived rule cannot
+# un-grant a row that somebody else wrote.
 
 
 @dataclass(frozen=True)
@@ -231,7 +228,7 @@ class ScopeResolver:
 
         visible: set[int] = {user.id}
         visible |= await self._guardian_student_ids(user.id)
-        visible |= await self._managed_employee_ids(user.id)
+        visible |= await self._managed_student_ids(user.id)
         visible |= await self._taught_student_ids(user.id)
         return Scope.of(visible)
 
@@ -241,14 +238,27 @@ class ScopeResolver:
         )
         return set((await self.session.execute(stmt)).scalars().all())
 
-    async def _managed_employee_ids(self, manager_user_id: int) -> set[int]:
-        managed_orgs = select(OrganizationManager.organization_id).where(
-            OrganizationManager.user_id == manager_user_id,
-            OrganizationManager.is_active.is_(True),
-        )
-        stmt = select(OrganizationMembership.user_id).where(
-            OrganizationMembership.organization_id.in_(managed_orgs),
-            OrganizationMembership.status.in_(_VISIBLE_MEMBERSHIP_STATUSES),
+    async def _managed_student_ids(self, manager_user_id: int) -> set[int]:
+        """Students linked directly to this manager.
+
+        **One table, read once, and it is the whole rule.** This used to be
+        derived -- manager -> organization -> every membership of that
+        organization -- which made a manager's roster a side effect of the org
+        chart: four managers at a two-hundred-person company each saw all two
+        hundred, and "these thirty are yours" could not be said. A student who
+        works for the company but is linked to nobody is now visible to no
+        manager, which is the correct default for a relationship an
+        administrator has not yet asserted.
+
+        Deliberately symmetrical with `_guardian_student_ids` above: the two
+        answer the same question for the two kinds of person who have standing
+        to see somebody else's record, and both read one direct link table.
+        Employment is still recorded -- `organization_memberships` keeps the
+        employee code, the department and which company somebody works for --
+        it simply no longer decides who can read whom.
+        """
+        stmt = select(ManagedStudent.student_id).where(
+            ManagedStudent.manager_id == manager_user_id
         )
         return set((await self.session.execute(stmt)).scalars().all())
 
@@ -363,7 +373,7 @@ class ScopeResolver:
         cared_for = (
             {user.id}
             | await self._guardian_student_ids(user.id)
-            | await self._managed_employee_ids(user.id)
+            | await self._managed_student_ids(user.id)
         )
         return EnrollmentVisibility(False, frozenset(taught), frozenset(cared_for))
 

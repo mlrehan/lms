@@ -122,6 +122,35 @@ class AttemptRepository(BaseRepository[QuizAttempt]):
         )
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def list_in_progress(self, quiz_id: int) -> list[QuizAttempt]:
+        """Every unsubmitted attempt on one quiz, loaded ready to close.
+
+        The full eager load, not a bare id list: closing an expired attempt
+        grades the questions it never answered, which needs the quiz, its
+        answers and their options -- and reaching any of those lazily on an
+        async session raises `MissingGreenlet` rather than running a slow
+        query.
+        """
+        stmt = self._base().where(
+            QuizAttempt.quiz_id == quiz_id,
+            QuizAttempt.finished_at.is_(None),
+        )
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
+    async def marked_student_ids(self, quiz_id: int) -> set[int]:
+        """Students with a submitted, fully-marked attempt on this quiz.
+
+        Who "your result is available" is true for. A student still awaiting
+        a tutor's mark on an essay is excluded: their score is `None`, and
+        telling them it is ready would send them to an empty page.
+        """
+        stmt = select(QuizAttempt.student_id).where(
+            QuizAttempt.quiz_id == quiz_id,
+            QuizAttempt.finished_at.is_not(None),
+            QuizAttempt.score.is_not(None),
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
     async def search(
         self,
         params: PageParams,

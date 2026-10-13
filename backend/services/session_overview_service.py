@@ -28,7 +28,7 @@ from backend.models.batch import BatchSession
 from backend.models.enrollment import Enrollments
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.user import User
-from backend.models.organization import Organization, OrganizationManager
+from backend.models.organization import ManagedStudent, Organization
 from backend.services.scope import ScopeResolver
 from backend.services.session_service import SessionService
 from backend.utils.enums import EnrollmentStatus
@@ -97,16 +97,20 @@ class SessionOverviewService:
         if staff and student_ids:
             for link in (await self.session.execute(select(StudentGuardian).where(StudentGuardian.student_id.in_(student_ids)))).scalars():
                 guardians.setdefault(link.student_id, []).append(_person(link.guardian, contacts=contacts, detail=link.relationship_type))
+            # The manager beside a student is *their* manager, read from the
+            # direct link -- not "every manager at the company that paid for
+            # this enrolment", which is what listing them by sponsoring
+            # organization meant. The company name is still shown, from the
+            # enrolment's own sponsorship record.
             org_ids = {e.organization_id for e, _ in enrolments if e.organization_id}
             if org_ids:
                 orgs = {o.id: o.name for o in (await self.session.execute(select(Organization).where(Organization.id.in_(org_ids)))).scalars()}
-                by_org: dict[int, list[dict[str, Any]]] = {}
-                for m in (await self.session.execute(select(OrganizationManager).where(
-                    OrganizationManager.organization_id.in_(org_ids), OrganizationManager.is_active.is_(True)))).scalars():
-                    by_org.setdefault(m.organization_id, []).append(_person(m.user, contacts=contacts, detail=m.title))
-                for e, _ in enrolments:
-                    if e.organization_id:
-                        managers[e.student_id] = by_org.get(e.organization_id, [])
+            for link in (await self.session.execute(
+                select(ManagedStudent).where(ManagedStudent.student_id.in_(student_ids))
+            )).scalars():
+                managers.setdefault(link.student_id, []).append(
+                    _person(link.manager, contacts=contacts, detail=link.relationship_type)
+                )
 
         roster = [
             {

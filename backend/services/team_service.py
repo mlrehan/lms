@@ -26,7 +26,7 @@ from backend.models.enrollment import Enrollments
 from backend.models.gradebook import GradeBookEntry, Transcript
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.user import User
-from backend.models.organization import Organization, OrganizationMembership
+from backend.models.organization import ManagedStudent, Organization, OrganizationMembership
 from backend.schemas.team import (
     TeamAssignment,
     TeamAttendanceBreakdown,
@@ -118,12 +118,22 @@ class TeamService:
                 )
             ).all()
         }
+        # How the caller is connected to each person, from whichever link
+        # put them in this list. A manager used to see a blank here, because
+        # only guardianship was asked about -- their connection was the
+        # company, which is a different column.
         relation = {
             link.student_id: link.relationship_type
             for link in (
                 await s.execute(select(StudentGuardian).where(StudentGuardian.guardian_id == actor.id, StudentGuardian.student_id.in_(ids)))
             ).scalars()
         }
+        relation.update({
+            link.student_id: link.relationship_type
+            for link in (
+                await s.execute(select(ManagedStudent).where(ManagedStudent.manager_id == actor.id, ManagedStudent.student_id.in_(ids)))
+            ).scalars()
+        })
 
         active: dict[int, int] = {}
         completed: dict[int, int] = {}

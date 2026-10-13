@@ -29,6 +29,7 @@ import {
   Users,
   UserSquare2,
   Webhook,
+  UserCog,
 } from "lucide-react";
 import type { PermissionName } from "@/lib/auth/permissions";
 
@@ -44,6 +45,22 @@ export interface NavItem {
    * `undefined` means the screen needs authentication only.
    */
   permission?: PermissionName;
+  /**
+   * A second permission the screen also needs, for the few screens where one
+   * grant cannot separate the audiences.
+   *
+   * Enrollments is the case this exists for. A student holds
+   * `enrollment.read` -- it is how they see their own -- so that grant alone
+   * cannot tell them from a tutor. The screen is a register of *other
+   * people*, and its filters are people pickers, so it also needs
+   * `user.read`: every role that administers enrolments holds it and a
+   * student does not.
+   *
+   * Deliberately a second permission rather than a role check. The console
+   * gates on what a caller may do, never on what they are called, and a role
+   * test here would be the first exception.
+   */
+  alsoRequires?: PermissionName;
   /** Shown when any one of these is held (screens with several sources). */
   anyPermission?: PermissionName[];
   description?: string;
@@ -85,6 +102,10 @@ export const NAVIGATION: NavSection[] = [
         label: "Enrollments",
         icon: GraduationCap,
         permission: "enrollment.read",
+        // A student reaches their own enrolments through Courses and
+        // Batches; this screen is everybody else's, and it was being offered
+        // to them. See `alsoRequires`.
+        alsoRequires: "user.read",
       },
       {
         href: "/attendance",
@@ -132,7 +153,18 @@ export const NAVIGATION: NavSection[] = [
   {
     label: "Content",
     items: [
-      { href: "/resources", label: "Resources", icon: FolderTree, permission: "resource.read" },
+      /*
+       * The library -- upload, organise, share. Gated on `resource.create`
+       * rather than `resource.read`, which every signed-in role holds: a
+       * student reaching this screen could browse folders and open the Share
+       * panel, and every control on it would answer 403 on the first click.
+       * Uploading and sharing is the Super Admin's, an Administrator's and a
+       * Tutor's job, and this is the permission that says so.
+       *
+       * What a student has instead is "Shared with me" below, which is their
+       * whole relationship with resources: the files someone sent them.
+       */
+      { href: "/resources", label: "Resources", icon: FolderTree, permission: "resource.create" },
       { href: "/shared-with-me", label: "Shared with me", icon: Share2 },
     ],
   },
@@ -159,7 +191,14 @@ export const NAVIGATION: NavSection[] = [
     label: "People",
     items: [
       { href: "/team", label: "My team", icon: UsersRound, permission: "team.read" },
-      { href: "/users", label: "Users", icon: Users, permission: "user.read" },
+      /*
+       * Gated on `user.update`, not `user.read`. A Tutor, Guardian and
+       * Corporate Manager all hold `user.read` -- they need it to look up the
+       * people they are responsible for, and the pickers across the console
+       * depend on it -- but the directory itself is an administrator's
+       * screen. Reading one person is not the same as browsing everyone.
+       */
+      { href: "/users", label: "Users", icon: Users, permission: "user.update" },
       { href: "/roles", label: "Roles", icon: ShieldCheck, permission: "role.read" },
       { href: "/permissions", label: "Permissions", icon: KeyRound, permission: "permission.read" },
       {
@@ -169,6 +208,15 @@ export const NAVIGATION: NavSection[] = [
         permission: "organization.read",
       },
       { href: "/guardians", label: "Guardians", icon: UserSquare2, permission: "guardian.read" },
+      // Beside Guardians, not inside Organizations: both answer "who may see
+      // this student's record on their behalf", and a corporate manager's
+      // roster stopped being a view of the company's payroll.
+      {
+        href: "/manager-links",
+        label: "Manager assignments",
+        icon: UserCog,
+        permission: "managed_student.read",
+      },
     ],
   },
   {

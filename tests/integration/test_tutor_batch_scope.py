@@ -23,6 +23,7 @@ import asyncio
 import random
 import selectors
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -75,13 +76,16 @@ def world():
             teacher = person("teacher", "TUTOR")    # takes the sessions
             mine_student = person("minestudent", "STUDENT")
             their_student = person("theirstudent", "STUDENT")
+            # The only role that may still read commercial terms, so the
+            # withholding below is proved rather than assumed.
+            boss = person("boss", "SUPER_ADMIN")
 
             course = Course(title=f"{tag} Course", code=tag, status=CourseStatus.PUBLISHED)
             course.batches, course.resources, course.tags, course.tutors = [], [], [], []
             # `lead` is tutor of record for the whole course. That is the
             # grant this test exists to prove is *not* enough.
             course.tutors = [lead]
-            s.add_all([lead, teacher, mine_student, their_student, course])
+            s.add_all([lead, teacher, mine_student, their_student, boss, course])
             await s.flush()
 
             batches = {}
@@ -89,18 +93,22 @@ def world():
                                         ("other", lead, their_student)):
                 b = Batch(batch_code=f"{tag}-{key[:4]}", course_id=course.id,
                           start_date=date.today(), end_date=date.today() + timedelta(days=30),
-                          is_active=True, capacity=10)
+                          is_active=True, capacity=10, batch_fee=Decimal("499.00"))
                 b.sessions, b.enrollments, b.student_reviews = [], [], []
                 s.add(b)
                 await s.flush()
-                sess = BatchSession(
-                    batch_id=b.id, tutor_id=tutor.id,
-                    session_start_time=datetime.now(timezone.utc) + timedelta(days=1),
-                    session_end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=1),
-                    duration_minutes=60, platform=Platforms.Zoom,
-                )
-                sess.attendances = []
-                s.add(sess)
+                # Inserted out of order on purpose: a list that happens to
+                # come back sorted because that is how the rows were written
+                # proves nothing about the ORDER BY.
+                for days in (9, 2, 5):
+                    sess = BatchSession(
+                        batch_id=b.id, tutor_id=tutor.id,
+                        session_start_time=datetime.now(timezone.utc) + timedelta(days=days),
+                        session_end_time=datetime.now(timezone.utc) + timedelta(days=days, hours=1),
+                        duration_minutes=60, platform=Platforms.Zoom,
+                    )
+                    sess.attendances = []
+                    s.add(sess)
                 s.add(Enrollments(batch_id=b.id, student_id=student.id,
                                   enrollment_date=datetime.now(timezone.utc),
                                   status=EnrollmentStatus.CONFIRMED))
@@ -201,3 +209,33 @@ def test_the_tutors_own_students_are_still_visible(world) -> None:
     # The narrowing must not cost a tutor sight of their own cohort.
     rows = world.get("teacher", "/enrollments", limit=100).json()["items"]
     assert len(rows) == 1
+
+
+def test_the_batch_fee_is_the_super_admins_alone(world) -> None:
+    """The batch list was publishing the fee to every role that could open it.
+
+    Withheld on the server, not by leaving a column out of the table: a column
+    the client declines to draw is still in the payload, and this is the screen
+    the price was actually leaking from.
+    """
+    def fees(who: str) -> set[object]:
+        rows = world.get(who, "/batches", limit=100).json()["items"]
+        return {r["batch_fee"] for r in rows if r["batch_code"].startswith(world.tag)}
+
+    # `None`, not `0`: a free batch and a withheld fee are different facts.
+    assert fees("teacher") == {None}
+    assert fees("minestudent") == {None}
+    assert fees("boss") == {499.0}
+
+
+def test_the_timetable_reads_forwards(world) -> None:
+    """Soonest first.
+
+    It was ordered newest-first, which put the furthest-out class at the top
+    and a tutor's next lesson wherever the page size happened to leave it. A
+    timetable is read forwards.
+    """
+    rows = world.get("teacher", "/sessions", limit=100).json()["items"]
+    starts = [r["session_start_time"] for r in rows]
+    assert starts == sorted(starts)
+    assert len(starts) >= 3  # not vacuously true of a one-row list

@@ -56,6 +56,7 @@ async def list_enrollments(
     ],
     batch_id: Annotated[uuid.UUID | None, Query()] = None,
     student_id: Annotated[uuid.UUID | None, Query()] = None,
+    tutor_id: Annotated[uuid.UUID | None, Query(description="Enrollments in batches this person teaches.")] = None,
     enrollment_status: Annotated[EnrollmentStatus | None, Query(alias="status")] = None,
 ) -> Page[EnrollmentResponse]:
     """Row-scoped, and the two scopes differ by design: a Tutor sees
@@ -68,6 +69,7 @@ async def list_enrollments(
         actor=actor,
         batch_public_id=batch_id,
         student_public_id=student_id,
+        tutor_public_id=tutor_id,
         status=enrollment_status,
     )
     return Page.build([_response(r) for r in rows], total=total, params=params)

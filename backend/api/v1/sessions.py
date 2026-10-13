@@ -78,7 +78,7 @@ def _response(
         join_opens_at=state.opens_at,
         join_closes_at=state.closes_at,
         can_join_now=state.can_join_now,
-        has_recording=bool(s.recording_resource_id) or (manage and bool(s.recording_link)),
+        has_recording=bool(s.recording_resource_id) or bool(s.recording_link),
     )
 
 
@@ -96,7 +96,7 @@ def _summary(s: BatchSession, *, service: SessionService, actor: CurrentUser) ->
         join_opens_at=state.opens_at,
         join_closes_at=state.closes_at,
         can_join_now=state.can_join_now,
-        has_recording=bool(s.recording_resource_id),
+        has_recording=bool(s.recording_resource_id) or bool(s.recording_link),
     )
 
 
@@ -146,6 +146,8 @@ async def list_sessions(
     batch_id: Annotated[uuid.UUID | None, Query()] = None,
     starts_after: Annotated[datetime | None, Query()] = None,
     starts_before: Annotated[datetime | None, Query()] = None,
+    tutor_id: Annotated[uuid.UUID | None, Query(description="Sessions this person takes.")] = None,
+    student_id: Annotated[uuid.UUID | None, Query(description="Sessions of batches this person is enrolled in.")] = None,
     mine_only: Annotated[bool, Query(description="Only sessions I am the tutor for.")] = False,
 ) -> Page[SessionSummary]:
     """Row-scoped through the batch: a Tutor sees sessions of batches they
@@ -162,6 +164,8 @@ async def list_sessions(
         batch_public_id=batch_id,
         starts_after=starts_after,
         starts_before=starts_before,
+        tutor_public_id=tutor_id,
+        student_public_id=student_id,
         mine_only=mine_only,
     )
     return Page.build([_summary(r, service=service, actor=actor) for r in rows], total=total, params=params)
@@ -294,13 +298,15 @@ async def get_session_recording(
     session: DBSession,
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
 ) -> SessionRecordingResponse:
-    """`playback_url` is a path on this API that re-checks permission on every
-    request. The provider's own link is returned only to callers who may edit
+    """`playback_url` (stored in the LMS) and `embed_url` (on the provider)
+    are both paths on this API that re-check permission on every request. The
+    provider's own link is returned in the clear only to callers who may edit
     the session -- it works outside the LMS and past every check in it."""
     view = await SessionService(session).recording(session_id, actor=actor, audit=True)
     await commit_before_responding(session)  # the audit row outlives the response
     return SessionRecordingResponse(
         playback_url=view.playback_url,
+        embed_url=view.embed_url,
         external_url=view.external_url,
         name=view.resource.name if view.resource else None,
         mime_type=view.resource.mime_type if view.resource else None,
@@ -333,6 +339,45 @@ async def stream_session_recording(
         resource.path or "",
         filename=resource.name,
         mime_type=resource.mime_type,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/recording/embed",
+    summary="Watch a class recording that lives on the provider",
+    response_class=Response,
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+)
+async def embed_session_recording(
+    session_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.SESSION, Action.READ)))],
+) -> Response:
+    """Re-authorise, then hand the browser on to the provider's player.
+
+    The session page frames this path, never the provider's URL, so the link
+    is absent from every API payload and from the page's own DOM, and the only
+    route to it checks on each request that this caller still has the class.
+
+    It is a redirect rather than a proxy because the media behind a provider's
+    player is bound to that provider's session: the signed URL Zoom's player
+    uses refuses our server outright, so there are no bytes for us to serve.
+    Stated plainly, because it bounds what this can promise -- the player on
+    the other side is the provider's, including whatever download control they
+    offer. A recording that must not be downloadable at all belongs in the
+    library, where `playback_url` serves the bytes under our own rules.
+    """
+    link = await SessionService(session).resolve_recording_embed(session_id, actor=actor)
+    return Response(
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        headers={
+            "Location": link,
+            # The URL earned one admission, for this caller, now. A cache
+            # between us and them must not be able to repeat it.
+            "Cache-Control": "private, no-store",
+            # Do not hand the provider the LMS URL the viewer came from.
+            "Referrer-Policy": "no-referrer",
+        },
     )
 
 

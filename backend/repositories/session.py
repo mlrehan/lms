@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.models.attendance import Attendance
 from backend.models.batch import Batch, BatchSession
+from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
 
@@ -40,6 +41,7 @@ class SessionRepository(BaseRepository[BatchSession]):
         tutor_id: int | None = None,
         starts_after: datetime | None = None,
         starts_before: datetime | None = None,
+        student_id: int | None = None,
         include_cancelled: bool = False,
     ) -> tuple[Sequence[BatchSession], int]:
         stmt = scope.apply(self._base(), BatchSession.id)
@@ -54,8 +56,17 @@ class SessionRepository(BaseRepository[BatchSession]):
             stmt = stmt.where(BatchSession.session_start_time >= starts_after)
         if starts_before is not None:
             stmt = stmt.where(BatchSession.session_start_time <= starts_before)
+        if student_id is not None:
+            stmt = stmt.where(
+                BatchSession.batch_id.in_(
+                    select(Enrollments.batch_id).where(Enrollments.student_id == student_id)
+                )
+            )
 
-        stmt = stmt.order_by(BatchSession.session_start_time.desc())
+        # Ascending: this is a timetable, and a timetable reads forwards. The
+        # page defaults its window to today onward, so the first row is the
+        # next class rather than the oldest one on record.
+        stmt = stmt.order_by(BatchSession.session_start_time.asc(), BatchSession.id)
         return await self.paginate(stmt, params)  # type: ignore[return-value]
 
     async def window(

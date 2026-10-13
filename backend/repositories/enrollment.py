@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Sequence
 from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
 
-from backend.models.batch import Batch
+from backend.models.batch import Batch, BatchSession
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
@@ -53,6 +53,7 @@ class EnrollmentRepository(BaseRepository[Enrollments]):
         visibility: "EnrollmentVisibility",
         batch_id: int | None = None,
         student_id: int | None = None,
+        tutor_id: int | None = None,
         status: EnrollmentStatus | None = None,
         organization_id: int | None = None,
     ) -> tuple[Sequence[Enrollments], int]:
@@ -66,6 +67,12 @@ class EnrollmentRepository(BaseRepository[Enrollments]):
             stmt = stmt.where(Enrollments.batch_id == batch_id)
         if student_id is not None:
             stmt = stmt.where(Enrollments.student_id == student_id)
+        if tutor_id is not None:
+            stmt = stmt.where(
+                Enrollments.batch_id.in_(
+                    select(BatchSession.batch_id).where(BatchSession.tutor_id == tutor_id)
+                )
+            )
         if status is not None:
             stmt = stmt.where(Enrollments.status == status)
         if organization_id is not None:

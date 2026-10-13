@@ -158,6 +158,25 @@ class AssignmentUpdateRequest(_AssignmentRules):
 # =============================================================================
 
 
+class SubmissionFileResponse(APIModel):
+    """One attached file, and where to get it.
+
+    No `path`: the storage key is the server's business, and the thing that
+    used to leak it -- a JSON column written from the request body -- is what
+    this replaced. `download_url` is a path on this API that re-authorises on
+    every request.
+    """
+
+    public_id: uuid.UUID
+    filename: str
+    mime_type: str | None = None
+    size: int
+    uploaded_at: datetime
+    download_url: str = Field(
+        description="Relative to the API root. Re-checks permission on every request."
+    )
+
+
 class SubmissionResponse(APIModel):
     public_id: uuid.UUID
     assignment_id: uuid.UUID
@@ -165,7 +184,10 @@ class SubmissionResponse(APIModel):
     student_id: uuid.UUID
     student_username: str | None = None
     submitted_at: datetime
-    files: Any | None = None
+    files: list[SubmissionFileResponse] = Field(
+        default_factory=list,
+        description="The attached work. Built from stored rows, never from the request body.",
+    )
     content: str | None = None
     grade: Decimal | None = None
     feedback: str | None = None
@@ -196,19 +218,16 @@ class SubmitAssignmentRequest(RequestModel):
     `uq_assignment_submissions_assignment_student`)."""
 
     content: str | None = None
-    files: Any | None = Field(
-        default=None,
-        description="File metadata, e.g. [{'filename': 'project.zip', 'path': '...'}].",
-    )
 
-    @model_validator(mode="after")
-    def _something_submitted(self):  # type: ignore[no-untyped-def]
-        if not self.content and not self.files:
-            # An empty submission is almost certainly a client bug, and
-            # accepting it would mark the student as having submitted while
-            # handing the tutor nothing to grade.
-            raise ValueError("a submission must include content or files")
-        return self
+    # `files` is gone from the request on purpose. It used to be a JSON blob
+    # the client composed -- filename *and storage path* -- so a submission
+    # named bytes the server never wrote, and `path` was caller-controlled.
+    # Files are uploaded first (`POST .../attachments`) and claimed here, so
+    # the request body no longer says anything about where anything lives.
+    #
+    # "Did they submit anything at all" therefore cannot be answered from the
+    # body alone either: it is checked in the service, which can see the
+    # attachments.
 
 
 class GradeSubmissionRequest(RequestModel):

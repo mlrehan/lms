@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from backend.core.privacy import visible_username
-from backend.api.deps import CurrentUser, require_permissions
+from backend.api.deps import CurrentUser, require_permissions, resolve_permissions
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
 from backend.models.exam import Exam, ExamResult
@@ -30,7 +30,21 @@ from backend.services.exam_service import ExamService
 router = APIRouter(tags=["Examinations"])
 
 
-def _exam_response(e: Exam, *, results: int = 0, published: int = 0) -> ExamResponse:
+def _exam_response(
+    e: Exam, *, results: int = 0, published: int = 0, staff: bool = True
+) -> ExamResponse:
+    """One examination.
+
+    `staff=False` zeroes the two counts. How many of the cohort have been
+    marked, and how many of those marks are out, are facts about other
+    candidates -- and the second is worse than idle: "28 of 30 published"
+    tells a student whose mark is missing that theirs is one of the two being
+    withheld, which is exactly what §14's release step exists to avoid saying.
+
+    The invigilator list is safe as it stands: `visible_username` already
+    gives a name rather than a login name to anybody without
+    `user.view_contact`.
+    """
     return ExamResponse(
         public_id=e.public_id,
         title=e.title,
@@ -47,8 +61,8 @@ def _exam_response(e: Exam, *, results: int = 0, published: int = 0) -> ExamResp
         batch_id=e.batch.public_id if e.batch else None,
         batch_code=e.batch.batch_code if e.batch else None,
         invigilators=sorted(visible_username(i.tutor) for i in (e.invigilators or [])),
-        result_count=results,
-        published_result_count=published,
+        result_count=results if staff else 0,
+        published_result_count=published if staff else 0,
     )
 
 
@@ -117,7 +131,14 @@ async def get_exam(
     service = ExamService(session)
     row = await service.get(exam_id, actor=actor)
     total, published = await service.exams.result_counts(row.id)
-    return _exam_response(row, results=total, published=published)
+    return _exam_response(
+        row,
+        results=total,
+        published=published,
+        # The one read a candidate makes. Recording marks is what makes
+        # somebody staff here; sitting the paper is not.
+        staff=perm(Module.EXAM, Action.UPDATE) in resolve_permissions(actor),
+    )
 
 
 @router.patch("/exams/{exam_id}", response_model=ExamResponse, summary="Update an examination")

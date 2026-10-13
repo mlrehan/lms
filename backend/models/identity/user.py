@@ -114,17 +114,41 @@ class User(Base, TimestampMixin, PublicIdMixin):
         lazy="selectin"
     )
 
-    tokens: Mapped[List["Token"]] = relationship("Token", back_populates="user", passive_deletes=True, lazy="selectin")
-    sessions: Mapped[List["BatchSession"]] = relationship("BatchSession", back_populates="tutor", lazy="selectin")
-    enrollments: Mapped[List["Enrollments"]] = relationship("Enrollments", back_populates="student", foreign_keys="[Enrollments.student_id]", lazy="selectin")
-    given_enrollments: Mapped[List["Enrollments"]] = relationship("Enrollments", back_populates="enrolled_by_user", foreign_keys="[Enrollments.enrolled_by]", lazy="selectin")
-    attendances: Mapped[List["Attendance"]] = relationship("Attendance", back_populates="student", foreign_keys="[Attendance.student_id]", lazy="selectin")
-    recorded_attendances: Mapped[List["Attendance"]] = relationship("Attendance", back_populates="tutor", foreign_keys="[Attendance.recorded_by]", lazy="selectin")
+    # -- what a User eager-loads, and why almost nothing does ---------------
+    #
+    # A `User` is loaded on **every authenticated request** to resolve
+    # permissions. Every `lazy="selectin"` collection on this class is
+    # therefore an extra SELECT on the hot path of the whole API, and a
+    # `User` loaded indirectly -- through `AssignmentSubmission.student`, a
+    # quiz attempt, an exam result -- pays the same cost again.
+    #
+    # Measured on the grade-book grid (§36) for a batch of **eight**
+    # students: 10,267 queries and 55 seconds, of which almost all were
+    # these. `audit_logs` alone was 5.8s, because it fetches a person's
+    # entire audit history to satisfy an attribute nothing reads.
+    #
+    # So the collections are `lazy="raise"`, matching the five that were
+    # already changed for the same reason. Nothing needs them as
+    # collections: every consumer queries the table itself, with a filter
+    # and a page, which is the only shape that stays correct once somebody
+    # has 10,000 rows. Raising is preferred over plain lazy loading because
+    # a lazy load under asyncio fails as `MissingGreenlet`, which reads like
+    # a driver bug rather than "you asked for too much" -- and a query that
+    # genuinely needs one can still ask with `selectinload()`.
+    #
+    # `roles` stays eager, and must: permission resolution reads it on every
+    # request, and making it lazy would move the cost rather than remove it.
+    tokens: Mapped[List["Token"]] = relationship("Token", back_populates="user", passive_deletes=True, lazy="raise")
+    sessions: Mapped[List["BatchSession"]] = relationship("BatchSession", back_populates="tutor", lazy="raise")
+    enrollments: Mapped[List["Enrollments"]] = relationship("Enrollments", back_populates="student", foreign_keys="[Enrollments.student_id]", lazy="raise")
+    given_enrollments: Mapped[List["Enrollments"]] = relationship("Enrollments", back_populates="enrolled_by_user", foreign_keys="[Enrollments.enrolled_by]", lazy="raise")
+    attendances: Mapped[List["Attendance"]] = relationship("Attendance", back_populates="student", foreign_keys="[Attendance.student_id]", lazy="raise")
+    recorded_attendances: Mapped[List["Attendance"]] = relationship("Attendance", back_populates="tutor", foreign_keys="[Attendance.recorded_by]", lazy="raise")
     current_city: Mapped[Optional["City"]] = relationship("City", back_populates="users", foreign_keys=[city_id], lazy="selectin")
     country: Mapped[Optional["Country"]] = relationship("Country", foreign_keys=[country_id], lazy="selectin")
-    my_resources: Mapped[List["Resource"]] = relationship("Resource", back_populates="uploader", foreign_keys="Resource.uploaded_by", lazy="selectin")
-    shared_resources: Mapped[List["SharedResource"]] = relationship("SharedResource", back_populates="shared_with_user", foreign_keys="[SharedResource.shared_with_user_id]", lazy="selectin")
-    shared_to: Mapped[List["SharedResource"]] = relationship("SharedResource", back_populates="shared_by_user", foreign_keys="[SharedResource.shared_by_user_id]", lazy="selectin")
+    my_resources: Mapped[List["Resource"]] = relationship("Resource", back_populates="uploader", foreign_keys="Resource.uploaded_by", lazy="raise")
+    shared_resources: Mapped[List["SharedResource"]] = relationship("SharedResource", back_populates="shared_with_user", foreign_keys="[SharedResource.shared_with_user_id]", lazy="raise")
+    shared_to: Mapped[List["SharedResource"]] = relationship("SharedResource", back_populates="shared_by_user", foreign_keys="[SharedResource.shared_by_user_id]", lazy="raise")
     # `lazy="raise"` on all five, deliberately. These were `selectin`, which
     # means SQLAlchemy issues an extra SELECT for them every time a User is
     # loaded by a query -- and a User is loaded by a query on *every*
@@ -147,15 +171,15 @@ class User(Base, TimestampMixin, PublicIdMixin):
         primaryjoin="foreign(AuditLog.actor_user_id) == User.id",
         back_populates="actor",
         viewonly=True,
-        lazy="selectin",
+        lazy="raise",
     )
-    shared_links_sent: Mapped[List["SharedLink"]] = relationship("SharedLink", back_populates="shared_by_user", lazy="selectin")
-    shared_links_received: Mapped[List["SharedLinkTarget"]] = relationship("SharedLinkTarget", back_populates="shared_with_user", lazy="selectin")
+    shared_links_sent: Mapped[List["SharedLink"]] = relationship("SharedLink", back_populates="shared_by_user", lazy="raise")
+    shared_links_received: Mapped[List["SharedLinkTarget"]] = relationship("SharedLinkTarget", back_populates="shared_with_user", lazy="raise")
     courses: Mapped[List["Course"]] = relationship(
         "Course",
         secondary="tutor_courses",
         back_populates="tutors",
-        lazy="selectin"
+        lazy="raise"
     )
     quiz_attempts: Mapped[List["QuizAttempt"]] = relationship(back_populates="student")
     submissions: Mapped[List["AssignmentSubmission"]] = relationship(
@@ -176,18 +200,18 @@ class User(Base, TimestampMixin, PublicIdMixin):
     # noise. A service layer resolves "the current one" by filtering on
     # is_active / status, exactly as it already must for enrollments.
     organization_manager_memberships: Mapped[List["OrganizationManager"]] = relationship(
-        "OrganizationManager", back_populates="user", lazy="selectin"
+        "OrganizationManager", back_populates="user", lazy="raise"
     )
     organization_memberships: Mapped[List["OrganizationMembership"]] = relationship(
-        "OrganizationMembership", foreign_keys="[OrganizationMembership.user_id]", back_populates="user", lazy="selectin"
+        "OrganizationMembership", foreign_keys="[OrganizationMembership.user_id]", back_populates="user", lazy="raise"
     )
 
     # Guardian <-> student, both directions of the same many-to-many table.
     guardians: Mapped[List["StudentGuardian"]] = relationship(
-        "StudentGuardian", foreign_keys="[StudentGuardian.student_id]", back_populates="student", lazy="selectin"
+        "StudentGuardian", foreign_keys="[StudentGuardian.student_id]", back_populates="student", lazy="raise"
     )
     wards: Mapped[List["StudentGuardian"]] = relationship(
-        "StudentGuardian", foreign_keys="[StudentGuardian.guardian_id]", back_populates="guardian", lazy="selectin"
+        "StudentGuardian", foreign_keys="[StudentGuardian.guardian_id]", back_populates="guardian", lazy="raise"
     )
 
     __table_args__ = (

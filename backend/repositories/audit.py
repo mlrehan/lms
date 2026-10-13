@@ -48,7 +48,7 @@ from backend.models.identity.user import User
 from backend.models.mail import MailMessage
 from backend.models.messaging import CourseDiscussion, DiscussionReply
 from backend.models.notification import Announcement
-from backend.models.organization import Organization, OrganizationMembership
+from backend.models.organization import ManagedStudent, Organization, OrganizationMembership
 from backend.models.quiz import Question, Quiz, QuizAttempt
 from backend.models.resource import Resource, ResourceFolder
 from backend.repositories.base import BaseRepository
@@ -105,6 +105,7 @@ ENTITY_KINDS: dict[str, EntityKind] = {
     "gradebook_entry": EntityKind(GradeBookEntry),
     "organization": EntityKind(Organization, Organization.name),
     "organization_membership": EntityKind(OrganizationMembership),
+    "managed_student": EntityKind(ManagedStudent),
     "question": EntityKind(Question),
     "quiz": EntityKind(Quiz, Quiz.title),
     "quiz_attempt": EntityKind(QuizAttempt),

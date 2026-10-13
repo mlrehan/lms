@@ -23,7 +23,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): Rea
     items: section.items.filter((item) => {
       if (item.anyPermission) return permissions.hasAny(...item.anyPermission);
       if (!item.permission) return true;
-      return permissions.has(item.permission);
+      if (!permissions.has(item.permission)) return false;
+      // A second grant, where one cannot tell two audiences apart. See
+      // `NavItem.alsoRequires`.
+      return !item.alsoRequires || permissions.has(item.alsoRequires);
     }),
   })).filter((section) => section.items.length > 0);
 

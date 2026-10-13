@@ -22,7 +22,7 @@ from backend.models.enrollment import Enrollments
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
-from backend.models.organization import Organization, OrganizationManager, OrganizationMembership
+from backend.models.organization import ManagedStudent, Organization, OrganizationManager, OrganizationMembership
 from backend.security.password import hash_password
 from backend.utils.enums import (
     AttendanceStatus, CourseStatus, EnrollmentStatus, OrganizationMembershipStatus, Platforms, SubmissionType, UserStatus,
@@ -49,7 +49,7 @@ def world():
                 return User(username=email, slug=f"{tag}-{key}", email=email, first_name=key.title(), last_name=tag, hashed_password=hash_password(PASSWORD),
                             status=UserStatus.ACTIVE, can_login=True, roles=[roles[role]])
 
-            u = {k: person(k, r) for k, r in [("boss", "CORPORATE_MANAGER"), ("emp1", "STUDENT"), ("emp2", "STUDENT"), ("outsider", "STUDENT"), ("parent", "GUARDIAN"), ("tutor", "TUTOR")]}
+            u = {k: person(k, r) for k, r in [("boss", "CORPORATE_MANAGER"), ("emp1", "STUDENT"), ("emp2", "STUDENT"), ("outsider", "STUDENT"), ("colleague", "STUDENT"), ("parent", "GUARDIAN"), ("tutor", "TUTOR")]}
             org = Organization(name=f"{tag} Org", is_active=True)
             org.managers, org.memberships = [], []
             course = Course(title=f"{tag} Course", code=tag, status=CourseStatus.PUBLISHED)
@@ -58,14 +58,20 @@ def world():
             await s.flush()
             now = datetime.now(timezone.utc)
             s.add(OrganizationManager(organization_id=org.id, user_id=u["boss"].id, title="L&D", is_active=True, invited_at=now))
-            for k in ("emp1", "emp2"):
+            # Three employees of the same company; the boss is given two of
+            # them. `colleague` is the point: employment alone grants
+            # nothing now, so a manager who is not linked to them must not
+            # see them even though they share an employer.
+            for k in ("emp1", "emp2", "colleague"):
                 s.add(OrganizationMembership(organization_id=org.id, user_id=u[k].id, status=OrganizationMembershipStatus.ACTIVE, department="Ops", employee_code=k.upper()))
+            for k in ("emp1", "emp2"):
+                s.add(ManagedStudent(manager_id=u["boss"].id, student_id=u[k].id, relationship_type="Line manager", created_at=now))
             s.add(StudentGuardian(guardian_id=u["parent"].id, student_id=u["emp2"].id, relationship_type="Parent", is_primary=True, created_at=now))
             b = Batch(batch_code=f"{tag}-A", course_id=course.id, start_date=date.today(), end_date=date.today() + timedelta(days=30), is_active=True, capacity=10)
             b.sessions, b.enrollments, b.student_reviews = [], [], []
             s.add(b)
             await s.flush()
-            for k in ("emp1", "emp2", "outsider"):
+            for k in ("emp1", "emp2", "outsider", "colleague"):
                 s.add(Enrollments(batch_id=b.id, student_id=u[k].id, enrollment_date=now, status=EnrollmentStatus.CONFIRMED))
             sessions = []
             for days in (-4, -3, -2, -1):
@@ -113,6 +119,7 @@ def world():
                 await s.execute(text("DELETE FROM batches WHERE batch_code LIKE :c"), p)
                 await s.execute(text("DELETE FROM courses WHERE title LIKE :t"), p)
                 await s.execute(text("DELETE FROM student_guardians WHERE guardian_id IN (SELECT id FROM users WHERE email LIKE :u)"), p)
+                await s.execute(text("DELETE FROM manager_students WHERE manager_id IN (SELECT id FROM users WHERE username LIKE :u) OR student_id IN (SELECT id FROM users WHERE username LIKE :u)"), p)
                 await s.execute(text("DELETE FROM organization_memberships WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE :t)"), p)
                 await s.execute(text("DELETE FROM organization_managers WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE :t)"), p)
                 await s.execute(text("DELETE FROM organizations WHERE name LIKE :t"), p)
@@ -130,7 +137,11 @@ def test_a_manager_sees_their_own_employees_and_nobody_else(world) -> None:
     assert r.status_code == 200
     body = r.json()
     names = sorted(m["full_name"] for m in body["items"])
-    assert names == [f"Emp1 {world.tag}", f"Emp2 {world.tag}"]          # the outsider, in the same batch, is not there
+    # The outsider shares a batch; the colleague shares an *employer*. Before
+    # the roster became a direct link the second one was visible, because a
+    # manager saw every employee of every company they managed -- so this
+    # list is the difference the change makes, in one assertion.
+    assert names == [f"Emp1 {world.tag}", f"Emp2 {world.tag}"]
     assert body["people"] == 2
 
 

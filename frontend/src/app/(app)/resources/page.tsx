@@ -26,7 +26,6 @@ import type {
   ResourceResponse,
   ResourceSummary,
   ShareLinkResponse,
-  SharedResourceResponse,
 } from "@/lib/api/types";
 import {
   ResourcePermissionLevelValues,
@@ -57,7 +56,7 @@ import {
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/form";
 import { Select, optionsFromValues } from "@/components/ui/select";
-import { UserPicker } from "@/components/domain/user-picker";
+import { ShareDialog } from "@/components/domain/resources/share-dialog";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
@@ -95,7 +94,8 @@ function ResourceDrawer({
   const versionInput = useRef<HTMLInputElement>(null);
   const [changeNote, setChangeNote] = useState("");
   const [rename, setRename] = useState<string | null>(null);
-  const [shareWith, setShareWith] = useState<string | null>(null);
+  /** The files this drawer is currently offering to share; `null` = closed. */
+  const [sharing, setSharing] = useState<string[] | null>(null);
   const [grant, setGrant] = useState({ scope_type: "COURSE", scope_public_id: "", level: "VIEW" });
 
   const resource = useQuery({
@@ -130,20 +130,14 @@ function ResourceDrawer({
     },
   });
 
-  // VIEW by default: the narrower of the two, so a share that forgets to say
-  // grants the less. This used to be unreachable -- `shared_resources.level`
-  // was stored and read, but nothing set it, so every share was DOWNLOAD.
-  const [shareLevel, setShareLevel] = useState<"VIEW" | "DOWNLOAD">("VIEW");
-
   /*
    * Reset everything that belongs to *one* file when a different one is opened.
    *
    * This drawer stays mounted and only its `resourceId` changes, so without
-   * this its state carries over -- and for `shareLevel` that is a permission
-   * bug, not a cosmetic one: granting "Allow download" on one file left the
-   * next file's share preselected to download, so the safe default above
-   * applied on first mount and never again. Caught by sharing four files in a
-   * row and finding all four stored DOWNLOAD when only one had been set to it.
+   * this its state carries over. The sharing level was the case that made it
+   * a permission bug rather than a cosmetic one -- granting "Allow download"
+   * on one file left the next file's share preselected to download. That now
+   * lives inside `ShareDialog`, which resets on open for the same reason.
    *
    * Done during render rather than in an effect so the drawer never paints
    * once carrying the previous file's answers.
@@ -151,22 +145,11 @@ function ResourceDrawer({
   const [openFor, setOpenFor] = useState<string | null>(resourceId);
   if (openFor !== resourceId) {
     setOpenFor(resourceId);
-    setShareLevel("VIEW");
-    setShareWith(null);
+    setSharing(null);
     setChangeNote("");
     setRename(null);
     setGrant({ scope_type: "COURSE", scope_public_id: "", level: "VIEW" });
   }
-
-  const share = useApiMutation<SharedResourceResponse[], string>({
-    mutationFn: (userId) =>
-      api.post<SharedResourceResponse[]>(`/resources/${segment(resourceId!)}/share`, {
-        body: { user_ids: [userId], level: shareLevel },
-      }),
-    success: "Shared.",
-    invalidate: [["resources"]],
-    onSuccess: () => setShareWith(null),
-  });
 
   const setRestricted = useApiMutation<ResourceResponse, boolean>({
     mutationFn: (restricted) =>
@@ -444,34 +427,16 @@ function ResourceDrawer({
               {permissions.has("resource.update") && canEdit ? (
                 <div className="space-y-2 rounded-lg border border-border-subtle p-3">
                   <p className="flex items-center gap-2 text-sm font-medium">
-                    <Share2 className="size-4 text-muted-foreground" aria-hidden /> Share with a
-                    person
+                    <Share2 className="size-4 text-muted-foreground" aria-hidden /> Share with
+                    people
                   </p>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="min-w-56 flex-1">
-                      <UserPicker value={shareWith} onChange={(next) => setShareWith(next)} />
-                      <Select
-                        aria-label="What they may do"
-                        value={shareLevel}
-                        onValueChange={(next) => setShareLevel((next ?? "") as "VIEW" | "DOWNLOAD")
-                        }
-                        // Auto width, not a fixed one: `w-40` clipped "Watch /
-                        // read only" to "Watch / read o...", and a control whose
-                        // label is cut off is a control nobody can be sure of.
-                        className="h-9 text-sm"
-                       options={[{ value: "VIEW", label: "Watch / read only" }, { value: "DOWNLOAD", label: "Allow download" }]} />
-                    </div>
-                    <Button
-                      loading={share.isPending}
-                      disabled={!shareWith}
-                      onClick={() => shareWith && share.mutate(shareWith)}
-                    >
-                      Share
-                    </Button>
-                  </div>
-                  <p className="text-2xs leading-relaxed text-subtle-foreground">
-                    Adds one person at a time. Who already has access is not listed here yet.
+                  <p className="text-xs text-muted-foreground">
+                    Choose several at once. The list shows only the people you may share
+                    with, with their batch and course beside each name.
                   </p>
+                  <Button type="button" onClick={() => setSharing([data.public_id])}>
+                    <Share2 className="size-4" aria-hidden /> Share this file
+                  </Button>
                 </div>
               ) : null}
 
@@ -543,6 +508,12 @@ function ResourceDrawer({
           </>
         ) : null}
       </DialogContent>
+      <ShareDialog
+        open={sharing !== null}
+        onOpenChange={(next) => !next && setSharing(null)}
+        resourceIds={sharing ?? []}
+        resourceNames={[resource.data?.name ?? "Untitled"]}
+      />
     </Dialog>
   );
 }
@@ -572,6 +543,8 @@ function ResourcesContent() {
   // prefers the list does not want to re-choose it on every visit.
   const [layout, setLayout] = useDriveLayout("grid");
   const [selected, setSelected] = useState<string | null>(params.get("resource"));
+  /** Files ticked in the library and sent to the share dialog together. */
+  const [sharingMany, setSharingMany] = useState<string[]>([]);
   const [deleting, setDeleting] = useState<ResourceSummary | null>(null);
   const [purging, setPurging] = useState<ResourceSummary | null>(null);
 
@@ -705,6 +678,7 @@ function ResourcesContent() {
   const driveActions: DriveActions = {
     onOpenFolder: openFolder,
     onOpenResource: (resource) => setSelected(resource.public_id),
+    onShareMany: (resourceIds) => setSharingMany(resourceIds),
     // Dragging a file onto a folder is the move. The old flow -- click Move,
     // navigate to the destination, confirm on a banner -- was three steps and a
     // mode, and it is gone.
@@ -725,7 +699,10 @@ function ResourcesContent() {
     onDownload: (resource) =>
       void downloadFile(`/resources/${segment(resource.public_id)}/download`, resource.name ?? "file"),
     onCopy: (resource) => copy.mutate(resource.public_id),
-    onShare: (resource) => setSelected(resource.public_id),
+    // Straight to the dialog. It used to open the details drawer and leave
+    // the person to find the Share panel inside it, which is two steps and a
+    // search for a control they had already asked for.
+    onShare: (resource) => setSharingMany([resource.public_id]),
     onDelete: (resource) => setDeleting(resource),
     onRestore: (resource) => restore.mutate(resource.public_id),
     onRenameFolder: (folder) => setRenaming(folder),
@@ -926,6 +903,16 @@ function ResourcesContent() {
       />
 
       <ResourceDrawer resourceId={selected} onClose={() => setSelected(null)} />
+
+      <ShareDialog
+        open={sharingMany.length > 0}
+        onOpenChange={(open) => (open ? null : setSharingMany([]))}
+        resourceIds={sharingMany}
+        resourceNames={sharingMany.map(
+          (id) =>
+            resources.data?.items.find((item) => item.public_id === id)?.name ?? "Untitled",
+        )}
+      />
 
       <ConfirmDialog
         open={deleting !== null}

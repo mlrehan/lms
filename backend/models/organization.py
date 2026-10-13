@@ -1,28 +1,37 @@
-"""Corporate organizations. A corporate client enrolls its employees in
-platform courses through a Corporate_Manager; the relationships below are
-deliberately real tables, not columns on `User`:
+"""Corporate organizations, and who a Corporate Manager may actually see.
 
-* A `corporate_manager_id` (or `guardian_id`) directly on Student can express
-  exactly one manager per student and forgets history the instant someone is
-  reassigned -- both are one-column answers to a many-row question.
-* Every actual requirement here (add/invite employees, view enrollments,
-  view progress "where permitted") is answered by joining through
-  `OrganizationManager`/`OrganizationMembership`, not by a direct link
-  between a manager and a student.
+**Two different questions, and they used to share one answer.** Employment --
+which company someone works for, their employee code, their department, which
+company sponsored an enrollment -- is recorded here on `Organization`,
+`OrganizationManager` and `OrganizationMembership`. *Visibility* -- which
+students a particular manager may read -- is a direct manager-to-student link
+(`ManagedStudent`), exactly as a guardian is linked to a ward.
 
-Confirmed cardinality: one manager belongs to exactly one organization (an
-organization may have many managers); one student belongs to exactly one
-organization at a time. Both constraints are enforced with a partial unique
-index on `user_id`, scoped to the "currently active" row -- the same
-technique already used on `enrollments` for re-enrollment -- so a manager or
-employee who is reassigned or removed leaves their history intact rather
-than being deleted or overwritten.
+They were the same thing until now: a manager saw every employee of their
+company, derived by joining manager -> organization -> membership. That made
+the roster a side effect of the org chart. A company with four managers and
+two hundred employees gave each of those managers all two hundred, and there
+was no way to say "these thirty are yours".
+
+An earlier version of this docstring argued against a direct link, on the
+grounds that `corporate_manager_id` on Student is a one-column answer to a
+many-row question. That argument was right about a **column** and does not
+apply to a join table: `ManagedStudent` carries many rows per student and
+many per manager, keeps its own history, and is the same shape as
+`student_guardians`, which has answered the identical question for guardians
+since the beginning.
+
+What did not change: one manager still belongs to exactly one organization at
+a time, and one student to exactly one organization at a time, both enforced
+by a partial unique index on the "currently active" row so a reassignment
+leaves history intact. Those constraints are about *employment*, which is
+still one company per person. They no longer decide who can see whom.
 """
 
 from datetime import datetime
 
 from sqlalchemy import (Integer, String, ForeignKey, Index, text,
-                        Enum as SQLEnum, Boolean)
+                        Enum as SQLEnum, Boolean, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin, SoftDeleteMixin
@@ -108,4 +117,60 @@ class OrganizationMembership(Base, PublicIdMixin):
             postgresql_where=text("status IN ('INVITED', 'ACTIVE', 'SUSPENDED')"),
         ),
         Index("idx_organization_memberships_org", "organization_id"),
+    )
+
+
+class ManagedStudent(Base, PublicIdMixin):
+    """A Corporate Manager and one of their students, linked directly.
+
+    The same shape as `StudentGuardian`, for the same reason: a student may
+    have more than one manager (a line manager and an L&D lead), and a
+    manager has many students. Neither is expressible as a column, and
+    neither is a fact about the company.
+
+    **This table, and nothing else, decides what a manager can see.** It
+    feeds `ScopeResolver`, which feeds enrollment, attendance, submissions,
+    quiz attempts, exam results, the grade book, performance, transcripts and
+    the dashboards. A student with no row here is invisible to every manager,
+    whatever company they both belong to.
+
+    A hard delete when a link ends, like a guardianship: keeping a record of
+    who used to be able to read somebody's results, indefinitely, is data
+    nobody asked us to hold. The audit log keeps the act.
+    """
+
+    __tablename__ = "manager_students"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    manager_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    relationship_type: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, comment="e.g. 'Line manager', 'L&D sponsor'"
+    )
+    #: The manager to contact first when a student has several. Mirrors
+    #: `student_guardians.is_primary`, and is kept to one per student the
+    #: same way -- by demoting the previous holder, not by a constraint,
+    #: because "nobody is primary yet" has to stay expressible.
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    created_at: Mapped[datetime] = utc_datetime_column(nullable=False)
+
+    manager: Mapped["User"] = relationship(
+        "User", foreign_keys=[manager_id], lazy="selectin"
+    )
+    student: Mapped["User"] = relationship(
+        "User", foreign_keys=[student_id], lazy="selectin"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("manager_id", "student_id", name="uq_manager_students_manager_student"),
+        # The scope resolver asks "which students does this manager have?"
+        # on every request a manager makes.
+        Index("idx_manager_students_manager", "manager_id"),
+        Index("idx_manager_students_student", "student_id"),
     )

@@ -72,6 +72,14 @@ def world():
                 "tutor": person("tutor", "TUTOR"),
                 "student": person("student", "STUDENT"),
                 "manager": person("manager", "CORPORATE_MANAGER"),
+                # The one role that may still see a price, so the withholding
+                # below is proved rather than assumed: a test where nobody
+                # sees it would pass with the price column deleted.
+                "boss": person("boss", "SUPER_ADMIN"),
+                # An Administrator held pricing through the catalogue's full
+                # course grant. Without them in the fixture, putting it back
+                # would fail nothing.
+                "admin": person("admin", "ADMIN"),
             }
 
             # One course the tutor teaches, one they do not. Both published,
@@ -212,13 +220,26 @@ def test_a_tutor_sees_no_price_even_on_their_own_course(world) -> None:
     assert body["price"] is None
 
 
-def test_the_price_still_reaches_those_entitled_to_it(world) -> None:
-    for who in ("student", "manager"):
-        body = world.get(who, f"/courses/{world.ids['mine']}").json()
-        assert body["price"] == 250.0, who
+def test_commercial_terms_reach_the_super_admin_and_nobody_else(world) -> None:
+    """Pricing was readable by a Student, a Guardian and a Corporate Manager,
+    and by an Administrator through the catalogue's full grant. It is now the
+    Super Admin's alone -- the institution's commercial terms, not a field on
+    a course that happens to be on screen.
 
-    listed = {c["title"]: c["price"] for c in world.get("manager", "/courses", limit=100).json()["items"]}
-    assert listed[f"{world.tag} Theirs"] == 410.0
+    `None`, not `0`: a free course and a withheld price are different facts,
+    and a client that renders the second as "free" is the reason the
+    distinction is tested rather than assumed.
+    """
+    for who in ("student", "manager", "tutor", "admin"):
+        assert world.get(who, f"/courses/{world.ids['mine']}").json()["price"] is None, who
+
+    assert world.get("boss", f"/courses/{world.ids['mine']}").json()["price"] == 250.0
+
+    # The listing too, which is built with `model_validate` straight off the
+    # ORM row -- a mapper-level gate would have missed it entirely.
+    for who, expected in (("manager", None), ("boss", 410.0)):
+        listed = {c["title"]: c["price"] for c in world.get(who, "/courses", limit=100).json()["items"]}
+        assert listed[f"{world.tag} Theirs"] == expected, who
 
 
 def test_the_price_is_withheld_in_the_listing_too(world) -> None:

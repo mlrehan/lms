@@ -32,19 +32,12 @@ from backend.models.enrollment import Enrollments
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
-from backend.models.organization import OrganizationManager, OrganizationMembership
+from backend.models.organization import ManagedStudent
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import EnrollmentStatus, OrganizationMembershipStatus, UserStatus
+from backend.utils.enums import EnrollmentStatus, UserStatus
 
 ADMIN_ROLES = ("SUPER_ADMIN", "ADMIN")
 _LIVE = (EnrollmentStatus.PENDING, EnrollmentStatus.CONFIRMED, EnrollmentStatus.COMPLETED)
-# A REMOVED membership is somebody who has left the company; their former employer stops being able to write
-# to them, exactly as they stop being able to read their coursework.
-_IN_POST = (
-    OrganizationMembershipStatus.INVITED,
-    OrganizationMembershipStatus.ACTIVE,
-    OrganizationMembershipStatus.SUSPENDED,
-)
 _ROLE_LABEL = {"SUPER_ADMIN": "Administrator", "ADMIN": "Administrator", "TUTOR": "Tutor", "STUDENT": "Student", "GUARDIAN": "Guardian", "CORPORATE_MANAGER": "Manager"}
 _ROLE_ORDER = ("SUPER_ADMIN", "ADMIN", "TUTOR", "CORPORATE_MANAGER", "GUARDIAN", "STUDENT")
 
@@ -89,28 +82,20 @@ class MailAudience:
         that manager's enrolments. Writing to somebody is a smaller permission than reading about them, so it
         gets its own, smaller query.
         """
-        managed_orgs = select(OrganizationManager.organization_id).where(
-            OrganizationManager.user_id == actor.id, OrganizationManager.is_active.is_(True)
-        )
-        # Employees of an organization I manage.
-        employees = select(OrganizationMembership.user_id).where(
-            OrganizationMembership.organization_id.in_(managed_orgs),
-            OrganizationMembership.status.in_(_IN_POST),
-        )
-        # Managers of an organization I am employed by -- the return direction, so Reply works.
-        my_orgs = select(OrganizationMembership.organization_id).where(
-            OrganizationMembership.user_id == actor.id,
-            OrganizationMembership.status.in_(_IN_POST),
-        )
-        managers = select(OrganizationManager.user_id).where(
-            OrganizationManager.organization_id.in_(my_orgs),
-            OrganizationManager.is_active.is_(True),
-        )
+        # The four are two pairs, and they are now the same pair twice: a
+        # direct link read in both directions, so the return journey exists
+        # and Reply works. The corporate half used to go out through the
+        # company and back -- every employee of a company I manage, every
+        # manager of a company that employs me -- which let two strangers at
+        # the same large employer write to each other because a manager sat
+        # between them.
+        students = select(ManagedStudent.student_id).where(ManagedStudent.manager_id == actor.id)
+        managers = select(ManagedStudent.manager_id).where(ManagedStudent.student_id == actor.id)
         wards = select(StudentGuardian.student_id).where(StudentGuardian.guardian_id == actor.id)
         guardians = select(StudentGuardian.guardian_id).where(StudentGuardian.student_id == actor.id)
 
         found: set[int] = set()
-        for stmt in (employees, managers, wards, guardians):
+        for stmt in (students, managers, wards, guardians):
             found |= {r for (r,) in (await self.session.execute(stmt)).all()}
         return found
 

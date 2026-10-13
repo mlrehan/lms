@@ -192,10 +192,17 @@ async def appoint_manager(
         CurrentUser, Depends(require_permissions(perm(Module.ORGANIZATION, Action.APPOINT)))
     ],
 ) -> ManagerResponse:
-    """Gated on `organization.appoint`, which Corporate Managers deliberately
-    do **not** hold: appointing a manager grants sight of every employee's
-    records, and a manager who could appoint co-managers could hand a
-    colleague their whole roster without the institution's involvement.
+    """Appointing somebody manager of a company **grants no student**.
+
+    It used to grant all of them: a manager saw every employee of every
+    company they managed. Students are assigned one at a time now, on
+    `/manager-links`, so an appointment is a statement about the company and
+    nothing about anybody's records.
+
+    Still gated on `organization.appoint`, which Corporate Managers
+    deliberately do not hold -- a manager who could appoint co-managers could
+    put a colleague in a position to be assigned their roster without the
+    institution's involvement.
 
     A user manages at most one organization at a time.
     """
@@ -292,8 +299,12 @@ async def set_member_status(
     """INVITED → ACTIVE, and ACTIVE ⇄ SUSPENDED, with REMOVED as the exit.
     REMOVED is terminal: re-hiring creates a fresh membership rather than
     resurrecting the old one, so the previous spell of employment stays
-    intact. Removing someone also ends their manager's visibility of their
-    records immediately."""
+    intact.
+
+    Removing someone also deletes their assignments to this company's
+    managers, so those managers lose access to their records at once. That
+    used to follow from the status alone, when visibility was read from this
+    row; it is now an explicit act, because a separate table grants it."""
     return _membership_response(
         await OrganizationService(session).set_member_status(
             membership_id, payload.status, organization_public_id=organization_id, actor=actor

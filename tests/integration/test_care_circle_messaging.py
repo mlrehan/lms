@@ -26,6 +26,7 @@ from backend.models.identity.role import Role
 from backend.models.identity.user import User
 from backend.models.organization import (
     Organization,
+    ManagedStudent,
     OrganizationManager,
     OrganizationMembership,
 )
@@ -73,6 +74,18 @@ def env():
             StudentGuardian(guardian_id=guardian.id, student_id=ward.id, relationship_type="Parent"),
         ])
         await s.flush()
+
+        # The roster link, which is what the audience now reads. Built for an
+        # employee who is in post and deliberately *not* for one who has been
+        # removed -- which is the state `OrganizationService` leaves behind,
+        # since it deletes these links on the way out. That deletion is
+        # proven against the real service in
+        # `test_corporate_manager_links.py`; what this fixture reproduces is
+        # the shape of the data afterwards.
+        if employee_status is not OrganizationMembershipStatus.REMOVED:
+            s.add(ManagedStudent(manager_id=manager.id, student_id=employee.id,
+                                 relationship_type="Line manager"))
+            await s.flush()
         return dict(manager=manager, employee=employee, outsider=outsider,
                     guardian=guardian, ward=ward, org=org)
 
@@ -86,6 +99,7 @@ def env():
                 orgs = "(SELECT id FROM organizations WHERE name LIKE :o)"
                 p = {"u": f"{tag}.%", "o": f"{tag}%"}
                 await s.execute(text(f"DELETE FROM student_guardians WHERE guardian_id IN {users} OR student_id IN {users}"), p)
+                await s.execute(text(f"DELETE FROM manager_students WHERE manager_id IN {users} OR student_id IN {users}"), p)
                 await s.execute(text(f"DELETE FROM organization_memberships WHERE organization_id IN {orgs}"), p)
                 await s.execute(text(f"DELETE FROM organization_managers WHERE organization_id IN {orgs}"), p)
                 await s.execute(text("DELETE FROM organizations WHERE name LIKE :o"), p)

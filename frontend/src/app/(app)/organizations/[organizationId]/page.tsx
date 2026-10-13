@@ -128,7 +128,7 @@ function Managers({ organization }: { organization: OrganizationResponse }) {
     <Card>
       <CardHeader
         title="Managers"
-        description="People who can see and act on this organization's employees."
+        description="People appointed to manage this company. Appointing somebody here does not give them any student — assign those on Manager assignments."
         actions={
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -195,7 +195,7 @@ function Managers({ organization }: { organization: OrganizationResponse }) {
         onOpenChange={(open) => (open ? null : setRemoving(null))}
         destructive
         title="Remove this manager?"
-        description="They lose visibility of this organization's employees."
+        description="Their assignments to this company's employees are removed, so they lose access to those students' records."
         confirmLabel="Remove"
         pending={remove.isPending}
         onConfirm={() => {

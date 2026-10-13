@@ -58,7 +58,7 @@ from backend.models.google_connection import GoogleChangeRequest, GoogleConnecti
 from backend.models.guardian import StudentGuardian
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
-from backend.models.organization import OrganizationManager
+from backend.models.organization import ManagedStudent
 from backend.models.user_sync import UserSyncRun
 from backend.security import token_cipher
 from backend.services import audit_service
@@ -392,12 +392,17 @@ class GoogleCalendarSyncService:
                 .where(StudentGuardian.student_id.in_(student_ids), User.status != UserStatus.DELETED, User.deleted_at.is_(None))
             )).all()) if g
         ] if student_ids else []
+        # Invited because they look after one of these students, not because
+        # they happen to manage somewhere at the company that paid. A guest
+        # list is an outward-facing thing: the old query put every manager of
+        # a large sponsoring employer on the invitation for a class none of
+        # their own people were in.
         managers = [
             g for g in (guest(u.email, u.first_name, u.last_name, u.username, "manager") for u in (await session.execute(
-                select(User.email, User.first_name, User.last_name, User.username).join(OrganizationManager, OrganizationManager.user_id == User.id)
-                .where(OrganizationManager.organization_id.in_(org_ids), OrganizationManager.is_active.is_(True), User.status != UserStatus.DELETED, User.deleted_at.is_(None))
+                select(User.email, User.first_name, User.last_name, User.username).join(ManagedStudent, ManagedStudent.manager_id == User.id)
+                .where(ManagedStudent.student_id.in_(student_ids), User.status != UserStatus.DELETED, User.deleted_at.is_(None))
             )).all()) if g
-        ] if org_ids else []
+        ] if student_ids else []
 
         batch = SimpleNamespace(**row._mapping)
         return _Loaded(batch=batch, course_title=row.title, sessions=sessions, tutors={k: v for k, v in tutors.items() if v}, students=students, guardians=guardians, managers=managers)

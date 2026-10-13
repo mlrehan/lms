@@ -44,6 +44,21 @@ interface MarkRow {
   remarks: string;
 }
 
+/**
+ * The most rows a page may ask for.
+ *
+ * `PageParams` caps `limit` at 200 and answers **422** above it. This screen
+ * asked for 500 -- both of its queries -- so every mark sheet, on every exam,
+ * failed validation and the tab rendered `ErrorState`, whose title is
+ * "Something went wrong". It read as a crash and was a query the server had
+ * always refused.
+ *
+ * Named rather than inlined twice, because the two requests have to agree:
+ * a roster read at one size and results read at another would line up only
+ * by luck.
+ */
+const PAGE_CAP = 200;
+
 function MarkSheet({ exam }: { exam: ExamResponse }) {
   const { permissions } = useSession();
   const canRecord = permissions.has("exam.update");
@@ -52,7 +67,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
     queryKey: ["exam-results", exam.public_id],
     queryFn: () =>
       api.get<PageExamResultResponse>("/exam-results", {
-        query: { exam_id: exam.public_id, limit: 500 },
+        query: { exam_id: exam.public_id, limit: PAGE_CAP },
       }),
   });
 
@@ -63,7 +78,7 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
     queryKey: ["enrollments", exam.batch_id, "confirmed"],
     queryFn: () =>
       api.get<PageEnrollmentResponse>("/enrollments", {
-        query: { batch_id: exam.batch_id!, status: "CONFIRMED", limit: 500 },
+        query: { batch_id: exam.batch_id!, status: "CONFIRMED", limit: PAGE_CAP },
       }),
     enabled: Boolean(exam.batch_id),
   });
@@ -135,6 +150,12 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
 
   if (results.isPending || (exam.batch_id && roster.isPending)) return <LoadingState rows={5} />;
   if (results.error) return <ErrorState error={results.error} onRetry={() => void results.refetch()} />;
+  if (roster.error) {
+    // Without this a refused roster fell through to "nobody is confirmed on
+    // this exam's batch", which is a claim about the cohort rather than
+    // about the request.
+    return <ErrorState error={roster.error} onRetry={() => void roster.refetch()} />;
+  }
 
   if (current.length === 0) {
     return (
@@ -154,8 +175,20 @@ function MarkSheet({ exam }: { exam: ExamResponse }) {
     );
   }
 
+  const truncated =
+    (results.data?.total ?? 0) > PAGE_CAP || (roster.data?.total ?? 0) > PAGE_CAP;
+
   return (
     <>
+      {truncated ? (
+        <CardBody className="pb-0">
+          <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+            This cohort is larger than {PAGE_CAP} candidates, so only the first{" "}
+            {PAGE_CAP} are shown. Marks entered here save correctly; the rest need
+            recording through the API until this screen pages.
+          </p>
+        </CardBody>
+      ) : null}
       <CardBody>
         <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full border-collapse text-sm">

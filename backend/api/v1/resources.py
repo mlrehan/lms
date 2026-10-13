@@ -16,6 +16,7 @@ from backend.db.dependencies import DBSession
 from backend.models.resource import Resource, ResourceFolder, ResourcePermission, SharedResource
 from backend.schemas.base import Page, PageParams
 from backend.schemas.resource import (
+    BulkShareRequest,
     FolderCreateRequest,
     FolderResponse,
     FolderSummary,
@@ -27,9 +28,16 @@ from backend.schemas.resource import (
     ResourceSummary,
     ResourceUpdateRequest,
     ResourceVersionResponse,
+    ShareCandidateResponse,
     ShareLinkResponse,
+    SharePlacement,
     ShareResourceRequest,
     SharedResourceResponse,
+)
+from backend.services.resource_audience import (
+    ResourceShareAudience,
+    display_name,
+    role_label,
 )
 from backend.services.resource_service import ResourceService
 from backend.api.streaming import stream_for_playback
@@ -110,13 +118,26 @@ def _permission_response(p: ResourcePermission, label: str | None = None) -> Res
 
 
 def _share_response(s: SharedResource) -> SharedResourceResponse:
+    """Names and roles, never login names.
+
+    `visible_username` returns the login name to a viewer holding
+    `user.view_contact` -- correct for a staff directory, wrong here. In this
+    deployment the login name is the person's email address, and "who has this
+    file" is a list a tutor reads dozens of times a day; it must not be a way
+    to collect addresses.
+    """
     return SharedResourceResponse(
         resource_id=s.resource.public_id,
         resource_name=s.resource.name,
         level=s.level,
-        shared_with_username=visible_username(s.shared_with_user) if s.shared_with_user else None,
-        shared_by_username=visible_username(s.shared_by_user) if s.shared_by_user else None,
+        shared_with_user_id=s.shared_with_user.public_id if s.shared_with_user else None,
+        shared_with_name=display_name(s.shared_with_user) if s.shared_with_user else None,
+        shared_with_role=role_label(s.shared_with_user) if s.shared_with_user else None,
+        shared_by_name=display_name(s.shared_by_user) if s.shared_by_user else None,
         created_at=s.created_at,
+        resource_type=s.resource.resource_type,
+        mime_type=s.resource.mime_type,
+        size=s.resource.size,
     )
 
 
@@ -345,6 +366,51 @@ async def upload_resource(
             batch_public_id=batch_id,
         )
     )
+
+
+@router.get(
+    "/resources/share-audience",
+    response_model=list[ShareCandidateResponse],
+    summary="Who this caller may share files with",
+)
+async def share_audience(
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.UPDATE)))
+    ],
+    query: Annotated[str | None, Query(max_length=120)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ShareCandidateResponse]:
+    """The people this caller may hand a file to, with enough beside each name
+    to tell two Sarahs apart.
+
+    An administrator gets everybody. A tutor gets the administrators, the
+    students in the batches they teach, and those students' guardians -- and
+    the batch and course shown for each are *their own*, not every cohort the
+    person is in.
+
+    Declared before `/resources/{resource_id}` on purpose: FastAPI matches in
+    definition order, so a literal path that sits after a `{uuid}` route is
+    parsed as an id and answers 422.
+    """
+    found = await ResourceShareAudience(session).search(
+        actor, query=query, limit=limit, offset=offset
+    )
+    return [
+        ShareCandidateResponse(
+            public_id=c.public_id,
+            name=c.name,
+            role=c.role,
+            placements=[
+                SharePlacement(batch_code=p.batch_code, course_title=p.course_title)
+                for p in c.placements
+            ],
+            relation=c.relation,
+            more_placements=c.more_placements,
+        )
+        for c in found
+    ]
 
 
 @router.get("/resources/{resource_id}", response_model=ResourceResponse, summary="Get one resource")
@@ -600,6 +666,27 @@ async def revoke_permission(
 # =============================================================================
 # SHARING
 # =============================================================================
+
+
+@router.post(
+    "/resources/share",
+    response_model=list[SharedResourceResponse],
+    summary="Share several files with several people",
+)
+async def share_resources(
+    payload: BulkShareRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.UPDATE)))
+    ],
+) -> list[SharedResourceResponse]:
+    """One decision, not N. Every file is authorised and every recipient
+    checked against the audience before a single row is written, so a refusal
+    cannot leave half a share behind."""
+    rows = await ResourceService(session).share_many(
+        payload.resource_ids, payload.user_ids, actor=actor, level=payload.level
+    )
+    return [_share_response(s) for s in rows]
 
 
 @router.post(
