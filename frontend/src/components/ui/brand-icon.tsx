@@ -5,55 +5,38 @@ export function BrandIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 512 512"
+      viewBox="0 0 396 548"
       fill="none"
-      className={cn("size-6 shrink-0", className)}
+      className={cn("h-6 w-auto shrink-0 aspect-[396/548]", className)}
       aria-hidden="true"
       {...props}
     >
-      <defs>
-        <linearGradient id="laitBrandRedSvg" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stop-color="#FF1A24" />
-          <stop offset="100%" stop-color="#D90412" />
-        </linearGradient>
-      </defs>
-
       {/* Top Left Mouse Button */}
-      <path
-        d="M 48 28 H 242 A 4 4 0 0 1 246 32 V 134 A 4 4 0 0 1 242 138 H 44 A 4 4 0 0 1 40 134 V 36 A 8 8 0 0 1 48 28 Z"
-        fill="url(#laitBrandRedSvg)"
-      />
+      <rect x="0" y="0" width="190" height="136" rx="3" fill="#FF0000" />
 
       {/* Top Right Mouse Button */}
-      <path
-        d="M 270 28 H 464 A 8 8 0 0 1 472 36 V 134 A 4 4 0 0 1 468 138 H 270 A 4 4 0 0 1 266 134 V 32 A 4 4 0 0 1 270 28 Z"
-        fill="url(#laitBrandRedSvg)"
-      />
+      <rect x="206" y="0" width="190" height="136" rx="3" fill="#FF0000" />
 
-      {/* Lower Mouse Shield Body */}
-      <path
-        d="M 40 158 H 472 V 326 C 472 422 374 484 256 484 C 138 484 40 422 40 326 Z"
-        fill="url(#laitBrandRedSvg)"
-      />
+      {/* Lower Shield Body: straight vertical sides down to 394, bottom U-curve to 548 */}
+      <path d="M 0 152 H 396 V 394 C 396 480 300 548 198 548 C 96 548 0 480 0 394 Z" fill="#FF0000" />
 
-      {/* White Hand Cursor Vector */}
+      {/* Stylized White Outline Hand Cursor */}
       <g fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
-        {/* Index Finger */}
-        <path d="M 168 344 V 202 A 30 30 0 0 1 228 202 V 344" />
+        {/* Extended Index Finger */}
+        <path d="M 116 350 V 200 A 27.5 27.5 0 0 1 171 200 V 350" />
 
-        {/* Middle Finger */}
-        <path d="M 228 270 A 29 29 0 0 1 286 270 V 340" />
+        {/* Folded Middle Finger */}
+        <path d="M 171 268 A 25.5 25.5 0 0 1 222 268 V 345" />
 
-        {/* Ring Finger */}
-        <path d="M 286 286 A 28 28 0 0 1 342 286 V 344" />
+        {/* Folded Ring Finger */}
+        <path d="M 222 282 A 27.5 27.5 0 0 1 277 282 V 350" />
 
-        {/* Pinky Finger & Right Palm */}
-        <path d="M 342 302 A 23 23 0 0 1 388 302 V 370 C 388 410 376 440 358 458 L 336 474" />
+        {/* Folded Pinky Finger & Right Palm / Wrist */}
+        <path d="M 277 298 A 20 20 0 0 1 317 298 V 420 C 317 460 302 510 275 540" />
 
-        {/* Thumb & Left Palm */}
-        <path d="M 168 306 C 146 290 126 270 112 272 C 96 274 90 288 92 304 C 94 324 104 336 104 358 C 104 382 100 406 102 426 C 104 450 118 466 142 472 L 176 474" />
+        {/* Thumb & Left Palm / Wrist */}
+        <path d="M 116 256 C 88 250 68 274 54 298 C 46 312 48 326 62 338 C 66 348 62 366 62 386 V 420 C 62 460 84 508 129 540" />
       </g>
     </svg>
   );
 }
-

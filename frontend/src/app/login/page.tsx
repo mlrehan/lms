@@ -139,8 +139,8 @@ export default function LoginPage() {
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-2 text-center">
-          <div className="mx-auto flex size-12 items-center justify-center">
-            <BrandIcon className="size-11" />
+          <div className="mx-auto flex h-14 items-center justify-center">
+            <BrandIcon className="h-12 w-auto" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">Sign in to the LMS console</h1>
           <p className="text-sm text-muted-foreground">
