@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/primitives";
 import { HelpNavItem } from "@/components/help/help-nav-item";
 import { EditorNav } from "@/components/shell/editor-nav";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string): boolean {
@@ -198,8 +199,8 @@ export function Sidebar({
           {!collapsed ? (
             <>
               <Link href="/" className="flex items-center gap-2.5 min-w-0 group">
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.16)]">
-                  <GraduationCap className="size-4" />
+                <div className="flex size-7 shrink-0 items-center justify-center rounded-md">
+                  <BrandIcon className="size-6" />
                 </div>
                 <span className="font-display text-sm font-semibold tracking-tight truncate group-hover:text-primary transition-colors">
                   LMS Console
@@ -226,8 +227,8 @@ export function Sidebar({
                 title="Expand sidebar"
                 aria-label="Expand sidebar"
               >
-                <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.16)]">
-                  <GraduationCap className="size-4" />
+                <div className="flex size-7 items-center justify-center rounded-md">
+                  <BrandIcon className="size-6" />
                 </div>
               </Button>
             </Tooltip>
@@ -248,7 +249,10 @@ export function Sidebar({
           />
           <div className="relative flex h-full w-64 flex-col border-r border-border-subtle bg-background shadow-overlay">
             <div className="flex h-14 items-center justify-between border-b border-border-subtle px-4">
-              <span className="font-display text-sm font-semibold tracking-tight">LMS Console</span>
+              <div className="flex items-center gap-2.5">
+                <BrandIcon className="size-5" />
+                <span className="font-display text-sm font-semibold tracking-tight">LMS Console</span>
+              </div>
               <Button variant="ghost" size="icon" aria-label="Close" onClick={onMobileClose}>
                 <X />
               </Button>

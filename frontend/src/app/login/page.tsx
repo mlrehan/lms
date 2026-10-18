@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { GraduationCap } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/primitives";
@@ -138,8 +139,8 @@ export default function LoginPage() {
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-2 text-center">
-          <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <GraduationCap className="size-6" />
+          <div className="mx-auto flex size-12 items-center justify-center">
+            <BrandIcon className="size-11" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">Sign in to the LMS console</h1>
           <p className="text-sm text-muted-foreground">

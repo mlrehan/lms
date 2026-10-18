@@ -39,6 +39,15 @@ export const metadata: Metadata = {
   // An administration console has nothing to gain from being indexed, and a
   // crawler following a link into it only ever reaches the sign-in screen.
   robots: { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
 };
 
 export const viewport: Viewport = {
