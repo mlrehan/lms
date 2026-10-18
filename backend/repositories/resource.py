@@ -170,11 +170,27 @@ class ResourceRepository(BaseRepository[Resource]):
         query: str | None = None,
         include_deleted: bool = False,
         include_restricted: bool = False,
+        uploader_id: int | None = None,
+        status: str | None = None,
     ) -> tuple[Sequence[Resource], int]:
         stmt = self._base()
 
-        if not include_deleted:
+        if status == "deleted":
+            stmt = stmt.where(Resource.is_deleted.is_(True))
+        elif status == "active":
             stmt = stmt.where(Resource.is_deleted.is_(False))
+        elif status == "all":
+            # Both active and deleted resources
+            pass
+        elif not include_deleted:
+            stmt = stmt.where(Resource.is_deleted.is_(False))
+        else:
+            # Recycle bin listing
+            stmt = stmt.where(Resource.is_deleted.is_(True))
+
+        if uploader_id is not None:
+            stmt = stmt.where(Resource.uploaded_by == uploader_id)
+
 
         # Filtered in the query, not after it. Restricted rows are never loaded
         # for someone who may not see them, so a paging count cannot reveal

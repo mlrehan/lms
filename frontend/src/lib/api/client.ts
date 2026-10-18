@@ -197,3 +197,62 @@ export async function downloadFile(
   anchor.remove();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Upload a file with real-time percentage progress (0-100%).
+ * Uses XMLHttpRequest to receive upload progress events from the browser.
+ */
+export function uploadFileWithProgress<T>(
+  path: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void,
+  options?: { signal?: AbortSignal }
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}${path}`);
+    xhr.withCredentials = true;
+
+    if (options?.signal) {
+      options.signal.addEventListener("abort", () => {
+        xhr.abort();
+        reject(new DOMException("Upload aborted by user", "AbortError"));
+      });
+    }
+
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          onProgress(percent);
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      const isJson = (xhr.getResponseHeader("content-type") ?? "").includes("application/json");
+      let payload: ApiErrorPayload = {};
+      if (isJson) {
+        try {
+          payload = JSON.parse(xhr.responseText) as ApiErrorPayload;
+        } catch {
+          payload = {};
+        }
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(100);
+        resolve((isJson ? payload : undefined) as T);
+      } else {
+        reject(new ApiError(xhr.status, payload));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new ApiError(0, { message: "Network error occurred during file upload." }));
+    };
+
+    xhr.send(formData);
+  });
+}
+

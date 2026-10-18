@@ -98,6 +98,9 @@ class ResourceSummary(APIModel):
     mime_type: str | None = None
     size: int | None = None
     created_at: datetime
+    uploaded_by_username: str | None = None
+    is_deleted: bool = False
+
 
 
 class ResourceResponse(ResourceSummary):
@@ -283,3 +286,87 @@ class ShareLinkResponse(APIModel):
     url_path: str | None = Field(
         default=None, description="Relative path a recipient can open without signing in."
     )
+
+
+class BulkPurgeRequest(RequestModel):
+    resource_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=500, description="Resources to permanently destroy."
+    )
+    force: bool = Field(
+        default=False, description="Purge even if not previously moved to recycle bin (Super Admin only)."
+    )
+
+
+class BulkPurgeResponse(APIModel):
+    purged_count: int = Field(description="Number of resources successfully purged.")
+
+
+class PurgeAllResourcesResponse(APIModel):
+    purged_count: int = Field(description="Number of resources successfully purged.")
+
+
+class BulkDeleteRequest(RequestModel):
+    resource_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=500, description="Resources to move to the recycle bin."
+    )
+
+
+class BulkDeleteResponse(APIModel):
+    deleted_count: int = Field(description="Number of resources moved to recycle bin.")
+
+
+class BulkRestoreRequest(RequestModel):
+    resource_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=500, description="Resources to restore from recycle bin."
+    )
+
+
+class BulkRestoreResponse(APIModel):
+    restored_count: int = Field(description="Number of resources restored.")
+
+
+class SharedUserInfo(APIModel):
+    user_id: uuid.UUID
+    name: str
+    email_or_username: str | None = None
+    role: str | None = None
+    level: ResourcePermissionLevel
+    shared_by_name: str | None = None
+    created_at: datetime
+
+
+class GrantInfo(APIModel):
+    scope_type: ResourceScopeType
+    scope_id: int
+    scope_label: str | None = None
+    level: ResourcePermissionLevel
+    created_at: datetime
+
+
+class ResourceImpactItem(APIModel):
+    resource_id: uuid.UUID
+    name: str
+    is_deleted: bool = False
+    uploaded_by_username: str | None = None
+    course_title: str | None = None
+    batch_code: str | None = None
+    direct_shares_count: int = 0
+    direct_shares: list[SharedUserInfo] = Field(default_factory=list)
+    grants_count: int = 0
+    grants: list[GrantInfo] = Field(default_factory=list)
+    estimated_affected_users: int = 0
+
+
+class DeletionImpactRequest(RequestModel):
+    resource_ids: list[uuid.UUID] = Field(
+        min_length=1, max_length=500, description="Resources to inspect before permanent deletion."
+    )
+
+
+class DeletionImpactResponse(APIModel):
+    resources: list[ResourceImpactItem]
+    total_resources: int
+    total_direct_shares: int
+    total_grants: int
+    total_affected_users: int
+

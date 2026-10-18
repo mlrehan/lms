@@ -16,13 +16,23 @@ from backend.db.dependencies import DBSession
 from backend.models.resource import Resource, ResourceFolder, ResourcePermission, SharedResource
 from backend.schemas.base import Page, PageParams
 from backend.schemas.resource import (
+    BulkDeleteRequest,
+    BulkDeleteResponse,
+    BulkPurgeRequest,
+    BulkPurgeResponse,
+    BulkRestoreRequest,
+    BulkRestoreResponse,
     BulkShareRequest,
+    DeletionImpactRequest,
+    DeletionImpactResponse,
     FolderCreateRequest,
     FolderResponse,
     FolderSummary,
     FolderUpdateRequest,
     GrantPermissionRequest,
+    PurgeAllResourcesResponse,
     ResourceCopyRequest,
+    ResourceImpactItem,
     ResourcePermissionResponse,
     ResourceResponse,
     ResourceSummary,
@@ -34,6 +44,7 @@ from backend.schemas.resource import (
     ShareResourceRequest,
     SharedResourceResponse,
 )
+
 from backend.services.resource_audience import (
     ResourceShareAudience,
     display_name,
@@ -312,6 +323,9 @@ async def list_resources(
     resource_type: Annotated[ResourceType | None, Query()] = None,
     query: Annotated[str | None, Query(max_length=100)] = None,
     include_deleted: Annotated[bool, Query(description="Requires resource.delete.")] = False,
+    uploader_id: Annotated[uuid.UUID | None, Query(description="Filter files by uploader.")] = None,
+    only_mine: Annotated[bool, Query(description="Filter to files uploaded by caller.")] = False,
+    file_status: Annotated[str | None, Query(description="Filter by file status: active, deleted, or all.")] = None,
 ) -> Page[ResourceSummary]:
     """Visible through three independent routes: the resource's course, its
     batch, or an explicit permission grant / direct share."""
@@ -324,10 +338,29 @@ async def list_resources(
         resource_type=resource_type,
         query=query,
         include_deleted=include_deleted,
+        uploader_public_id=uploader_id,
+        only_mine=only_mine,
+        status=file_status,
     )
     return Page.build(
-        [ResourceSummary.model_validate(r) for r in rows], total=total, params=params
+        [
+            ResourceSummary(
+                public_id=r.public_id,
+                name=r.name,
+                resource_type=r.resource_type,
+                is_restricted=r.is_restricted,
+                mime_type=r.mime_type,
+                size=r.size,
+                created_at=r.created_at,
+                uploaded_by_username=visible_username(r.uploader) if r.uploader else None,
+                is_deleted=r.is_deleted,
+            )
+            for r in rows
+        ],
+        total=total,
+        params=params,
     )
+
 
 
 @router.post(
@@ -411,6 +444,117 @@ async def share_audience(
         )
         for c in found
     ]
+
+
+@router.post(
+    "/resources/delete-many",
+    response_model=BulkDeleteResponse,
+    summary="Move multiple resources to the recycle bin",
+)
+async def delete_many_resources(
+    payload: BulkDeleteRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
+    ],
+) -> BulkDeleteResponse:
+    """Soft delete multiple selected resources."""
+    count = await ResourceService(session).soft_delete_many(
+        payload.resource_ids, actor=actor
+    )
+    return BulkDeleteResponse(deleted_count=count)
+
+
+@router.post(
+    "/resources/restore-many",
+    response_model=BulkRestoreResponse,
+    summary="Restore multiple resources from the recycle bin",
+)
+async def restore_many_resources(
+    payload: BulkRestoreRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
+    ],
+) -> BulkRestoreResponse:
+    """Restore multiple soft-deleted resources."""
+    count = await ResourceService(session).restore_many(
+        payload.resource_ids, actor=actor
+    )
+    return BulkRestoreResponse(restored_count=count)
+
+
+@router.post(
+    "/resources/deletion-impact",
+    response_model=DeletionImpactResponse,
+    summary="Inspect affected users and dependencies before permanent deletion",
+)
+async def deletion_impact(
+    payload: DeletionImpactRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
+    ],
+) -> DeletionImpactResponse:
+    """Inspect affected users, active shares, and scope permissions before permanent deletion."""
+    return await ResourceService(session).get_deletion_impact(
+        payload.resource_ids, actor=actor
+    )
+
+
+@router.post(
+    "/resources/purge-many",
+    response_model=BulkPurgeResponse,
+    summary="Permanently destroy multiple resources",
+)
+async def purge_many_resources(
+
+    payload: BulkPurgeRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
+    ],
+) -> BulkPurgeResponse:
+    """Permanently destroy multiple selected resources and all their versions."""
+    count = await ResourceService(session).purge_many(
+        payload.resource_ids, actor=actor, force=payload.force
+    )
+    return BulkPurgeResponse(purged_count=count)
+
+
+@router.delete(
+    "/resources/purge-all",
+    response_model=PurgeAllResourcesResponse,
+    summary="Permanently destroy all resources (Super Admin) or empty recycle bin",
+)
+async def purge_all_resources(
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
+    ],
+    in_bin_only: Annotated[
+        bool, Query(description="Only purge resources currently in the recycle bin")
+    ] = True,
+) -> PurgeAllResourcesResponse:
+    """Permanently destroy all resources in the recycle bin or the entire system (Super Admin)."""
+    count = await ResourceService(session).purge_all(actor=actor, in_bin_only=in_bin_only)
+    return PurgeAllResourcesResponse(purged_count=count)
+
+
+@router.delete(
+    "/resources/bin",
+    response_model=PurgeAllResourcesResponse,
+    summary="Empty the recycle bin permanently",
+)
+async def empty_recycle_bin(
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
+    ],
+) -> PurgeAllResourcesResponse:
+    """Permanently destroy all soft-deleted resources in the recycle bin."""
+    count = await ResourceService(session).purge_all(actor=actor, in_bin_only=True)
+    return PurgeAllResourcesResponse(purged_count=count)
 
 
 @router.get("/resources/{resource_id}", response_model=ResourceResponse, summary="Get one resource")
@@ -581,7 +725,7 @@ async def restore_resource(
 @router.delete(
     "/resources/{resource_id}/purge",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Permanently destroy a deleted resource",
+    summary="Permanently destroy a resource",
 )
 async def purge_resource(
     resource_id: uuid.UUID,
@@ -589,10 +733,15 @@ async def purge_resource(
     actor: Annotated[
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.DELETE)))
     ],
+    force: Annotated[
+        bool,
+        Query(
+            description="Force purge even if not previously deleted (Super Admin only)"
+        ),
+    ] = False,
 ) -> Response:
-    """Irreversible, and only reachable on an already-deleted resource — a
-    one-call destroy is how files get lost to a mis-click."""
-    await ResourceService(session).purge(resource_id, actor=actor)
+    """Irreversible permanent destruction of a resource and all its stored versions."""
+    await ResourceService(session).purge(resource_id, actor=actor, force=force)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

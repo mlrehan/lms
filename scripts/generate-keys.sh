@@ -87,8 +87,15 @@ STORAGE_LOCAL_PATH=/app/var/storage
 STORAGE_MAX_UPLOAD_BYTES=104857600
 
 MAIL_ENABLED=false
-MAIL_SUPPRESS_SEND=false
-MAIL_APP_URL=https://${DOMAIN}
+# External LAIT System Synchronization
+LAIT_API_BASE_URL=${LAIT_API_BASE_URL:-https://api.londonacademyofit.co.uk}
+LAIT_API_KEY=${LAIT_API_KEY:-}
+
+# Google Calendar Integration (Optional)
+GOOGLE_EMAIL=${GOOGLE_EMAIL:-}
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+GOOGLE_REDIRECT_URI=https://${DOMAIN}/integrations/google/callback
 
 LMS_ADMIN_PASSWORD=${ADMIN_PW}
 

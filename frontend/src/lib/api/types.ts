@@ -488,6 +488,82 @@ export interface BodyUploadVersionApiV1ResourcesversionsPost {
   change_note?: string | null;
 }
 
+export interface BulkPurgeRequest {
+  /** Resources to permanently destroy. */
+  resource_ids: string[];
+  /** Force purge even if not previously moved to recycle bin (Super Admin only). */
+  force?: boolean;
+}
+
+export interface BulkPurgeResponse {
+  purged_count: number;
+}
+
+export interface PurgeAllResourcesResponse {
+  purged_count: number;
+}
+
+export interface BulkDeleteRequest {
+  resource_ids: string[];
+}
+
+export interface BulkDeleteResponse {
+  deleted_count: number;
+}
+
+export interface BulkRestoreRequest {
+  resource_ids: string[];
+}
+
+export interface BulkRestoreResponse {
+  restored_count: number;
+}
+
+export interface SharedUserInfo {
+  user_id: string;
+  name: string;
+  email_or_username?: string | null;
+  role?: string | null;
+  level: ResourcePermissionLevel;
+  shared_by_name?: string | null;
+  created_at: string;
+}
+
+export interface GrantInfo {
+  scope_type: ResourceScopeType;
+  scope_id: number;
+  scope_label?: string | null;
+  level: ResourcePermissionLevel;
+  created_at: string;
+}
+
+export interface ResourceImpactItem {
+  resource_id: string;
+  name: string;
+  is_deleted?: boolean;
+  uploaded_by_username?: string | null;
+  course_title?: string | null;
+  batch_code?: string | null;
+  direct_shares_count: number;
+  direct_shares: SharedUserInfo[];
+  grants_count: number;
+  grants: GrantInfo[];
+  estimated_affected_users: number;
+}
+
+export interface DeletionImpactRequest {
+  resource_ids: string[];
+}
+
+export interface DeletionImpactResponse {
+  resources: ResourceImpactItem[];
+  total_resources: number;
+  total_direct_shares: number;
+  total_grants: number;
+  total_affected_users: number;
+}
+
+
 /**
  * Several files, several people, one decision.
  */
@@ -2741,7 +2817,10 @@ export interface ResourceSummary {
   mime_type?: string | null;
   size?: number | null;
   created_at: string;
+  uploaded_by_username?: string | null;
+  is_deleted?: boolean;
 }
+
 
 export type ResourceType = "Lecture Sheet" | "Lesson" | "Document" | "Video" | "Audio" | "Recordings" | "Presentation" | "Quiz" | "Assignment" | "Project" | "Certificate" | "Progress Report" | "Announcement" | "Policy Document" | "Custom Content";
 export const ResourceTypeValues = ["Lecture Sheet", "Lesson", "Document", "Video", "Audio", "Recordings", "Presentation", "Quiz", "Assignment", "Project", "Certificate", "Progress Report", "Announcement", "Policy Document", "Custom Content"] as const;

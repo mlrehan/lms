@@ -119,6 +119,9 @@ docker compose run --rm backend python -m backend.cli.seed \
   --admin-username superadmin \
   --admin-email admin@yourdomain.com \
   --non-interactive
+
+# 4. (Optional) Run initial data synchronisation from external LAIT API
+docker compose run --rm backend python -m backend.cli.sync_all --once
 ```
 
 ### Step A.5 — Issue Let's Encrypt SSL & Launch Stack
@@ -195,6 +198,9 @@ docker compose run --rm backend python -m backend.cli.seed \
   --admin-username superadmin \
   --admin-email admin@lait.co \
   --non-interactive
+
+# 4. Run initial data synchronisation from external LAIT API (imports users, courses, batches)
+docker compose run --rm backend python -m backend.cli.sync_all --once
 ```
 
 ### Step B.5 — Start Application Containers
@@ -326,6 +332,14 @@ docker compose logs --tail=50 backend
 docker compose logs --tail=50 frontend
 ```
 
+> [!IMPORTANT]
+> **Applying changes made to `.env`**:  
+> `docker compose restart` does **not** re-read `.env` files. If you add, remove, or change any environment variables in `.env`, you must run:  
+> ```bash
+> docker compose up -d backend webhooks-worker
+> ```  
+> to recreate the containers with the updated environment.
+
 ### Emergency Rollback Runbook (If an Update Has Issues)
 ```bash
 # 1. Check out the previous stable commit or release tag
@@ -420,3 +434,29 @@ docker compose -f docker-compose.local.yml down
 ### 3. Realtime Stream Disconnecting Frequently
 - **Cause**: Nginx proxy buffering or caching is choking SSE frames.
 - **Resolution**: Ensure `proxy_buffering off;` and `proxy_cache off;` are present in Nginx for `location ~ ^/api/(backend/)?realtime/`.
+
+### 4. `USERS: LAIT synchronisation is not configured`
+- **Cause**: `LAIT_API_KEY` is missing or empty in `/var/www/lait/LMS/.env`.
+- **Resolution**:
+  1. Add the credentials to `.env`:
+     ```ini
+     LAIT_API_BASE_URL=https://api.londonacademyofit.co.uk
+     LAIT_API_KEY=leTk0x3uoi1sRhPQFNvX86bw9VWMqjtm
+     ```
+  2. Recreate the containers with the new variables:
+     ```bash
+     docker compose up -d backend webhooks-worker
+     ```
+
+### 5. `idle: automatic synchronisation is switched off` in Terminal
+- **Cause**: Running `python -m backend.cli.sync_all` without arguments defaults to background daemon mode, which waits for the scheduled toggle in the dashboard.
+- **Resolution**: Pass the `--once` flag to trigger an immediate, one-pass synchronization:
+  ```bash
+  docker compose run --rm backend python -m backend.cli.sync_all --once
+  ```
+
+### 6. `502 Bad Gateway` After Replacing Existing LMS
+- **Cause**: The host's Nginx configuration (`/etc/nginx/sites-available/lms`) is still pointing to port `8000` (the old Gunicorn port) instead of the new Next.js frontend port `3000`.
+- **Resolution**:
+  1. Update `/etc/nginx/sites-available/lms`: change `proxy_pass http://127.0.0.1:8000;` to `proxy_pass http://127.0.0.1:3000;`.
+  2. Reload Nginx: `sudo nginx -t && sudo systemctl reload nginx`.

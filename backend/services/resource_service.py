@@ -21,8 +21,9 @@ from datetime import UTC, datetime
 from typing import Sequence
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from backend.core.config import get_settings
 from backend.core.resource_access import at_least, highest
@@ -44,23 +45,29 @@ from backend.repositories.resource import (
     ResourceRepository,
     SharedResourceRepository,
 )
+from backend.core.privacy import visible_username
 from backend.schemas.base import PageParams
 from backend.schemas.resource import (
+    DeletionImpactResponse,
     FolderCreateRequest,
     FolderUpdateRequest,
+    GrantInfo,
     GrantPermissionRequest,
+    ResourceImpactItem,
     ResourceUpdateRequest,
+    SharedUserInfo,
 )
 from backend.services import audit_service
 from backend.core.permissions import Action as _Act, Module as _Mod, perm as _perm
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
-from backend.services.resource_audience import ResourceShareAudience
+from backend.services.resource_audience import ResourceShareAudience, display_name, role_label
 from backend.services.course_service import CourseService
 from backend.services.scope import ScopeResolver
 from backend.storage import get_storage
 from backend.storage.base import build_key
 from backend.utils.enums import ResourcePermissionLevel, ResourceScopeType, ResourceType
+
 
 logger = get_logger(__name__)
 
@@ -289,6 +296,9 @@ class ResourceService:
         resource_type: ResourceType | None = None,
         query: str | None = None,
         include_deleted: bool = False,
+        uploader_public_id: uuid.UUID | None = None,
+        only_mine: bool = False,
+        status: str | None = None,
     ) -> tuple[Sequence[Resource], int]:
         folder_id = None
         if folder_public_id is not None:
@@ -298,9 +308,25 @@ class ResourceService:
         if course_public_id is not None:
             course_id = (await self.courses.get(course_public_id, actor=actor)).id
 
+        uploader_id: int | None = None
+        if only_mine:
+            uploader_id = actor.id
+        elif uploader_public_id is not None:
+            user = await self._load_user(uploader_public_id)
+            uploader_id = user.id
+
         course_scope = await self.scopes.visible_course_ids(actor)
         batch_scope = await self.scopes.visible_batch_ids(actor)
         extra = await self._explicitly_granted_resource_ids(actor)
+
+        is_super = getattr(actor, "is_super_admin", False) or any(
+            (r.name or "").upper() == "SUPER_ADMIN" for r in (getattr(actor, "roles", []) or [])
+        )
+        can_manage = await self._can_manage(actor) or is_super
+
+        resolved_status = status
+        if resolved_status in ("all", "deleted") and not can_manage:
+            resolved_status = "active"
 
         return await self.resources.search(
             params,
@@ -308,17 +334,16 @@ class ResourceService:
             batch_scope=batch_scope,
             extra_resource_ids=extra,
             folder_id=folder_id,
-            # Ignored when a folder is named, and deliberately dropped when a
-            # search term is given: browsing is scoped to where you are, a
-            # search spans the library -- which is what people expect from
-            # every file manager.
             root_only=root_only and folder_id is None and not query,
             course_id=course_id,
             resource_type=resource_type,
             query=query,
-            include_deleted=include_deleted and await self._can_manage(actor),
+            include_deleted=include_deleted and can_manage,
             include_restricted=self.may_see_restricted(actor),
+            uploader_id=uploader_id,
+            status=resolved_status,
         )
+
 
     @staticmethod
     def may_see_restricted(actor: User) -> bool:
@@ -661,6 +686,39 @@ class ResourceService:
             details={"soft": True},
         )
 
+    async def soft_delete_many(
+        self, public_ids: Sequence[uuid.UUID], *, actor: User
+    ) -> int:
+        count = 0
+        for public_id in public_ids:
+            try:
+                resource = await self.get(public_id, actor=actor)
+            except NotFoundError:
+                continue
+
+            actual = await self.effective_level(resource, actor)
+            if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                continue
+
+            if resource.is_deleted:
+                continue
+
+            resource.is_deleted = True
+            resource.deleted_at = datetime.now(UTC)
+            resource.modified_by = actor.id
+
+            audit_service.record(
+                self.session,
+                action=AuditAction.DELETE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource",
+                entity_id=resource.id,
+                details={"soft": True, "bulk": True},
+            )
+            count += 1
+        return count
+
     async def restore(self, public_id: uuid.UUID, *, actor: User) -> Resource:
         resource = await self.resources.get_by_public_id_full(public_id)
         if resource is None or not await self._resource_reachable(resource, actor):
@@ -684,26 +742,67 @@ class ResourceService:
         )
         return resource
 
-    async def purge(self, public_id: uuid.UUID, *, actor: User) -> None:
+    async def restore_many(
+        self, public_ids: Sequence[uuid.UUID], *, actor: User
+    ) -> int:
+        count = 0
+        for public_id in public_ids:
+            resource = await self.resources.get_by_public_id_full(public_id)
+            if resource is None or not await self._resource_reachable(resource, actor):
+                continue
+
+            actual = await self.effective_level(resource, actor)
+            if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                continue
+
+            if not resource.is_deleted:
+                continue
+
+            resource.is_deleted = False
+            resource.deleted_at = None
+            resource.modified_by = actor.id
+
+            audit_service.record(
+                self.session,
+                action=AuditAction.UPDATE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource",
+                entity_id=resource.id,
+                details={"restored": True, "bulk": True},
+            )
+            count += 1
+        return count
+
+    async def purge(self, public_id: uuid.UUID, *, actor: User, force: bool = False) -> None:
         """Permanently remove the row and every stored version."""
         resource = await self.resources.get_by_public_id_full(public_id)
         if resource is None or not await self._resource_reachable(resource, actor):
             raise NotFoundError("Resource not found.")
         await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
-        if not resource.is_deleted:
-            # Purge is the second half of a two-step delete on purpose: an
-            # irreversible destroy reachable in one call is how files get
-            # lost to a mis-click.
+
+        is_super = getattr(actor, "is_super_admin", False) or any(
+            (r.name or "").upper() == "SUPER_ADMIN" for r in (getattr(actor, "roles", []) or [])
+        )
+        if not resource.is_deleted and not (is_super or force):
             raise ConflictError("Delete the resource before purging it.")
 
+        # Clean up any direct shares and scope permissions first
+        stmt_perms = delete(ResourcePermission).where(ResourcePermission.resource_id == resource.id)
+        await self.session.execute(stmt_perms)
+        stmt_shares = delete(SharedResource).where(SharedResource.resource_id == resource.id)
+        await self.session.execute(stmt_shares)
+
         versions = await self.resources.versions_for(resource.id)
-        for version in versions:
+        paths_to_delete = {v.path for v in versions if v.path}
+        if resource.path:
+            paths_to_delete.add(resource.path)
+
+        for path in paths_to_delete:
             try:
-                await self.storage.delete(version.path)
+                await self.storage.delete(path)
             except Exception:  # noqa: BLE001
-                # Best effort: an orphaned object is reclaimable dead weight,
-                # whereas failing here would leave a row nobody can remove.
-                logger.warning("Failed to delete stored object", extra={"key": version.path})
+                logger.warning("Failed to delete stored object", extra={"key": path})
 
         entity_id = resource.id
         await self.session.delete(resource)
@@ -715,8 +814,206 @@ class ResourceService:
             actor_email=actor.email,
             entity_type="resource",
             entity_id=entity_id,
-            details={"purged": True, "versions": len(versions)},
+            details={"purged": True, "versions": len(versions), "force": force or is_super},
         )
+
+    async def purge_many(
+        self, public_ids: Sequence[uuid.UUID], *, actor: User, force: bool = False
+    ) -> int:
+        """Permanently remove multiple resources and every stored version."""
+        is_super = getattr(actor, "is_super_admin", False) or any(
+            (r.name or "").upper() == "SUPER_ADMIN" for r in (getattr(actor, "roles", []) or [])
+        )
+        count = 0
+        for public_id in public_ids:
+            resource = await self.resources.get_by_public_id_full(public_id)
+            if resource is None or not await self._resource_reachable(resource, actor):
+                continue
+
+            actual = await self.effective_level(resource, actor)
+            if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                continue
+
+            if not resource.is_deleted and not (is_super or force):
+                continue
+
+            # Clean up direct shares and scope permissions
+            stmt_perms = delete(ResourcePermission).where(ResourcePermission.resource_id == resource.id)
+            await self.session.execute(stmt_perms)
+            stmt_shares = delete(SharedResource).where(SharedResource.resource_id == resource.id)
+            await self.session.execute(stmt_shares)
+
+            versions = await self.resources.versions_for(resource.id)
+            paths_to_delete = {v.path for v in versions if v.path}
+            if resource.path:
+                paths_to_delete.add(resource.path)
+
+            for path in paths_to_delete:
+                try:
+                    await self.storage.delete(path)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to delete stored object", extra={"key": path})
+
+            entity_id = resource.id
+            await self.session.delete(resource)
+
+            audit_service.record(
+                self.session,
+                action=AuditAction.DELETE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource",
+                entity_id=entity_id,
+                details={"purged": True, "versions": len(versions), "bulk": True, "force": force or is_super},
+            )
+            count += 1
+
+        return count
+
+    async def purge_all(
+        self, *, actor: User, in_bin_only: bool = True
+    ) -> int:
+        """Permanently remove all resources in the recycle bin or the entire library.
+
+        When `in_bin_only=False`, this requires Super Admin authority because it
+        permanently wipes all active files.
+        """
+        is_super = getattr(actor, "is_super_admin", False) or any(
+            (r.name or "").upper() == "SUPER_ADMIN" for r in (getattr(actor, "roles", []) or [])
+        )
+        if not in_bin_only and not is_super:
+            raise AuthorizationError("Only super administrators can permanently delete all resources.")
+
+        stmt = select(Resource)
+        if in_bin_only:
+            stmt = stmt.where(Resource.is_deleted.is_(True))
+
+        if not ScopeResolver.is_unrestricted(actor):
+            course_scope = await self.scopes.visible_course_ids(actor)
+            batch_scope = await self.scopes.visible_batch_ids(actor)
+            conds = []
+            if course_scope.ids:
+                conds.append(Resource.course_id.in_(course_scope.ids))
+            if batch_scope.ids:
+                conds.append(Resource.batch_id.in_(batch_scope.ids))
+            if conds:
+                stmt = stmt.where(or_(*conds))
+            else:
+                return 0
+
+        resources = list((await self.session.execute(stmt)).scalars().all())
+        count = 0
+        for resource in resources:
+            if not is_super:
+                actual = await self.effective_level(resource, actor)
+                if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                    continue
+
+            # Clean up direct shares and permissions
+            stmt_perms = delete(ResourcePermission).where(ResourcePermission.resource_id == resource.id)
+            await self.session.execute(stmt_perms)
+            stmt_shares = delete(SharedResource).where(SharedResource.resource_id == resource.id)
+            await self.session.execute(stmt_shares)
+
+            versions = await self.resources.versions_for(resource.id)
+            paths_to_delete = {v.path for v in versions if v.path}
+            if resource.path:
+                paths_to_delete.add(resource.path)
+
+            for path in paths_to_delete:
+                try:
+                    await self.storage.delete(path)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to delete stored object", extra={"key": path})
+
+            entity_id = resource.id
+            await self.session.delete(resource)
+
+            audit_service.record(
+                self.session,
+                action=AuditAction.DELETE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource",
+                entity_id=entity_id,
+                details={"purged": True, "versions": len(versions), "purge_all": True},
+            )
+            count += 1
+
+        return count
+
+    async def get_deletion_impact(
+        self, public_ids: Sequence[uuid.UUID], *, actor: User
+    ) -> DeletionImpactResponse:
+        """Inspect dependencies and affected users before permanent deletion."""
+        items: list[ResourceImpactItem] = []
+        total_direct_shares = 0
+        total_grants = 0
+        all_affected_users: set[uuid.UUID] = set()
+
+        for public_id in public_ids:
+            resource = await self.resources.get_by_public_id_full(public_id)
+            if resource is None or not await self._resource_reachable(resource, actor):
+                continue
+
+            shares = await self.shares.for_resource(resource.id)
+            direct_shares: list[SharedUserInfo] = []
+            for s in shares:
+                if s.shared_with_user:
+                    all_affected_users.add(s.shared_with_user.public_id)
+                    direct_shares.append(
+                        SharedUserInfo(
+                            user_id=s.shared_with_user.public_id,
+                            name=display_name(s.shared_with_user),
+                            email_or_username=s.shared_with_user.email,
+                            role=role_label(s.shared_with_user),
+                            level=s.level,
+                            shared_by_name=display_name(s.shared_by_user) if s.shared_by_user else None,
+                            created_at=s.created_at,
+                        )
+                    )
+
+            perms = await self.permissions.for_resource(resource.id)
+            grants: list[GrantInfo] = []
+            for p in perms:
+                grants.append(
+                    GrantInfo(
+                        scope_type=p.scope_type,
+                        scope_id=p.scope_id,
+                        scope_label=f"{p.scope_type.value} #{p.scope_id}",
+                        level=p.level,
+                        created_at=p.created_at,
+                    )
+                )
+
+            total_direct_shares += len(direct_shares)
+            total_grants += len(grants)
+
+            items.append(
+                ResourceImpactItem(
+                    resource_id=resource.public_id,
+                    name=resource.name or "Untitled",
+                    is_deleted=resource.is_deleted,
+                    uploaded_by_username=visible_username(resource.uploader) if resource.uploader else None,
+                    course_title=resource.course.title if resource.course else None,
+                    batch_code=resource.batch.batch_code if resource.batch else None,
+                    direct_shares_count=len(direct_shares),
+                    direct_shares=direct_shares,
+                    grants_count=len(grants),
+                    grants=grants,
+                    estimated_affected_users=len(direct_shares),
+                )
+            )
+
+        return DeletionImpactResponse(
+            resources=items,
+            total_resources=len(items),
+            total_direct_shares=total_direct_shares,
+            total_grants=total_grants,
+            total_affected_users=len(all_affected_users),
+        )
+
+
 
     # -- download ------------------------------------------------------------
 

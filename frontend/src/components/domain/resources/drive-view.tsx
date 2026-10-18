@@ -205,10 +205,15 @@ export interface DriveActions {
   /** Everything currently ticked, handed over in one act. */
   onShareMany: (resourceIds: string[]) => void;
   onDelete: (resource: ResourceSummary) => void;
+  onDeleteMany?: (resourceIds: string[]) => void;
   onRestore: (resource: ResourceSummary) => void;
+  onPurge: (resource: ResourceSummary) => void;
+  onPurgeMany?: (resourceIds: string[]) => void;
+  onRestoreMany?: (resourceIds: string[]) => void;
   onRenameFolder: (folder: FolderSummary) => void;
   onDeleteFolder: (folder: FolderSummary) => void;
 }
+
 
 interface MenuState {
   x: number;
@@ -264,6 +269,7 @@ export function DriveView({
   resources,
   layout,
   canWrite,
+  isSuperAdmin = false,
   inBin,
   emptyMessage,
   actions,
@@ -273,14 +279,16 @@ export function DriveView({
   resources: ResourceSummary[];
   layout: DriveLayout;
   canWrite: boolean;
+  isSuperAdmin?: boolean;
   inBin: boolean;
   emptyMessage: string;
   actions: DriveActions;
   formatDate: (iso: string) => string;
 }) {
+  const canSelect = canWrite || isSuperAdmin;
   const [selected, setSelected] = useState<string | null>(null);
   /*
-   * Ticked files, for "share these six with this class".
+   * Ticked files, for "share these six with this class" or bulk restore/purge.
    *
    * Separate from `selected`, which is the one file whose details are open --
    * conflating them would mean opening a file's details cleared the batch
@@ -309,6 +317,17 @@ export function DriveView({
       else copy.delete(resourceId);
       return copy;
     });
+  }
+
+  const allTicked = resources.length > 0 && resources.every((r) => ticked.has(r.public_id));
+  const someTicked = resources.some((r) => ticked.has(r.public_id));
+
+  function toggleAll(next: boolean): void {
+    if (next) {
+      setTicked(new Set(resources.map((r) => r.public_id)));
+    } else {
+      setTicked(new Set());
+    }
   }
 
   /** A desktop file drag, as opposed to a resource being dragged within the app. */
@@ -373,13 +392,72 @@ export function DriveView({
           onClick={(event) => event.stopPropagation()}
           className="sticky top-0 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-accent/80 px-3 py-2 backdrop-blur"
         >
-          <span className="text-sm font-medium">
-            {ticked.size} {ticked.size === 1 ? "file" : "files"} selected
-          </span>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={allTicked}
+              indeterminate={someTicked && !allTicked}
+              onCheckedChange={(checked) => toggleAll(checked === true)}
+              aria-label="Select all files"
+            />
+            <span className="text-sm font-medium">
+              {ticked.size} of {resources.length} {resources.length === 1 ? "file" : "files"} selected {inBin ? "in Recycle Bin" : ""}
+            </span>
+          </div>
           <div className="ms-auto flex items-center gap-2">
-            <Button type="button" size="sm" onClick={() => actions.onShareMany([...ticked])}>
-              <Share2 className="size-4" aria-hidden /> Share
-            </Button>
+            {inBin ? (
+              <>
+                {actions.onRestoreMany ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      actions.onRestoreMany?.([...ticked]);
+                      setTicked(new Set());
+                    }}
+                  >
+                    <RotateCcw className="size-4" aria-hidden /> Restore selected
+                  </Button>
+                ) : null}
+                {actions.onPurgeMany ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    onClick={() => actions.onPurgeMany?.([...ticked])}
+                  >
+                    <Trash2 className="size-4" aria-hidden /> Delete permanently
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Button type="button" size="sm" onClick={() => actions.onShareMany([...ticked])}>
+                  <Share2 className="size-4" aria-hidden /> Share
+                </Button>
+                {actions.onDeleteMany ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => actions.onDeleteMany?.([...ticked])}
+                  >
+                    <Trash2 className="size-4" aria-hidden /> Move to bin
+                  </Button>
+                ) : null}
+                {isSuperAdmin && actions.onPurgeMany ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    onClick={() => actions.onPurgeMany?.([...ticked])}
+                  >
+                    <Trash2 className="size-4" aria-hidden /> Delete permanently
+                  </Button>
+                ) : null}
+              </>
+
+            )}
             <Button
               type="button"
               size="sm"
@@ -439,9 +517,23 @@ export function DriveView({
 
           {resources.length > 0 ? (
             <section>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Files
-              </h3>
+              <div className="mb-2 flex items-center justify-between">
+                {canSelect ? (
+                  <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                    <Checkbox
+                      checked={allTicked}
+                      indeterminate={someTicked && !allTicked}
+                      onCheckedChange={(checked) => toggleAll(checked === true)}
+                      aria-label="Select all files"
+                    />
+                    <span>Files ({resources.length})</span>
+                  </label>
+                ) : (
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Files
+                  </h3>
+                )}
+              </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {resources.map((resource) => (
                   <FileTile
@@ -449,12 +541,13 @@ export function DriveView({
                     resource={resource}
                     selected={selected === resource.public_id}
                     canWrite={canWrite}
+                    isSuperAdmin={isSuperAdmin}
                     inBin={inBin}
                     formatDate={formatDate}
                     actions={actions}
                     ticked={ticked.has(resource.public_id)}
                     onTicked={
-                      canWrite && !inBin
+                      canSelect
                         ? (next) => toggleTick(resource.public_id, next)
                         : undefined
                     }
@@ -473,15 +566,26 @@ export function DriveView({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-muted-foreground">
-                {canWrite && !inBin ? (
+                {canSelect ? (
                   <th className="w-8 px-3 py-2">
-                    <span className="sr-only">Select</span>
+                    {resources.length > 0 ? (
+                      <Checkbox
+                        checked={allTicked}
+                        indeterminate={someTicked && !allTicked}
+                        onCheckedChange={(checked) => toggleAll(checked === true)}
+                        aria-label="Select all files"
+                      />
+                    ) : (
+                      <span className="sr-only">Select</span>
+                    )}
                   </th>
                 ) : null}
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="hidden px-3 py-2 text-left font-medium sm:table-cell">Type</th>
+                <th className="hidden px-3 py-2 text-left font-medium lg:table-cell">Uploader</th>
                 <th className="hidden px-3 py-2 text-left font-medium md:table-cell">Added</th>
                 <th className="hidden px-3 py-2 text-right font-medium sm:table-cell">Size</th>
+
                 <th className="px-3 py-2 text-right font-medium">
                   <span className="sr-only">Actions</span>
                 </th>
@@ -495,7 +599,7 @@ export function DriveView({
                   selected={selected === folder.public_id}
                   dragOver={dragOverFolder === folder.public_id}
                   canWrite={canWrite}
-                  selectable={canWrite && !inBin}
+                  selectable={canSelect}
                   formatDate={formatDate}
                   onSelect={() => setSelected(folder.public_id)}
                   onOpen={() => actions.onOpenFolder(folder)}
@@ -519,12 +623,13 @@ export function DriveView({
                   resource={resource}
                   selected={selected === resource.public_id}
                   canWrite={canWrite}
+                  isSuperAdmin={isSuperAdmin}
                   inBin={inBin}
                   formatDate={formatDate}
                   actions={actions}
                   ticked={ticked.has(resource.public_id)}
                   onTicked={
-                    canWrite && !inBin
+                    canSelect
                       ? (next) => toggleTick(resource.public_id, next)
                       : undefined
                   }
@@ -543,6 +648,7 @@ export function DriveView({
         <ContextMenu
           state={menu}
           canWrite={canWrite}
+          isSuperAdmin={isSuperAdmin}
           inBin={inBin}
           actions={actions}
           onClose={() => setMenu(null)}
@@ -673,9 +779,11 @@ function FolderRow(
         </button>
       </td>
       <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell">Folder</td>
+      <td className="hidden px-3 py-2 text-muted-foreground lg:table-cell">—</td>
       <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
         {props.formatDate(props.folder.created_at)}
       </td>
+
       <td className="hidden px-3 py-2 text-right text-muted-foreground sm:table-cell">—</td>
       <td className="px-3 py-2 text-right">
         {props.canWrite ? (
@@ -734,10 +842,11 @@ function FolderMenu({
 interface FileProps {
   resource: ResourceSummary;
   selected: boolean;
-  /** Ticked for a bulk action. Absent in the bin, where there is none. */
+  /** Ticked for a bulk action. */
   ticked?: boolean;
   onTicked?: (next: boolean) => void;
   canWrite: boolean;
+  isSuperAdmin?: boolean;
   inBin: boolean;
   formatDate: (iso: string) => string;
   actions: DriveActions;
@@ -814,11 +923,16 @@ function FileTile(props: FileProps) {
         <span className="truncate">{props.resource.resource_type}</span>
         <span>{formatBytes(props.resource.size)}</span>
       </div>
-      {props.resource.is_restricted ? (
-        <span className="w-fit rounded-full border border-border-subtle px-2 py-0.5 text-[10px] text-muted-foreground">
-          Staff only
+      <div className="flex items-center justify-between gap-1 text-[11px] text-muted-foreground">
+        <span className="truncate">
+          {props.resource.uploaded_by_username ? `By ${props.resource.uploaded_by_username}` : "—"}
         </span>
-      ) : null}
+        {props.resource.is_restricted ? (
+          <span className="shrink-0 rounded-full border border-border-subtle px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            Staff only
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -873,6 +987,9 @@ function FileRow(props: FileProps) {
       <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell">
         {props.resource.resource_type}
       </td>
+      <td className="hidden px-3 py-2 text-muted-foreground lg:table-cell">
+        {props.resource.uploaded_by_username ?? "—"}
+      </td>
       <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">
         {props.formatDate(props.resource.created_at)}
       </td>
@@ -884,9 +1001,10 @@ function FileRow(props: FileProps) {
       </td>
     </tr>
   );
+
 }
 
-function FileMenu({ resource, canWrite, inBin, actions }: FileProps) {
+function FileMenu({ resource, canWrite, isSuperAdmin, inBin, actions }: FileProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -903,9 +1021,15 @@ function FileMenu({ resource, canWrite, inBin, actions }: FileProps) {
       />
       <DropdownMenuContent align="end">
         {inBin ? (
-          <DropdownMenuItem onClick={() => actions.onRestore(resource)}>
-            <RotateCcw /> Restore
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={() => actions.onRestore(resource)}>
+              <RotateCcw /> Restore
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem destructive onClick={() => actions.onPurge(resource)}>
+              <Trash2 /> Delete permanently
+            </DropdownMenuItem>
+          </>
         ) : (
           <>
             <DropdownMenuItem onClick={() => actions.onOpenResource(resource)}>
@@ -928,6 +1052,11 @@ function FileMenu({ resource, canWrite, inBin, actions }: FileProps) {
                 </DropdownMenuItem>
               </>
             ) : null}
+            {isSuperAdmin ? (
+              <DropdownMenuItem destructive onClick={() => actions.onPurge(resource)}>
+                <Trash2 /> Delete permanently
+              </DropdownMenuItem>
+            ) : null}
           </>
         )}
       </DropdownMenuContent>
@@ -948,12 +1077,14 @@ function FileMenu({ resource, canWrite, inBin, actions }: FileProps) {
 function ContextMenu({
   state,
   canWrite,
+  isSuperAdmin,
   inBin,
   actions,
   onClose,
 }: {
   state: MenuState;
   canWrite: boolean;
+  isSuperAdmin?: boolean;
   inBin: boolean;
   actions: DriveActions;
   onClose: () => void;
@@ -1004,9 +1135,18 @@ function ContextMenu({
           </>
         ) : state.resource ? (
           inBin ? (
-            <button type="button" className={item} onClick={() => run(() => actions.onRestore(state.resource!))}>
-              <RotateCcw /> Restore
-            </button>
+            <>
+              <button type="button" className={item} onClick={() => run(() => actions.onRestore(state.resource!))}>
+                <RotateCcw /> Restore
+              </button>
+              <button
+                type="button"
+                className={cn(item, "text-danger hover:bg-danger/10 hover:text-danger")}
+                onClick={() => run(() => actions.onPurge(state.resource!))}
+              >
+                <Trash2 /> Delete permanently
+              </button>
+            </>
           ) : (
             <>
               <button type="button" className={item} onClick={() => run(() => actions.onOpenResource(state.resource!))}>
@@ -1032,6 +1172,15 @@ function ContextMenu({
                   </button>
                 </>
               ) : null}
+              {isSuperAdmin ? (
+                <button
+                  type="button"
+                  className={cn(item, "text-danger hover:bg-danger/10 hover:text-danger")}
+                  onClick={() => run(() => actions.onPurge(state.resource!))}
+                >
+                  <Trash2 /> Delete permanently
+                </button>
+              ) : null}
             </>
           )
         ) : null}
@@ -1039,5 +1188,6 @@ function ContextMenu({
     </>
   );
 }
+
 
 export { formatBytes };
