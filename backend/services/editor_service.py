@@ -68,12 +68,8 @@ class EditorService:
         two round trips.
         """
         course_ids = await self._working_course_ids(actor)
-        if course_ids is None:  # unrestricted: any mapped course counts
-            keys = set(
-                (await self.session.execute(select(CourseEditor.editor))).scalars()
-            ) | set(
-                (await self.session.execute(select(CategoryEditor.editor))).scalars()
-            )
+        if course_ids is None:  # unrestricted: all system developer tools are available
+            keys = set(EDITORS.keys())
         elif not course_ids:
             return []
         else:

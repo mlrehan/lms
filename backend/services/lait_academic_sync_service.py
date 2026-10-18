@@ -40,7 +40,7 @@ from backend.integrations import lait_mapping as m
 from backend.integrations.lait_client import LaitApiError, LaitClient
 from backend.integrations.lait_geo import GeoResolver
 from backend.integrations.lait_pages import PageFetcher
-from backend.models.administration import Category
+from backend.models.administration import Category, CategoryEditor
 from backend.models.attendance import Attendance
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
@@ -701,6 +701,13 @@ class _Cache:
             await session.flush()
             self.categories[key] = category.id
             report.categories_created += 1
+
+            # Seed default editors if category name matches standard curriculum keywords
+            name_lower = name.lower()
+            if "sql" in name_lower or "database" in name_lower:
+                session.add(CategoryEditor(category_id=category.id, editor="sql"))
+            if "python" in name_lower or "programming" in name_lower or "data & ai" in name_lower:
+                session.add(CategoryEditor(category_id=category.id, editor="python"))
         return self.categories[key]
 
     async def organization(self, session: AsyncSession, company: str | None, report: "_Report") -> int | None:

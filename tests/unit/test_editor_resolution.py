@@ -89,3 +89,42 @@ class TestTheVocabulary:
 
     def test_the_two_editors_are_not_the_same_place(self) -> None:
         assert EDITORS["sql"]["url"] != EDITORS["python"]["url"]
+
+
+class TestForUser:
+    def test_unrestricted_admin_gets_all_editors(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Platform administrators are always offered all platform developer tools."""
+        service = EditorService(_FakeSession([], []))  # type: ignore[arg-type]
+
+        async def _mock_unrestricted(_actor):  # noqa: ANN001, ANN202
+            return None
+
+        monkeypatch.setattr(service, "_working_course_ids", _mock_unrestricted)
+
+        links = asyncio.run(service.for_user(actor=None))  # type: ignore[arg-type]
+        assert [l.key for l in links] == ["sql", "python"]
+        assert links[0].label == "SQL Editor"
+        assert links[1].label == "Python Editor"
+
+    def test_user_with_no_working_courses_gets_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        service = EditorService(_FakeSession([], []))  # type: ignore[arg-type]
+
+        async def _mock_empty(_actor):  # noqa: ANN001, ANN202
+            return set()
+
+        monkeypatch.setattr(service, "_working_course_ids", _mock_empty)
+
+        links = asyncio.run(service.for_user(actor=None))  # type: ignore[arg-type]
+        assert links == []
+
+    def test_student_gets_only_their_course_editor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        service = EditorService(_FakeSession([], [(1, "sql")]))  # type: ignore[arg-type]
+
+        async def _mock_student(_actor):  # noqa: ANN001, ANN202
+            return {1}
+
+        monkeypatch.setattr(service, "_working_course_ids", _mock_student)
+
+        links = asyncio.run(service.for_user(actor=None))  # type: ignore[arg-type]
+        assert [l.key for l in links] == ["sql"]
+        assert links[0].label == "SQL Editor"
