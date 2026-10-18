@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PERMISSION_NAMES } from "./permission-names";
 import { permissionSet, VIEW_ALL } from "./permissions";
-import { NAVIGATION, permissionForPath } from "@/lib/navigation";
+import { NAVIGATION, alsoRequiresForPath, permissionForPath } from "@/lib/navigation";
 
 describe("permissionSet", () => {
   it("answers for a permission the caller holds", () => {
@@ -54,11 +54,23 @@ describe("route permission map", () => {
         if (item.permission) {
           expect(PERMISSION_NAMES).toContain(item.permission);
         }
+        if (item.alsoRequires) {
+          expect(PERMISSION_NAMES).toContain(item.alsoRequires);
+        }
         for (const name of item.anyPermission ?? []) {
           expect(PERMISSION_NAMES).toContain(name);
         }
       }
     }
+  });
+
+  it("resolves secondary required permissions correctly", () => {
+    expect(alsoRequiresForPath("/academic")).toBe("academic.create");
+    expect(alsoRequiresForPath("/gradebook")).toBe("grade.update");
+    expect(alsoRequiresForPath("/transcripts")).toBe("transcript.generate");
+    expect(alsoRequiresForPath("/enrollments")).toBe("user.read");
+    expect(alsoRequiresForPath("/manager-links")).toBeUndefined();
+    expect(alsoRequiresForPath("/courses")).toBeUndefined();
   });
 
   it("matches the longest prefix, so a detail route inherits its list's gate", () => {

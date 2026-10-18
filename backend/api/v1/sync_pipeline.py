@@ -69,7 +69,11 @@ _SYNC = Annotated[
 
 
 def _service(request: Request) -> SyncPipelineService:
-    return SyncPipelineService(request.app.state.db.session_factory, get_settings())
+    return SyncPipelineService(
+        request.app.state.db.session_factory,
+        get_settings(),
+        event_bus=getattr(request.app.state, "event_bus", None),
+    )
 
 
 async def _status_payload(request: Request, *, can_configure: bool) -> SyncPipelineStatusResponse:

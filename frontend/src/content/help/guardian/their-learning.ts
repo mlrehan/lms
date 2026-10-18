@@ -100,7 +100,8 @@ export const theirLearning: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            body: "You cannot enrol anybody or change a place. If something looks wrong, message the school.",
+            title: "Cohort enrollment administration",
+            body: "Class placements and cohort enrollments are arranged directly by the admissions office. If you need to request a placement change, message the school office.",
           },
         },
       ],
@@ -173,8 +174,8 @@ export const theirLearning: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "You cannot hand work in",
-            body: "Only the student can submit their own work. Your account has no way to do it for them, which is deliberate.",
+            title: "Student submission independence",
+            body: "Coursework submissions and assessments are completed directly by the student from their own account to ensure academic integrity.",
           },
         },
       ],
@@ -257,9 +258,9 @@ export const theirLearning: Section = {
         {
           type: "callout",
           callout: {
-            kind: "warning",
-            title: "A mark you disagree with is a conversation",
-            body: "You cannot change a mark, and should not expect to. If one looks wrong, message the school. There is a proper process for questioning a mark.",
+            kind: "note",
+            title: "Academic evaluation standards & grade inquiries",
+            body: "Evaluations and marks are issued by the academic instructional team. If a grade appears unexpected or requires clarification, message the school through **Messages** to request an academic review.",
           },
         },
       ],

@@ -6,7 +6,8 @@ from backend.models.identity.user_role import UserRole
 from backend.models.identity.user import User, CurrentUser
 from .geo import Country, City, TimeZone
 from .administration import (
-    AcademicYear, Semester, Department, Category, Tag, CourseTag, SystemSetting,
+    AcademicYear, Semester, Department, Category, CategoryEditor, CourseEditor,
+    Tag, CourseTag, SystemSetting,
 )
 from .audit import AuditLog
 from .organization import (
@@ -41,7 +42,7 @@ from .sync_pipeline import (
 )
 from .user_sync import UserSyncRun
 from .google_connection import GoogleChangeRequest, GoogleConnection
-from .notification import Notification, Announcement
+from .notification import Notification, Announcement, AnnouncementRead
 from .push import PushSubscription
 from .shared_links import SharedLink, SharedLinkTarget
 
@@ -51,7 +52,7 @@ __all__ = [
     # Geo
     "Country", "City", "TimeZone",
     # Administration
-    "AcademicYear", "Semester", "Department", "Category", "Tag", "CourseTag", "SystemSetting",
+    "AcademicYear", "Semester", "Department", "Category", "CategoryEditor", "CourseEditor", "Tag", "CourseTag", "SystemSetting",
     # Audit
     "AuditLog",
     # Corporate organizations & guardianship
@@ -80,7 +81,7 @@ __all__ = [
     "Certificate", "CertificateIssued", "Badge", "UserBadge",
     # Notifications
     "Notification",
-    "PushSubscription", "Announcement",
+    "PushSubscription", "Announcement", "AnnouncementRead",
     # Shared links
     "SharedLink", "SharedLinkTarget",
     # Background synchronisation

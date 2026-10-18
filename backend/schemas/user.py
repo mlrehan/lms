@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated
+from typing import Literal, Annotated
 from zoneinfo import available_timezones
 
 from pydantic import EmailStr, Field, field_serializer, field_validator
@@ -132,6 +132,12 @@ class CurrentUserResponse(UserResponse):
     locale_city: str | None = None
     locale_country: str | None = None
     timezone_is_auto: bool = False
+
+    #: How loudly to announce a notification in this browser: off, subtle or
+    #: prominent. Sent with the session so the first notification of a visit
+    #: is already honouring it, rather than arriving silently and then being
+    #: corrected by a second request.
+    notification_sound: Literal["off", "subtle", "prominent"] = "subtle"
 
 
 class LocaleRefreshResponse(APIModel):

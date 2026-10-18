@@ -145,3 +145,39 @@ async def delete_announcement(
 ) -> Response:
     await AnnouncementService(session).delete(announcement_id, actor=actor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/read-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Mark every live announcement as read",
+)
+async def mark_all_announcements_read(
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.ANNOUNCEMENT, Action.READ)))],
+) -> Response:
+    """Clears the sidebar badge in one request.
+
+    Declared before `/{announcement_id}` because FastAPI matches in definition
+    order, and `read-all` is a valid-looking path segment: below it, this would
+    be parsed as an announcement id and answer 422 for ever.
+    """
+    await AnnouncementService(session).mark_all_read(actor=actor)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{announcement_id}/read",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Mark one announcement as read",
+)
+async def mark_announcement_read(
+    announcement_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.ANNOUNCEMENT, Action.READ)))],
+) -> Response:
+    """Idempotent: sending it twice, or from two tabs, is not an error."""
+    await AnnouncementService(session).mark_read(announcement_id, actor=actor)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

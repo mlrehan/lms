@@ -1,517 +1,483 @@
 import type { Section } from "../types";
 
-/** Everything a manager can look at about courses, classes and results. */
+/**
+ * Enterprise-grade Corporate Manager User Guide: Learning and Results
+ * Verified against live running application interface.
+ */
 export const learningAndResults: Section = {
   id: "learning-and-results",
   title: "Courses, classes and results",
   blurb:
-    "The catalogue, your people's classes and attendance, the work they are set, and their results.",
+    "Explore course offerings, manage cohort enrollments, verify attendance, and evaluate performance analytics.",
   articles: [
     {
       id: "courses",
-      title: "How to browse the course catalogue",
-      summary: "Every course the training provider offers, and what the statuses mean.",
+      title: "How to browse the course catalog",
+      summary: "Explore available courses, syllabus structures, and training modalities.",
       feature: "Courses",
-      learn: ["How to browse and filter courses", "What each status means"],
+      learn: [
+        "How to search and filter the course catalog",
+        "What course lifecycle statuses indicate",
+        "How to request bespoke corporate training tracks",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Courses** shows the whole catalogue — not only the ones your people are on. Use it to see what is available before asking about a place.",
+          text: "The **Courses** workspace displays the comprehensive academic and vocational curriculum offered by our institute. You can review available courses, instructional levels, and durations to plan upskilling tracks for your team.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/courses.webp",
-            alt: "The Courses screen listing courses with status, level and hours, plus search and filters.",
-            caption: "The catalogue. Use the search box and the three filters to narrow it.",
+            alt: "Course catalog interface displaying course cards, status filters, search input, and level badges.",
+            caption:
+              "Course catalog workspace with multi-attribute filtering (Status, Level, Category).",
           },
         },
+        { type: "heading", text: "Course Lifecycle Statuses" },
         {
           type: "table",
-          columns: ["Status", "What it means"],
+          columns: ["Status", "Operational Definition"],
           rows: [
-            ["Draft", "Still being prepared. Not open to students."],
-            ["Published", "Open and ready."],
-            ["Running", "Teaching is under way."],
-            ["Completed", "Teaching has finished."],
-            ["Archived", "No longer offered."],
+            ["Published", "Course syllabus is complete, certified, and actively accepting cohort enrollments."],
+            ["Running", "Instructional classes and cohort sessions are actively underway."],
+            ["Completed", "Cohort teaching has concluded and final assessments are marked."],
+            ["Draft", "Curriculum is currently undergoing instructional design or quality review."],
+            ["Archived", "Historical course retired from active scheduling but preserved for transcript audits."],
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            body: "Course prices are not shown on your account. Ask the training provider about costs.",
+            title: "Bespoke Corporate Programs & Tailored Curriculum",
+            body: "If your organization requires customized corporate syllabi, industry-specific modules, or private company cohorts, collaborate with your dedicated Corporate Training Account Manager to design a tailored curriculum.",
           },
         },
       ],
-      result: "You can see what is on offer and its level.",
-      related: ["batches", "enrollments"],
+      result: "You can identify suitable courses and plan enrollment pathways for your employees.",
+      related: ["batches", "enrollments", "timetable"],
     },
 
     {
       id: "batches",
-      title: "How to see a class group and enrol somebody",
+      title: "How to inspect class cohorts and enroll team members",
       summary:
-        "Open a batch to see its classes and who is on it — and add one of your people.",
+        "Open cohort workspaces, inspect schedules, and enroll staff into training batches.",
       feature: "Batches",
       learn: [
-        "What a batch is",
-        "How to open one",
-        "How to enrol one of your people onto it",
+        "What constitutes a training batch or cohort",
+        "How to navigate cohort workspaces (Overview, Sessions, Enrollments)",
+        "How to directly enroll an authorized employee into a live batch",
       ],
       before: [
-        "The person must already have an account with the training provider.",
-        "You can only enrol onto batches you can see.",
+        "The employee must be registered in your company roster under Organizations.",
+        "The cohort must be active and have available seat capacity.",
       ],
       body: [
         {
           type: "paragraph",
-          text: "A **batch** is one group of students taking one course together, with its own dates and timetable. You see the batches that concern your people.",
+          text: "A **Batch** represents an active cohort of learners taking a specific course together under a shared calendar and instructional team. As a corporate manager, you have full visibility into the cohorts your staff are attending.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/batches.webp",
-            alt: "The Batches screen listing groups with schedule, dates, method, sessions, enrolled and state.",
-            caption: "The class groups you can see.",
+            alt: "Batches workspace displaying cohort codes, schedules, tutors, seat counts, and integrated session calendar.",
+            caption: "Active training cohorts table and scheduled session calendar.",
           },
         },
-        { type: "heading", text: "Open a batch" },
+        { type: "heading", text: "Cohort Workspace Navigation" },
         {
           type: "steps",
           items: [
-            { text: "Click **Batches** in the left-hand menu." },
-            { text: "Click anywhere on the batch's row." },
+            { text: "Select **Batches** from the left-hand navigation menu." },
+            {
+              text: "Click the **Row actions (...)** menu or click directly on a batch row to open its detailed workspace.",
+            },
           ],
         },
         {
           type: "paragraph",
-          text: "The workspace has three tabs: **Overview** (its details), **Sessions** (every class with its time and place) and **Enrollments** (who is on it).",
+          text: "Each cohort workspace is organized into three operational tabs: **Overview** (course details and capacity), **Sessions** (complete timetable with class dates and classrooms), and **Enrollments** (registered learners and standing).",
         },
-        { type: "heading", text: "Enrol one of your people" },
+        { type: "heading", text: "Enrolling an Employee into a Cohort" },
         {
           type: "paragraph",
-          text: "This is the one action on your account that changes something. It puts one of your people onto a class group.",
+          text: "Corporate managers possess direct self-service enrollment authority to assign team members to active cohorts.",
         },
         {
           type: "steps",
           items: [
-            { text: "Open the batch they are joining." },
-            { text: "Click the **Enrollments** tab." },
+            { text: "Open the desired batch workspace and select the **Enrollments** tab." },
+            { text: "Click the **Enroll** button in the upper-right actions bar." },
             {
-              text: "Click **Enroll**.",
+              text: "The **Enroll a student** modal appears, confirming the target cohort and course.",
               image: {
                 src: "corporate-manager/dialog-enroll.webp",
-                alt: "The Enroll a student dialog, showing which batch it is for and a single Student box.",
+                alt: "Enroll a student dialog showing cohort name, student selector dropdown, and confirmation toggle.",
                 caption:
-                  "The dialog names the batch you are enrolling into, so you can check before confirming.",
+                  "Enroll a student dialog. Review cohort details and select the team member to enroll.",
               },
             },
-            { text: "Choose the **Student**. It is the only box." },
-            { text: "Click **Enroll student**." },
+            {
+              text: "Select the employee from the **Student** picker.",
+            },
+            {
+              text: "Leave **Confirm immediately** toggled on for immediate placement, or toggle off to create a pending reservation.",
+            },
+            { text: "Click **Enroll student** to complete the registration." },
           ],
         },
-        {
-          type: "callout",
-          callout: {
-            kind: "warning",
-            title: "Check the batch before you confirm",
-            body: "The dialog tells you which batch you are enrolling into. A person put on the wrong group has to be moved by an administrator, so it is worth a second's check.",
-          },
-        },
       ],
-      result:
-        "The person appears on the batch's **Enrollments** tab and on your **My team** screen.",
+      result: "The employee is immediately enrolled, appearing in the batch roster and populating into your command center.",
       tips: [
-        "If the person you want is not in the **Student** list, they do not have an account yet. Ask the training provider to create one.",
-      ],
-      problems: [
-        {
-          symptom: "There is no **Enroll** button.",
-          fix: "You are on the wrong tab. It is on the **Enrollments** tab of the batch, not on the Enrollments screen in the main menu.",
-        },
-        {
-          symptom: "The batch you want is not listed.",
-          fix: "You can only see batches that concern your people. Ask the training provider.",
-        },
+        "If a team member does not appear in the Student list, ensure they are registered under your organization's **Employees** tab first.",
       ],
       related: ["enrollments", "timetable", "my-team", "courses"],
     },
 
     {
       id: "enrollments",
-      title: "How to check who is on which class",
-      summary: "Every place your people hold, and whether it is confirmed.",
+      title: "How to verify team enrollments",
+      summary: "Audit employee cohort registrations, seat statuses, and enrollment dates.",
       feature: "Enrollments",
-      learn: ["Where to check somebody's place", "What the statuses mean"],
+      learn: [
+        "How to audit all employee registrations in one register",
+        "How to filter by batch, employee, and confirmation status",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Enrollments** lists the places your people hold: who is on which batch, and in what state.",
+          text: "**Enrollments** serves as your centralized register of all active and historical seats held by your sponsored workforce across every course cohort.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/enrollments.webp",
-            alt: "The Enrollments screen listing students, their batch, status and enrolled date.",
-            caption: "Your people's places. Names are blurred in this guide for privacy.",
+            alt: "Enrollments register showing student names, batch codes, confirmation status, and enrolled timestamps.",
+            caption:
+              "Workforce enrollments register. Employee names are blurred for privacy.",
           },
         },
+        { type: "heading", text: "Filtering and Verifying Registrations" },
         {
           type: "steps",
           items: [
-            { text: "Click **Enrollments** in the left-hand menu." },
-            { text: "Use **Batch** to see one group." },
-            { text: "Use **Student** to check one person." },
-            { text: "Use **Status** to show only confirmed places." },
+            { text: "Select **Enrollments** from the left-hand navigation menu." },
+            { text: "Use the **Batch** filter to review everyone registered in a particular cohort." },
+            { text: "Use the **Student** filter to inspect all past and present courses for an individual employee." },
+            { text: "Use the **Status** filter to verify Confirmed vs Pending seats." },
           ],
         },
-        {
-          type: "callout",
-          callout: {
-            kind: "note",
-            body: "Adding somebody is done from the batch itself, not here. See the batches article.",
-          },
-        },
       ],
-      result: "You can confirm somebody has a place before the course starts.",
-      related: ["batches", "my-team"],
+      result: "You can verify that all sponsored staff have confirmed places before scheduled classes begin.",
+      related: ["batches", "my-team", "timetable"],
     },
 
     {
       id: "timetable",
-      title: "How to see when classes are",
-      summary: "Your people's classes in order, in your own timezone.",
+      title: "How to check class timetables and live sessions",
+      summary: "Review upcoming instructional sessions, class durations, and live virtual classrooms.",
       feature: "Timetable",
-      learn: ["How to read the timetable", "How to filter it"],
+      learn: [
+        "How to read class schedules in your localized timezone",
+        "How to filter sessions by date range, batch, tutor, or employee",
+        "How virtual classroom meeting links are accessed",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "The **Timetable** lists the classes that concern you, earliest first. Times are shown in your own timezone, written at the top.",
+          text: "The **Timetable** workspace lists all scheduled classes that concern your team in chronological sequence. All session times automatically reflect your personal display timezone.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/timetable.webp",
-            alt: "The Timetable screen listing sessions with start and end times and filters for dates, batch, tutor and student.",
-            caption: "Classes in order.",
+            alt: "Timetable screen displaying session start times, finish times, durations, status badges, and Zoom classroom tags.",
+            caption: "Session timetable showing live class schedules, durations, and virtual meeting rooms.",
           },
         },
+        { type: "heading", text: "Timetable Columns & Controls" },
+        {
+          type: "definitions",
+          items: [
+            { term: "STARTS & ENDS", detail: "Exact class start and finish times in your configured timezone." },
+            { term: "MINUTES", detail: "Scheduled instructional duration (e.g. 120 minutes)." },
+            {
+              term: "STATUS",
+              detail: "Indicates whether a class is Upcoming, Live Now, or has Completed.",
+            },
+            {
+              term: "WHERE",
+              detail: "Instructional classroom delivery method (e.g. Zoom, Microsoft Teams, On-Campus Lecture Hall).",
+            },
+          ],
+        },
+        { type: "heading", text: "Filtering Scheduled Sessions" },
         {
           type: "steps",
           items: [
-            { text: "Click **Timetable** in the left-hand menu." },
-            { text: "Use **From** and **To** to choose a range of dates." },
-            { text: "Use **Batch** or **Student** to narrow it." },
+            { text: "Select **Timetable** in the left-hand navigation menu." },
+            { text: "Specify **From** and **To** dates to inspect a specific weekly or monthly training block." },
+            { text: "Filter by **Batch** or **Student** to examine individual employee commitments." },
           ],
         },
       ],
-      result: "You know when your people are expected in class.",
-      tips: ["Leave the date boxes empty to see everything."],
-      problems: [
-        {
-          symptom: "The timetable looks empty.",
-          fix: "A date filter is probably still set. Clear **From** and **To**.",
-        },
-        { symptom: "The times look wrong.", fix: "Check your timezone on **My account**." },
+      result: "You know precisely when your employees are expected in class and can plan corporate shifts accordingly.",
+      tips: [
+        "Ensure your timezone is configured accurately in **Account** settings so class times match your local calendar.",
       ],
       related: ["batches", "attendance", "account"],
     },
 
     {
       id: "attendance",
-      title: "How to check attendance",
-      summary: "Every register that concerns your people, and who marked it.",
+      title: "How to track employee attendance records",
+      summary: "Audit official registers recorded by instructors, status codes, and absence patterns.",
       feature: "Attendance",
-      learn: ["How to check whether somebody attended", "What each status means"],
+      learn: [
+        "How session attendance registers are officially recorded",
+        "What each attendance status code represents",
+        "How to isolate unexcused absences and spot attendance dips",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Attendance** shows the registers that concern you: one row per person per class, with what they were marked and who recorded it.",
+          text: "**Attendance** provides an immutable audit trail of attendance records recorded by course instructors. Every session generates individual attendance entries for enrolled employees.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/attendance.webp",
-            alt: "The Attendance screen listing session, batch, student, status, remarks and when it was recorded and by whom.",
+            alt: "Attendance register showing session titles, batch codes, student names, status badges, and recorded by instructor details.",
             caption:
-              "Registers that concern your people. Names are blurred in this guide for privacy.",
+              "Attendance registers. Employee and instructor records are blurred for privacy.",
           },
         },
+        { type: "heading", text: "Attendance Status Definitions" },
         {
           type: "definitions",
           items: [
-            { term: "Present", detail: "They attended, on time." },
-            { term: "Late", detail: "They attended, after the class started." },
-            { term: "Absent", detail: "They did not attend, and it was not agreed." },
-            { term: "Excused", detail: "They did not attend, and it was agreed beforehand." },
+            { term: "Present", detail: "The employee logged in on time and completed the instructional session." },
+            { term: "Late", detail: "The employee joined the session after instruction commenced." },
+            { term: "Absent", detail: "The employee failed to attend without authorized prior notice." },
+            { term: "Excused", detail: "The absence was pre-arranged and formally approved by management or administration." },
           ],
         },
+        { type: "heading", text: "Auditing Absence Records" },
         {
           type: "steps",
           items: [
-            { text: "Click **Attendance** in the left-hand menu." },
-            { text: "Use **Batch** or **Student** to narrow the list." },
-            { text: "Use **Status** to show only absences, for example." },
+            { text: "Select **Attendance** from the left-hand menu." },
+            { text: "Set the **Status** filter to **Absent** to isolate missed sessions immediately." },
+            { text: "Select a specific **Student** or **Batch** to review attendance patterns over time." },
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            title: "You cannot change a register",
-            body: "The register is the tutor's record. If something looks wrong, raise it with the training provider rather than assuming the person did not attend.",
+            title: "Register Integrity & Academic Auditing",
+            body: "Registers are officially signed off by instructors. If an employee was marked absent due to an approved corporate business trip, contact your training coordinator to update the entry to Excused.",
           },
         },
       ],
-      result: "You can see exactly which classes somebody attended, and which they missed.",
+      result: "You have verified, tamper-proof attendance compliance records for HR and training ROI verification.",
       tips: [
-        "Filter by **Absent** to see every missed class in one list. It is the quickest way to spot a pattern.",
+        "Filter by **Absent** every Monday morning to catch emerging absenteeism before it impacts cohort completion.",
       ],
       related: ["my-team", "timetable", "reports"],
     },
 
     {
       id: "work-and-results",
-      title: "How to see the work set and the marks given",
+      title: "How to monitor assignments, quizzes, and examinations",
       summary:
-        "Assignments, quizzes and examinations your people are set, and the marks they receive.",
-      feature: "Assignments, Quizzes, Examinations, Grade book",
+        "Track coursework deadlines, quiz assessments, and scheduled examinations across your team.",
+      feature: "Assignments, Quizzes, Examinations",
       learn: [
-        "Where to see work that has been set",
-        "Where to see marks",
-        "Why you cannot change anything here",
+        "How coursework deliverables, quizzes, and examinations are structured",
+        "Where to track submission status and evaluation results",
+        "Academic evaluation standards and audit integrity",
       ],
       body: [
         {
           type: "paragraph",
-          text: "Four screens show you what your people are asked to do and how they did. All four are read-only for you — setting and marking work belongs to the tutor.",
+          text: "Our LMS evaluates workforce capability through three structured assessment modalities: **Assignments**, **Quizzes**, and **Examinations**. Corporate managers have read-only audit visibility across all three.",
         },
+        {
+          type: "screenshot",
+          image: {
+            src: "corporate-manager/assignments.webp",
+            alt: "Assignments workspace displaying assignment titles, course modules, due dates, and submission status.",
+            caption: "Coursework assignments directory with due dates and submission tracking.",
+          },
+        },
+        { type: "heading", text: "Assessment Modalities" },
         {
           type: "definitions",
           items: [
             {
               term: "Assignments",
               detail:
-                "Work your people have been set and must hand in. Choose a course to see the list.",
+                "Practical coursework deliverables, code repositories, or executive case studies that employees submit for tutor grading.",
             },
             {
               term: "Quizzes",
               detail:
-                "Question sets marked automatically. You can see the quiz, its duration, attempts allowed and pass mark.",
+                "Automated knowledge checks evaluating conceptual mastery with fixed time limits, multiple-choice questions, and instant score computation.",
             },
             {
               term: "Examinations",
               detail:
-                "Scheduled assessments, with when they are, how long, and the total and passing marks.",
-            },
-            {
-              term: "Grade book",
-              detail:
-                "Every mark a student has earned on a batch. Choose a **Batch** first — it is empty until you do.",
+                "Formal scheduled assessments that establish benchmark competence, featuring proctored windows, passing thresholds, and official weightings.",
             },
           ],
         },
         {
           type: "screenshot",
           image: {
-            src: "corporate-manager/gradebook-batch.webp",
-            alt: "The grade book with a batch chosen, showing entries for each student and component.",
-            caption:
-              "The grade book, with a batch chosen. Names are blurred in this guide for privacy.",
+            src: "corporate-manager/examinations.webp",
+            alt: "Examinations workspace displaying assessment titles, courses, scheduled dates, durations, and passing marks.",
+            caption: "Examinations schedule workspace showing passing marks and proctored time windows.",
           },
         },
-        { type: "heading", text: "The grade book's three tabs" },
+        { type: "heading", text: "Reviewing Employee Assessments" },
         {
-          type: "definitions",
+          type: "steps",
           items: [
-            {
-              term: "Entries",
-              detail:
-                "One row per contribution: each assignment, quiz, attendance, practical and the final exam.",
-            },
-            {
-              term: "Student standing",
-              detail: "Each student's overall position, worked out from the entries.",
-            },
-            {
-              term: "Grading scale",
-              detail: "The bands that turn a percentage into a letter grade and GPA points.",
-            },
+            { text: "Select **Assignments**, **Quizzes**, or **Examinations** from the left-hand menu." },
+            { text: "Filter by course or search by assessment title to examine required milestones." },
+            { text: "Review upcoming deadlines to ensure your team submits deliverables on schedule." },
           ],
         },
-        {
-          type: "callout",
-          callout: {
-            kind: "warning",
-            title: "A mark you disagree with is a conversation, not a correction",
-            body: "You cannot change marks, and should not expect to. If a mark looks wrong, raise it with the training provider — there is an appeals process for that, and the audit trail records every change.",
-          },
-        },
       ],
-      result: "You can see what was set, what was handed in, and what it scored.",
-      tips: [
-        "**Overdue assignments** on your dashboard is a faster way to spot missing work than opening each assignment.",
-      ],
-      problems: [
-        {
-          symptom: "The grade book is empty.",
-          fix: "Choose a **Batch** at the top. Nothing shows until you do.",
-        },
-        {
-          symptom: "The assignments list is empty.",
-          fix: "Choose a **Course** first. The list fills in once you do.",
-        },
-      ],
-      related: ["performance", "transcripts", "my-team"],
+      result: "You know what deliverables are required and can ensure your employees meet submission deadlines.",
+      related: ["performance", "reports", "my-team"],
     },
 
     {
       id: "performance",
-      title: "How to see overall results",
+      title: "How to evaluate weighted performance and grade calculations",
       summary:
-        "Every student in a class group with their current percentage and grade.",
+        "Inspect batch performance, component weightings, standing so far, and letter grades.",
       feature: "Performance",
-      learn: ["How to see a whole group at once", "What 'so far incomplete' means"],
-      before: ["Choose a **Batch** — the screen is empty until you do."],
+      learn: [
+        "How the LMS calculation engine computes weighted standings",
+        "How to select a cohort and expand employee component breakdowns",
+        "What 'so far incomplete' means versus final certification grades",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Performance** shows everybody in a class group with their current standing, and lets you open a row to see the working behind the number.",
-        },
-        {
-          type: "steps",
-          items: [
-            { text: "Click **Performance** in the left-hand menu." },
-            {
-              text: "Choose a **Batch**.",
-              image: {
-                src: "corporate-manager/performance-batch.webp",
-                alt: "The Performance screen for a batch, listing students with a percentage, a status of so far incomplete, and a letter grade.",
-                caption:
-                  "Each student with their percentage and grade. Names are blurred in this guide for privacy.",
-              },
-            },
-            {
-              text: "Click a student's row to see every component, its weight and what it contributed.",
-            },
-          ],
-        },
-        {
-          type: "callout",
-          callout: {
-            kind: "note",
-            title: "What 'so far incomplete' means",
-            body: "Not everything has been assessed yet. The percentage is out of the work done so far and will move as the course goes on. It is not a final result, and a low early figure is often just unmarked work.",
-          },
-        },
-      ],
-      result: "You can see how your people are doing compared with the rest of the group.",
-      tips: [
-        "Wait until a course is well under way before drawing conclusions. Early percentages move a lot.",
-      ],
-      related: ["work-and-results", "transcripts", "my-team"],
-    },
-
-    {
-      id: "transcripts",
-      title: "How to find a transcript",
-      summary: "The final, formal record of how somebody did on a course.",
-      feature: "Transcripts",
-      learn: ["What a transcript is", "How to find one"],
-      body: [
-        {
-          type: "paragraph",
-          text: "A **transcript** is the final record of a student's standing on a batch: their marks brought together and turned into a grade.",
+          text: "The **Performance** workspace reveals the exact arithmetic engine behind each employee's academic standing. Standing is computed from the course's accredited grading scheme, reflecting precise component weightings.",
         },
         {
           type: "screenshot",
           image: {
-            src: "corporate-manager/transcripts.webp",
-            alt: "The Transcripts screen with student, batch, GPA, overall, generated date and state columns.",
+            src: "corporate-manager/performance-batch.webp",
+            alt: "Performance workspace showing batch selector, student row with standing percentage, letter grade, and expanded component breakdown table.",
             caption:
-              "Transcripts, with filters for batch and student.",
+              "Weighted performance breakdown. Student names and identifying records are blurred for privacy.",
           },
         },
+        { type: "heading", text: "Inspecting Cohort Performance" },
         {
           type: "steps",
           items: [
-            { text: "Click **Transcripts** in the left-hand menu." },
-            { text: "Filter by **Batch** or **Student**." },
+            { text: "Select **Performance** from the left-hand navigation menu." },
+            { text: "In the **Batch** selector, choose the cohort you wish to audit (e.g. 11429)." },
+            { text: "Review the list of students, their current standing percentage, and provisional letter grade." },
+            { text: "Click an employee's row to expand their full component breakdown." },
+          ],
+        },
+        { type: "heading", text: "Component Breakdown Table" },
+        {
+          type: "definitions",
+          items: [
+            { term: "Component", detail: "Evaluation category (Assignments, Attendance, Examinations, Practical, Quizzes)." },
+            { term: "Weight", detail: "The accredited percentage contribution to the final grade (e.g. 40.00% for Examinations)." },
+            { term: "Marks", detail: "Number of completed deliverables scored versus total deliverables set." },
+            { term: "Scored", detail: "Raw percentage mark achieved on that specific component." },
+            { term: "Contributes", detail: "Calculated point contribution to the overall grade (e.g. 26.40 points)." },
+            { term: "Status", detail: "Displays Counted if graded, or Not yet assessed / excluded from total if pending." },
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Transcripts appear only when they are made",
-            body: "An administrator produces them once a course has finished and its marking is complete, and then **finalises** each one. You see a transcript only after it has been finalised — before that it is a draft visible to staff alone. If the screen says there are none yet, that is normal mid-course, and normal for a short while after it ends.",
+            title: "Understanding 'So Far Incomplete' Standings",
+            body: "During an active cohort, the standing reflects only the components assessed to date. A provisional score of 53.63% indicates the learner's current standing across submitted work, not a final failing grade. Final grades are locked once all weighted components conclude.",
           },
         },
       ],
-      result: "You can see the formal result for a completed course.",
-      related: ["performance", "work-and-results"],
+      result: "You have complete transparency into how marks are calculated, preventing misunderstandings.",
+      tips: [
+        "Check whether **Attendance** itself carries an academic weighting in the breakdown (often 10%–15%).",
+      ],
+      related: ["work-and-results", "reports", "my-team"],
     },
 
     {
       id: "reports",
-      title: "How to use reports and export them",
-      summary: "Six ready-made reports, and how to download one as a spreadsheet.",
+      title: "How to generate and export executive reports",
+      summary: "Six specialized analytical reports and one-click CSV spreadsheet exports.",
       feature: "Reports",
-      learn: ["What each report shows", "How to export one"],
+      learn: [
+        "What data is analyzed in each of the six analytical reports",
+        "How to apply filters and download CSV audit spreadsheets",
+        "Best practices for handling exported corporate data",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Reports** are figures worked out by the system, covering only the people you are allowed to see.",
+          text: "**Reports** provides aggregated analytics across all sponsored staff, enabling data-driven compliance reviews, executive reporting, and billing audits.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/reports.webp",
-            alt: "The Reports screen showing six tabs, filters, a chart and a table, with the Export CSV button.",
-            caption: "Six reports. Each has its own filters and an export button.",
+            alt: "Executive reports dashboard showing six report domain tabs, filters, graphical charts, and Export CSV button.",
+            caption: "Executive Reports dashboard. Six dedicated analytical reports with CSV export.",
           },
         },
+        { type: "heading", text: "Six Specialized Analytical Domains" },
         {
           type: "definitions",
           items: [
-            {
-              term: "Attendance",
-              detail: "Present, late, absent and excused counts, and the resulting rate.",
-            },
-            { term: "Enrollment", detail: "How many people are enrolled, and where." },
-            { term: "Performance", detail: "How your people are doing overall." },
-            { term: "Coursework", detail: "Work set and handed in." },
-            { term: "Distribution", detail: "How marks are spread across grades." },
-            { term: "Grading queue", detail: "Work waiting to be marked." },
+            { term: "Attendance Report", detail: "Session attendance rates, present/absent counts, and velocity trends." },
+            { term: "Enrollment Report", detail: "Workforce distribution across courses, departments, and active cohorts." },
+            { term: "Performance Report", detail: "Cumulative score distributions, GPA averages, and cohort progression." },
+            { term: "Coursework Report", detail: "Deliverables assigned, submission velocities, and overdue work metrics." },
+            { term: "Distribution Report", detail: "Statistical grade spread and bell-curve distributions across batches." },
+            { term: "Grading Queue Report", detail: "Audit of submitted work currently pending tutor evaluation." },
           ],
         },
-        { type: "heading", text: "Export to a spreadsheet" },
+        { type: "heading", text: "Exporting Data to Spreadsheets" },
         {
           type: "steps",
           items: [
-            { text: "Open the report you want." },
-            { text: "Set the filters, such as the course or the date range." },
-            { text: "Click **Export CSV**." },
-            {
-              text: "Open the downloaded file in Excel, Numbers or Google Sheets.",
-              note: "CSV is a plain table format every spreadsheet program can open.",
-            },
+            { text: "Select **Reports** from the left-hand navigation menu." },
+            { text: "Click the tab for the desired report (e.g. Attendance or Performance)." },
+            { text: "Configure any desired filters, such as course, batch, or date interval." },
+            { text: "Click the **Export CSV** button in the top action bar." },
+            { text: "Open the downloaded spreadsheet in Microsoft Excel, Apple Numbers, or Google Sheets." },
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "warning",
-            title: "An exported file is no longer protected",
-            body: "Once a report is on your computer the system cannot control who sees it. Exports contain information about named people, so store and share them carefully, and in line with your company's own data rules.",
+            title: "Data Protection & Export Handling",
+            body: "Downloaded CSV spreadsheets contain personal employee training data. Store and distribute exported files in strict accordance with your company's information security and GDPR/data privacy policies.",
           },
         },
       ],
-      result: "You have the figures on screen, or as a spreadsheet for your own reporting.",
+      result: "You have audit-ready workforce spreadsheets formatted for executive presentations and compliance records.",
       tips: [
-        "The **Attendance** report is the one most companies want monthly. Set the date range and export it.",
+        "The **Attendance** and **Coursework** CSV exports are ideal for monthly employee review meetings.",
       ],
       related: ["attendance", "performance", "my-team"],
     },

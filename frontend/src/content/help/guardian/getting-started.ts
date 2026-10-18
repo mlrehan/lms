@@ -20,8 +20,8 @@ export const gettingStarted: Section = {
         "Follow how the person you look after is getting on with their course.",
       learn: [
         "What your account is for",
-        "What you can and cannot do",
-        "Why you can see one person and not others",
+        "How to follow and support your student's learning",
+        "How authorized family access works",
       ],
       body: [
         {
@@ -30,7 +30,7 @@ export const gettingStarted: Section = {
         },
         {
           type: "paragraph",
-          text: "Your account is for watching, not for doing. You can see attendance, work and results. You cannot change any of them, and nothing you do here affects the course.",
+          text: "Your guardian portal is an observational dashboard designed to keep you informed of your student's academic journey. You have real-time visibility into attendance records, submitted assignments, and academic milestones.",
         },
         {
           type: "paragraph",
@@ -51,24 +51,33 @@ export const gettingStarted: Section = {
             { term: "Notices and messages", detail: "Announcements, and a mailbox for contacting the school." },
           ],
         },
-        { type: "heading", text: "What you cannot do" },
+        { type: "heading", text: "How You Support Your Student" },
         {
-          type: "table",
-          columns: ["You cannot", "Who can"],
-          rows: [
-            ["Change attendance, work or marks", "The tutor"],
-            ["Hand work in on their behalf", "The student"],
-            ["Enrol them on a course", "The school"],
-            ["Choose which students you can see", "The school"],
-            ["See anybody's email address or phone number", "Nobody, on these screens"],
+          type: "definitions",
+          items: [
+            {
+              term: "Real-Time Academic Visibility",
+              detail:
+                "Stay informed with up-to-date records of class attendance, assignments submitted, quiz results, and official marks.",
+            },
+            {
+              term: "Timetable & Schedule Awareness",
+              detail:
+                "View scheduled lecture times, exam dates, and upcoming deadlines so you can help your student plan their study routine.",
+            },
+            {
+              term: "Direct Educator Communication",
+              detail:
+                "Communicate with tutors and academic support staff through the secure **Messages** portal to discuss academic progress.",
+            },
           ],
         },
         {
           type: "callout",
           callout: {
-            kind: "warning",
-            title: "You see only the people linked to you",
-            body: "Being a parent does not, by itself, let you see somebody here. The school creates a link between your account and theirs, and that link is the only thing that makes them visible to you.",
+            kind: "note",
+            title: "Student Privacy & Authorized Guardianship",
+            body: "To protect student privacy and institutional safeguarding, family access is linked directly by the school's administration. If you have another family member joining the institution, contact the school office to link their profile to your guardian account.",
           },
         },
       ],

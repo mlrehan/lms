@@ -99,20 +99,34 @@ describe("useRealtime", () => {
     await waitFor(() => expect(view.result.current.connected).toBe(true));
   });
 
-  it("a new message invalidates the badge and both message lists", () => {
+  it("a new message invalidates the badge, both message lists and the menu counts", () => {
     const { invalidate, source } = setup();
     act(() => source().emit("message.received", { kind: "message.received" }));
     expect(invalidatedKeys(invalidate)).toEqual([
       '["unread"]',
       '["mail","list"]',
       '["mail","unread"]',
+      // The sidebar badge beside Messages is one of the counts, so a message
+      // arriving has to move it without waiting for a navigation.
+      '["sidebar-counts"]',
+      // The dashboard counts unread items too. It was the one surface left
+      // out, which is exactly why it was the one that needed a page refresh.
+      '["dashboard"]',
     ]);
   });
 
-  it("a new notification invalidates the badge and the feed", () => {
+  it("a new notification invalidates the badge, the feed and the menu counts", () => {
     const { invalidate, source } = setup();
     act(() => source().emit("notification.created", { kind: "notification.created", data: { title: "Grade recorded" } }));
-    expect(invalidatedKeys(invalidate)).toEqual(['["unread"]', '["notifications","feed"]']);
+    expect(invalidatedKeys(invalidate)).toEqual([
+      '["unread"]',
+      '["notifications","feed"]',
+      // Almost everything that moves a badge also notifies somebody -- work
+      // set, work graded, an exam scheduled -- so this is what keeps the
+      // assessment counts live without a second event kind.
+      '["sidebar-counts"]',
+      '["dashboard"]',
+    ]);
   });
 
   it("reading on another device clears the badge here", () => {
@@ -149,5 +163,115 @@ describe("useRealtime", () => {
     const stream = source();
     view.unmount();
     expect(stream.closed).toBe(true);
+  });
+});
+
+/**
+ * Topic events -- the half the per-user channel could never carry.
+ *
+ * Nobody is notified when an administrator adds a batch, so before these
+ * existed every badge counting batches stayed wrong until the next refetch.
+ * What is worth protecting here is not that an event arrives, but that a burst
+ * of them does not turn into a refetch per event in every open browser.
+ */
+describe("useRealtime topic events", () => {
+  it("refreshes the counts and the dashboard when academic data changes", () => {
+    const { invalidate, source } = setup();
+    act(() =>
+      source().emit("data.changed", { kind: "data.changed", topic: "academic" }),
+    );
+    expect(invalidatedKeys(invalidate)).toEqual(['["sidebar-counts"]', '["dashboard"]']);
+  });
+
+  it("refreshes only the presence list when somebody arrives", () => {
+    const { invalidate, source } = setup();
+    act(() =>
+      source().emit("data.changed", { kind: "data.changed", topic: "presence" }),
+    );
+    // Deliberately not the dashboard: a sign-in moves no KPI, and refetching
+    // it would make every arrival cost every administrator a query for nothing.
+    expect(invalidatedKeys(invalidate)).toEqual(['["presence"]']);
+  });
+
+  it("ignores a topic it does not recognise", () => {
+    const { invalidate, source } = setup();
+    act(() =>
+      source().emit("data.changed", { kind: "data.changed", topic: "something-new" }),
+    );
+    // A newer server talking to an older console. Ignoring costs a late badge;
+    // guessing would invalidate everything on every event.
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("ignores a topic frame with no topic at all", () => {
+    const { invalidate, source } = setup();
+    act(() => source().emit("data.changed", { kind: "data.changed" }));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("collapses a burst into one refetch instead of one per event", () => {
+    vi.useFakeTimers();
+    try {
+      const { invalidate, source } = setup();
+
+      // A sync importing courses: one transaction, and one frame, each.
+      act(() => {
+        for (let i = 0; i < 25; i += 1) {
+          source().emit("data.changed", { kind: "data.changed", topic: "academic" });
+        }
+      });
+
+      // Leading edge: the first one went straight through, so the screen is
+      // live rather than waiting out a window.
+      expect(invalidatedKeys(invalidate)).toEqual(['["sidebar-counts"]', '["dashboard"]']);
+
+      // The remaining twenty-four collapse into a single trailing refetch.
+      act(() => void vi.advanceTimersByTime(1_100));
+      expect(invalidatedKeys(invalidate)).toEqual([
+        '["sidebar-counts"]',
+        '["dashboard"]',
+        '["sidebar-counts"]',
+        '["dashboard"]',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not throttle a personal event behind a topic burst", () => {
+    vi.useFakeTimers();
+    try {
+      const { invalidate, source } = setup();
+      act(() => {
+        source().emit("data.changed", { kind: "data.changed", topic: "academic" });
+        source().emit("data.changed", { kind: "data.changed", topic: "academic" });
+        // One recipient, rare, and a chime that arrives before its badge
+        // looks broken -- so personal events bypass the throttle entirely.
+        source().emit("message.received", { kind: "message.received" });
+      });
+      expect(invalidatedKeys(invalidate)).toContain('["mail","list"]');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a pending refetch when the hook unmounts", () => {
+    vi.useFakeTimers();
+    try {
+      const { view, invalidate, source } = setup();
+      act(() => {
+        source().emit("data.changed", { kind: "data.changed", topic: "academic" });
+        source().emit("data.changed", { kind: "data.changed", topic: "academic" });
+      });
+      const before = invalidate.mock.calls.length;
+
+      view.unmount();
+      // A trailing timer that survived would fire against a QueryClient this
+      // component no longer belongs to.
+      act(() => void vi.advanceTimersByTime(5_000));
+      expect(invalidate.mock.calls.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

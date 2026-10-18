@@ -12,6 +12,7 @@ import {
   Menu,
   Monitor,
   Moon,
+  PanelLeft,
   Sun,
   SunMoon,
   User as UserIcon,
@@ -21,6 +22,7 @@ import { api } from "@/lib/api/client";
 import type { UnreadCountResponse } from "@/lib/api/types";
 import { useSession, useSignOut } from "@/lib/auth/session";
 import { useRealtime } from "@/lib/realtime";
+import { useSidebarState } from "@/lib/sidebar-state";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -31,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/primitives";
+import { CountBadge } from "@/components/ui/count-badge";
 import { GlobalSearch } from "@/components/shell/global-search";
 import { TimeZoneMenu } from "@/components/shell/timezone-menu";
 import { UserAvatar } from "@/components/domain/user-avatar";
@@ -48,18 +51,25 @@ import { cn } from "@/lib/utils";
  * Ringed in the canvas colour so it reads as sitting on top of the icon rather
  * than being punched through it.
  */
-function UnreadDot({ count }: { count: number }): ReactNode {
+function UnreadDot({ count, label }: { count: number; label: string }): ReactNode {
   if (count <= 0) return null;
   return (
-    <span
-      className={cn(
-        "pointer-events-none absolute right-0.5 top-0.5 flex h-[15px] min-w-[15px] items-center justify-center",
+    <CountBadge
+      count={count}
+      // Nine is the most that fits on a 15px disc without the badge growing
+      // over the icon it annotates. Anything larger abbreviates and is
+      // revealed on hover or tap -- which is the whole reason this is a
+      // shared component rather than two near-identical spans.
+      max={9}
+      label={label}
+      side="bottom"
+      className="absolute right-0.5 top-0.5"
+      badgeClassName={cn(
+        "flex h-[15px] min-w-[15px] items-center justify-center",
         "rounded-full bg-danger px-[3px] text-[9px] font-semibold leading-none text-danger-foreground",
         "ring-2 ring-background",
       )}
-    >
-      {count > 9 ? "9+" : count}
-    </span>
+    />
   );
 }
 
@@ -132,7 +142,12 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
   const canBeNotified = permissions.has("notification.read");
   // One connection for the whole app, opened here because the topbar is the
   // one component mounted on every signed-in screen.
-  const { connected } = useRealtime(canMessage || canBeNotified);
+  const { connected } = useRealtime(
+    canMessage || canBeNotified,
+    // The person's own chime setting, carried on the session so the first
+    // notification of a visit already honours it.
+    user?.notification_sound ?? "subtle",
+  );
 
   const unreadMessages = useUnread("/messages/unread-count", canMessage, connected);
   const unreadNotifications = useUnread(
@@ -141,14 +156,29 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
     connected,
   );
 
+  const { collapsed, toggle } = useSidebarState();
+
   return (
     // `glass` rather than a near-opaque fill: at 95% the bar is effectively
     // solid and the blur is decorative. At 72% with saturation lifted, content
     // scrolling underneath stays legible as movement, which is the whole point
     // of a translucent bar.
     <header className="glass sticky top-0 z-30 flex h-14 items-center gap-2 border-b px-3 sm:px-4">
-      <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={onOpenNav}>
+      {/* Mobile drawer button (< 768px) */}
+      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation" onClick={onOpenNav}>
         <Menu />
+      </Button>
+
+      {/* Desktop & tablet collapse toggle (>= 768px) */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="hidden md:flex text-muted-foreground hover:text-foreground"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={toggle}
+      >
+        <PanelLeft className="size-4" />
       </Button>
 
       <div className="min-w-0 flex-1">
@@ -163,7 +193,7 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
             aria-label={`Messages${unreadMessages ? `, ${unreadMessages} unread` : ""}`}
           >
             <Mail />
-            <UnreadDot count={unreadMessages} />
+            <UnreadDot count={unreadMessages} label="unread messages" />
           </Link>
         ) : null}
 
@@ -174,7 +204,7 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
             aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ""}`}
           >
             <Bell />
-            <UnreadDot count={unreadNotifications} />
+            <UnreadDot count={unreadNotifications} label="unread notifications" />
           </Link>
         ) : null}
 

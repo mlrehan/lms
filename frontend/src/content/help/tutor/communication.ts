@@ -280,8 +280,8 @@ export const communication: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "No export on a tutor account",
-            body: "There is no **Export CSV** button for a tutor. If you need a report as a spreadsheet, ask an administrator.",
+            title: "Spreadsheet & Cohort Data Exports",
+            body: "To request institutional CSV or spreadsheet data exports for your teaching cohorts, coordinate directly with the Academic Office.",
           },
         },
       ],
@@ -293,25 +293,25 @@ export const communication: Section = {
     {
       id: "academic-setup",
       title: "What Academic setup is for",
-      summary: "The reference lists other screens pick from. You can look, not change.",
+      summary: "Reference taxonomy that categorises courses, semesters, and departments.",
       feature: "Academic setup",
-      learn: ["What this screen is for", "Why you cannot change it"],
+      learn: ["What reference categories are available", "How academic taxonomy structures cohorts"],
       body: [
         {
           type: "paragraph",
-          text: "**Academic setup** holds the reference data the rest of the system chooses from: academic years, semesters, departments, course categories and tags.",
+          text: "**Academic setup** holds the institutional reference taxonomy the rest of the system uses: academic years, semesters, departments, course categories and tags.",
         },
         {
           type: "screenshot",
           image: {
             src: "tutor/academic-setup.webp",
-            alt: "The Academic setup screen showing its five tabs, with no add button on a tutor account.",
-            caption: "Read-only for a tutor — there is no **Add year** button.",
+            alt: "The Academic setup screen showing institutional years, semesters, departments, and course categories.",
+            caption: "Institutional reference taxonomy configured for faculty planning.",
           },
         },
         {
           type: "paragraph",
-          text: "It is useful for checking which academic year is current, or which category a course sits in. Changing any of it belongs to an administrator.",
+          text: "It provides quick reference to confirm the active academic semester, departmental codes, or curriculum categories for course planning.",
         },
       ],
       result: "You can check the institution's reference data when you need to.",

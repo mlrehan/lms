@@ -27,9 +27,21 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.permissions import Action, Module, perm
+from backend.models import (
+    Assignment,
+    AssignmentSubmission,
+    Attendance,
+    Batch,
+    BatchSession,
+    Course,
+    Enrollments,
+    Organization,
+    OrganizationManager,
+)
 from backend.models.identity.user import User
 from backend.repositories.announcement import AnnouncementRepository
 from backend.repositories.messaging import NotificationRepository
@@ -39,6 +51,9 @@ from backend.schemas.base import PageParams
 from backend.schemas.reporting import (
     AssignmentBrief,
     CarePanel,
+    CorporateAtRiskEmployee,
+    CorporateCourseSummary,
+    CorporatePanel,
     DashboardResponse,
     InstitutionPanel,
     PersonalPanel,
@@ -49,7 +64,8 @@ from backend.schemas.reporting import (
 from backend.services.metrics import attendance_rate
 from backend.services.scope import ScopeResolver
 from backend.services.session_service import SessionService
-from backend.utils.enums import AttendanceStatus
+from backend.utils.enums import AttendanceStatus, EnrollmentStatus
+
 
 _ATTENDANCE_READ = perm(Module.ATTENDANCE, Action.READ)
 _ASSIGNMENT_READ = perm(Module.ASSIGNMENT, Action.READ)
@@ -98,13 +114,25 @@ class DashboardService:
             panels.append("teaching")
 
         care = None
+        corporate = None
         # The caller themselves are always in `cared_for_student_ids`; a panel
-        # about "the people in my care" only means something once somebody
-        # else is in it.
+        # about "the people in my care" or corporate workforce only means something
+        # once somebody else is in it.
         others = enrollment.cared_for_student_ids - {actor.id}
         if others and held.intersection({_ATTENDANCE_READ, _ASSIGNMENT_READ}):
-            care = await self._care(actor, student_ids=others, now=now)
-            panels.append("care")
+            if actor.is_corporate_manager:
+                corporate = await self._corporate(actor, student_ids=others, now=now)
+                panels.append("corporate")
+                # Also populate care for backward compatibility
+                care = CarePanel(
+                    people=corporate.total_employees,
+                    attendance_rate=corporate.attendance_rate,
+                    assignments_overdue=corporate.assignments_overdue,
+                    upcoming_sessions=corporate.upcoming_sessions,
+                )
+            else:
+                care = await self._care(actor, student_ids=others, now=now)
+                panels.append("care")
 
         institution = None
         if unrestricted:
@@ -118,6 +146,7 @@ class DashboardService:
             student=student,
             teaching=teaching,
             care=care,
+            corporate=corporate,
             institution=institution,
         )
 
@@ -257,6 +286,256 @@ class DashboardService:
                 now=now,
                 actor=actor,
             ),
+        )
+
+    async def _corporate(
+        self, actor: User, *, student_ids: frozenset[int] | set[int], now: datetime
+    ) -> CorporatePanel:
+        ids = sorted(student_ids)
+
+        # 1. Organization name, code & manager title
+        org_name = None
+        org_code = None
+        mgr_title = "Corporate Manager"
+        org_res = await self.session.execute(
+            select(Organization.name, Organization.code, OrganizationManager.title)
+            .join(OrganizationManager, OrganizationManager.organization_id == Organization.id)
+            .where(
+                OrganizationManager.user_id == actor.id,
+                OrganizationManager.is_active.is_(True),
+            )
+        )
+        org_row = org_res.first()
+        if org_row:
+            org_name = org_row[0]
+            org_code = org_row[1]
+            if org_row[2]:
+                mgr_title = org_row[2]
+        elif actor.company:
+            org_name = actor.company
+        else:
+            org_name = "Corporate Workforce"
+
+        # 2. Overall attendance rate across team
+        counts = await self.reports.attendance_counts(
+            visibility=await self.scopes.attendance_visibility(actor), student_ids=ids
+        )
+        overall_att_rate = _rate(counts)
+
+        # 3. Overall overdue assignments
+        _, overdue_count = await self.reports.outstanding_assignments(student_ids=ids, now=now)
+
+        # 4. Enrolled courses per student
+        enr_all_res = await self.session.execute(
+            select(Enrollments.student_id, Course.title, Batch.batch_code)
+            .join(Batch, Batch.id == Enrollments.batch_id)
+            .join(Course, Course.id == Batch.course_id)
+            .where(Enrollments.student_id.in_(ids))
+        )
+        student_courses_map: dict[int, list[str]] = {}
+        all_enrollments_count = 0
+        for sid, ctitle, bcode in enr_all_res.all():
+            all_enrollments_count += 1
+            if sid not in student_courses_map:
+                student_courses_map[sid] = []
+            student_courses_map[sid].append(f"{ctitle} ({bcode})")
+
+        # 5. Active courses and cohorts with tutors
+        enr_res = await self.session.execute(
+            select(
+                Course.title,
+                Course.code,
+                Batch.batch_code,
+                Batch.start_date,
+                Batch.end_date,
+                func.count(Enrollments.enrollment_id),
+            )
+            .join(Batch, Batch.id == Enrollments.batch_id)
+            .join(Course, Course.id == Batch.course_id)
+            .where(
+                Enrollments.student_id.in_(ids),
+                Enrollments.status.in_((EnrollmentStatus.CONFIRMED, EnrollmentStatus.PENDING)),
+            )
+            .group_by(
+                Course.title,
+                Course.code,
+                Batch.batch_code,
+                Batch.start_date,
+                Batch.end_date,
+            )
+            .order_by(Course.title, Batch.batch_code)
+        )
+        course_summaries: list[CorporateCourseSummary] = []
+        active_enrollments = 0
+        for row in enr_res.all():
+            ctitle, ccode, bcode, sdate, edate, cnt = row
+            active_enrollments += int(cnt)
+
+            tutor_res = await self.session.execute(
+                select(User.first_name, User.last_name)
+                .join(BatchSession, BatchSession.tutor_id == User.id)
+                .join(Batch, Batch.id == BatchSession.batch_id)
+                .where(Batch.batch_code == bcode)
+                .limit(1)
+            )
+            tutor_row = tutor_res.first()
+            tutor_name = f"{tutor_row[0]} {tutor_row[1]}" if tutor_row else "Primary Instructor"
+
+            course_summaries.append(
+                CorporateCourseSummary(
+                    course_title=ctitle,
+                    course_code=ccode,
+                    batch_code=bcode,
+                    enrollment_count=int(cnt),
+                    tutor_name=tutor_name,
+                    start_date=sdate,
+                    end_date=edate,
+                )
+            )
+
+        # 6. At-risk employee identification
+        # Grouped attendance by student
+        student_att_res = await self.session.execute(
+            select(
+                Attendance.student_id,
+                func.count().filter(Attendance.status == AttendanceStatus.PRESENT),
+                func.count().filter(Attendance.status == AttendanceStatus.LATE),
+                func.count().filter(Attendance.status == AttendanceStatus.ABSENT),
+                func.count().filter(Attendance.status == AttendanceStatus.EXCUSED),
+            )
+            .where(Attendance.student_id.in_(ids))
+            .group_by(Attendance.student_id)
+        )
+        student_att_map: dict[int, tuple[float | None, int, int]] = {}
+        for sid, p, l, a, e in student_att_res.all():
+            pr = p or 0
+            lr = l or 0
+            ar = a or 0
+            er = e or 0
+            tot = pr + lr + ar + er
+            rate = attendance_rate(present=pr, late=lr, absent=ar, excused=er)
+            student_att_map[sid] = (rate, tot, pr + lr)
+
+        # Overdue assignments per student
+        enrolled_courses = (
+            select(Batch.course_id, Enrollments.student_id)
+            .join(Enrollments, Enrollments.batch_id == Batch.id)
+            .where(
+                Enrollments.student_id.in_(ids),
+                Enrollments.status.in_((EnrollmentStatus.CONFIRMED, EnrollmentStatus.PENDING)),
+            )
+            .distinct()
+            .subquery()
+        )
+        submitted = (
+            select(AssignmentSubmission.id)
+            .where(
+                AssignmentSubmission.assignment_id == Assignment.id,
+                AssignmentSubmission.student_id == enrolled_courses.c.student_id,
+            )
+            .exists()
+        )
+        overdue_stmt = (
+            select(enrolled_courses.c.student_id, func.count())
+            .select_from(Assignment)
+            .join(enrolled_courses, Assignment.course_id == enrolled_courses.c.course_id)
+            .where(~submitted, Assignment.due_date < now)
+            .group_by(enrolled_courses.c.student_id)
+        )
+        student_overdue_res = await self.session.execute(overdue_stmt)
+        student_overdue_map = {row[0]: int(row[1]) for row in student_overdue_res.all()}
+
+        # User entities
+        users_res = await self.session.execute(select(User).where(User.id.in_(ids)))
+        users_map = {u.id: u for u in users_res.scalars().all()}
+
+        at_risk_list: list[CorporateAtRiskEmployee] = []
+        for sid in ids:
+            u = users_map.get(sid)
+            if not u:
+                continue
+            name = u.full_name or u.username or f"Employee #{sid}"
+            rate_info = student_att_map.get(sid, (0.0, 0, 0))
+            student_overdue = student_overdue_map.get(sid, 0)
+
+            rate, tot, att = rate_info
+
+            reasons: list[str] = []
+            is_critical = False
+
+            if rate is not None and rate < 75.0:
+                if rate < 50.0:
+                    is_critical = True
+                reasons.append(f"{rate:.1f}% attendance ({att}/{tot} sessions)")
+
+            if student_overdue > 0:
+                reasons.append(f"{student_overdue} overdue deliverable{'s' if student_overdue > 1 else ''}")
+
+            if reasons:
+                at_risk_list.append(
+                    CorporateAtRiskEmployee(
+                        user_id=u.id,
+                        full_name=name,
+                        email=u.email or "",
+                        attendance_rate=rate,
+                        attended_sessions=att,
+                        total_sessions=tot,
+                        assignments_overdue=student_overdue,
+                        enrolled_courses=student_courses_map.get(sid, []),
+                        risk_level="critical" if is_critical else "warning",
+                        risk_reason=", ".join(reasons),
+                    )
+                )
+
+        # Sort: critical first, then lowest attendance rate
+        at_risk_list.sort(
+            key=lambda x: (
+                0 if x.risk_level == "critical" else 1,
+                x.attendance_rate if x.attendance_rate is not None else 999.0,
+            )
+        )
+
+        # 7. Composite workforce training health score
+        health_score = 100
+        if overall_att_rate is not None and overall_att_rate < 75.0:
+            health_score -= int((75.0 - overall_att_rate) * 1.2)
+        if ids:
+            health_score -= int((len(at_risk_list) / len(ids)) * 25)
+        health_score -= min(15, overdue_count * 5)
+        health_score = max(20, min(100, health_score))
+        health_status = (
+            "Optimal"
+            if health_score >= 85
+            else "Satisfactory"
+            if health_score >= 75
+            else "Needs Attention"
+            if health_score >= 50
+            else "Critical Action"
+        )
+
+        batch_scope = await self.scopes.visible_batch_ids(actor)
+        upcoming = await self._sessions(
+            batch_ids=None if batch_scope.unrestricted else sorted(batch_scope.ids),
+            tutor_id=None,
+            now=now,
+            actor=actor,
+        )
+
+        return CorporatePanel(
+            organization_name=org_name,
+            organization_code=org_code,
+            manager_title=mgr_title,
+            total_employees=len(ids),
+            total_enrollments=all_enrollments_count or active_enrollments,
+            active_enrollments=active_enrollments,
+            attendance_rate=overall_att_rate,
+            assignments_overdue=overdue_count,
+            at_risk_count=len(at_risk_list),
+            health_score=health_score,
+            health_status=health_status,
+            at_risk_employees=at_risk_list,
+            active_courses=course_summaries,
+            upcoming_sessions=upcoming,
         )
 
     async def _institution(self, actor: User, *, now: datetime) -> InstitutionPanel:

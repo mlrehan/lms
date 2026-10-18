@@ -1,0 +1,41 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python artifacts
+.venv
+venv
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+tests
+
+# Node / Frontend artifacts
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+frontend/build_out.txt
+frontend/build_err.txt
+
+# Local uploads and storage (persisted via Docker volumes)
+var/storage/*
+!var/storage/.gitkeep
+
+# Environment secrets and credentials (never bake into images)
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Development & documentation notes
+scratch
+Video prompt
+*.log
+

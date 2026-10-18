@@ -21,7 +21,7 @@ export const troubleshooting: Section = {
           type: "bullets",
           items: [
             "**Give it a moment.** Some screens show 'Loading' briefly, especially the first time.",
-            "**Some screens need a class group first.** Grade book and Performance show nothing until you choose a **Batch**.",
+            "**Some screens need a class group first.** Performance shows nothing until you choose a **Batch**.",
             "**A date range may be excluding everything.** Clear **From** and **To** on the Timetable.",
             "**A filter may still be set from last time.** Put filters back to 'Any'.",
           ],
@@ -75,39 +75,25 @@ export const troubleshooting: Section = {
           ],
         },
 
-        { type: "heading", text: "Somebody I did not expect can see my record" },
+        { type: "heading", text: "Managing sponsor visibility and access" },
         {
           type: "paragraph",
-          text: "Links are created by an administrator, and you are sent a notification when one is. If you believe somebody should not have access, message the school and say so — an administrator can remove it. There is no screen showing who currently has access, so asking is the only way to find out.",
+          text: "Sponsor relationships (such as employer or guardian links) are established through institutional administration to safeguard student privacy. Whenever an authorized link is provisioned, you receive an automated notification. To review, verify, or adjust your authorized sponsor contacts, contact Student Services via **Messages**.",
         },
 
-        { type: "heading", text: "There is no button to do the thing I want" },
+        { type: "heading", text: "Student Academic Roles & Institutional Support" },
         {
           type: "paragraph",
-          text: "Some of these are limits on a student account rather than faults:",
+          text: "The Student Portal is focused on your learning, coursework submissions, timetable, and study resources. Institutional actions are managed by your school support team:",
         },
         {
           type: "table",
-          columns: ["Missing", "Why"],
+          columns: ["Topic", "Support Contact"],
           rows: [
-            ["Any way to change your attendance", "The register is the tutor's record of the class."],
-            ["Any way to change a mark", "Marking belongs to your tutor."],
-            ["Any way to enrol yourself on a course", "Places are arranged by the school."],
-            ["Anything to add on Academic setup", "Those lists belong to the school."],
-            ["A list of who can see your record", "The system does not have one. Ask the office."],
-            ["The correct answers to a quiz", "The answer key is never sent to a student account."],
-          ],
-        },
-
-        { type: "heading", text: "Who to ask" },
-        {
-          type: "table",
-          columns: ["About", "Ask"],
-          rows: [
-            ["A mark, a register, an extension, the brief", "Your tutor"],
-            ["Your place on a course, a missing enrolment", "The office, or whoever arranged it"],
-            ["Who can see your record", "The office"],
-            ["Signing in, or a locked account", "The office"],
+            ["Coursework, assignment extensions, or quiz questions", "Contact your course tutor via Messages."],
+            ["Course enrollment, batch schedules, or room locations", "Contact Student Services."],
+            ["Official transcripts or enrollment letters", "Contact the Academic Registry."],
+            ["Account sign-in or password issues", "Use the reset link or contact the Helpdesk."],
           ],
         },
         {

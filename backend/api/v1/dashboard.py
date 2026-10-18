@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends
 from backend.api.deps import CurrentUser
 from backend.db.dependencies import DBSession
 from backend.schemas.reporting import DashboardResponse
+from backend.schemas.today import TodayClasses
+from backend.services.today_service import TodayService
 from backend.services.dashboard_service import DashboardService
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -39,3 +41,25 @@ async def dashboard(
     one number at a time.
     """
     return await DashboardService(session).build(actor=actor)
+
+
+@router.get(
+    "/today",
+    response_model=TodayClasses,
+    summary="Today's classes",
+)
+async def today(
+    session: DBSession,
+    actor: CurrentUser,
+) -> TodayClasses:
+    """The classes scheduled for the caller's own today.
+
+    Authentication only, like the dashboard itself: the rows are scoped to what
+    this caller can already see, so a tutor gets their classes and an
+    administrator gets the institution's.
+
+    "Today" is computed in the caller's timezone and the zone is named in the
+    response -- the rows are stored in UTC, and a day boundary taken there puts
+    an evening class on the wrong day for the person teaching it.
+    """
+    return await TodayService(session).today(actor=actor)

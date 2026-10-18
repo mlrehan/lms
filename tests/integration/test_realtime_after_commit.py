@@ -61,7 +61,20 @@ def test_a_committed_transaction_releases_its_events(db) -> None:
 
 
 def test_a_rolled_back_transaction_announces_nothing(db) -> None:
-    """The defect this file exists to prevent."""
+    """The defect this file exists to prevent.
+
+    **The obvious form of this test cannot fail**, and for a long time this was
+    the obvious form: queue an event, roll back, and drain. Draining reads the
+    *committed* list, which a transaction that never committed has not filled,
+    so the assertion holds whether the discard ran or not. Removing both
+    rollback listeners left this file green -- found by mutating them.
+
+    What `_discard` actually prevents needs a second transaction: without it
+    the abandoned event is still sitting in the queue, and the *next* commit on
+    the same session promotes it and announces a write that never happened. So
+    the rollback is followed by a real commit, and the abandoned event must not
+    appear in it.
+    """
     loop, manager = db
 
     async def go() -> list[RealtimeEvent]:
@@ -69,9 +82,19 @@ def test_a_rolled_back_transaction_announces_nothing(db) -> None:
             await session.execute(text("SELECT 1"))
             queue_event(session.sync_session, _event())
             await session.rollback()
+            # Nothing yet, for the uninteresting reason.
+            assert drain_committed(session.sync_session) == []
+
+            # A second, successful transaction on the same session. This is
+            # what a long-lived session does, and it is where the abandoned
+            # event would surface.
+            await session.execute(text("SELECT 1"))
+            await session.commit()
             return drain_committed(session.sync_session)
 
-    assert loop.run_until_complete(go()) == []
+    assert loop.run_until_complete(go()) == [], (
+        "an event from a rolled-back transaction was announced by a later commit"
+    )
 
 
 def test_an_exception_inside_the_unit_of_work_announces_nothing(db) -> None:

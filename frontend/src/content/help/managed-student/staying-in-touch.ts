@@ -1,6 +1,6 @@
 import type { Section } from "../types";
 
-/** Messages, notices, discussions, alerts, shared files and the reference lists. */
+/** Messages, notices, discussions, alerts, and shared files. */
 export const stayingInTouch: Section = {
   id: "staying-in-touch",
   title: "Staying in touch",
@@ -123,8 +123,8 @@ export const stayingInTouch: Section = {
           type: "screenshot",
           image: {
             src: "managed-student/announcements.webp",
-            alt: "The Announcements screen showing the feed with nothing currently announced.",
-            caption: "The feed. 'Nothing announced' means there are no current notices.",
+            alt: "The Announcements screen showing the feed with notices and updates.",
+            caption: "The announcements feed. Displays current institutional notices.",
           },
         },
         {
@@ -218,7 +218,7 @@ export const stayingInTouch: Section = {
           type: "screenshot",
           image: {
             src: "managed-student/shared-with-me.webp",
-            alt: "The Shared resources screen explaining that files shared by tutors and administrators appear here, with nothing shared yet.",
+            alt: "The Shared resources screen displaying files shared by tutors and administrators.",
             caption: "Files shared with you. Empty simply means nothing has been shared yet.",
           },
         },
@@ -227,34 +227,8 @@ export const stayingInTouch: Section = {
           text: "Click a file to open it. If you are expecting something that is not here, ask your tutor — sharing is a step they take deliberately.",
         },
       ],
+      result: "You can open, download, and review shared learning assets whenever needed.",
       related: ["messages", "course"],
-    },
-
-    {
-      id: "academic-setup",
-      title: "What Academic setup is for",
-      summary: "Reference lists you can look at but not change.",
-      feature: "Academic setup",
-      learn: ["What this screen holds", "Why there is nothing to change"],
-      body: [
-        {
-          type: "paragraph",
-          text: "**Academic setup** holds the school's reference lists: academic years, semesters, departments, course categories and tags.",
-        },
-        {
-          type: "screenshot",
-          image: {
-            src: "managed-student/academic-setup.webp",
-            alt: "The Academic setup screen showing tabs for academic years, semesters, departments, categories and tags, with no academic years defined.",
-            caption: "Read-only on your account. There is nothing here to add or edit.",
-          },
-        },
-        {
-          type: "paragraph",
-          text: "You will rarely need it. It is occasionally useful for checking which academic year or semester is current. Everything on it belongs to the school to maintain.",
-        },
-      ],
-      related: ["course"],
     },
   ],
 };

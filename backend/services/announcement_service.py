@@ -26,11 +26,14 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import literal, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.batch import Batch
 from backend.models.course import Course
 from backend.models.identity.user import User
-from backend.models.notification import Announcement
+from backend.models.notification import Announcement, AnnouncementRead
 from backend.repositories.announcement import AnnouncementRepository
 from backend.schemas.announcement import (
     CreateAnnouncementRequest,
@@ -110,6 +113,62 @@ class AnnouncementService:
         return announcement
 
     # -- writes --------------------------------------------------------------
+
+    async def mark_read(self, public_id: uuid.UUID, *, actor: User) -> None:
+        """Record that this person has read this announcement.
+
+        Idempotent by the unique constraint rather than by a read-then-write:
+        the console may send this from several open tabs at once, and
+        `ON CONFLICT DO NOTHING` settles that in the database instead of in a
+        race between two requests.
+
+        Goes through `get`, so an announcement the caller cannot see is a 404
+        before anything is written -- otherwise the read table would quietly
+        become a way to prove an announcement exists.
+        """
+        announcement = await self.get(public_id, actor=actor)
+        await self.session.execute(
+            pg_insert(AnnouncementRead)
+            .values(
+                user_id=actor.id,
+                announcement_id=announcement.id,
+                read_at=datetime.now(timezone.utc),
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_announcement_reads_user_announcement"
+            )
+        )
+
+    async def mark_all_read(self, *, actor: User) -> int:
+        """Read everything currently live for this person.
+
+        Written as one INSERT ... SELECT rather than a loop: the feed can be
+        long, and a round trip per announcement would make clearing a badge the
+        slowest thing on the page.
+        """
+        now = datetime.now(timezone.utc)
+        role_names = {r.name for r in (actor.roles or [])}
+        live = (
+            select(
+                literal(actor.id).label("user_id"),
+                Announcement.id.label("announcement_id"),
+                literal(now).label("read_at"),
+            )
+            .where(
+                Announcement.start_at <= now,
+                (Announcement.end_at.is_(None)) | (Announcement.end_at >= now),
+                (Announcement.role_scope.is_(None))
+                | (Announcement.role_scope.in_(role_names)),
+            )
+        )
+        result = await self.session.execute(
+            pg_insert(AnnouncementRead)
+            .from_select(["user_id", "announcement_id", "read_at"], live)
+            .on_conflict_do_nothing(
+                constraint="uq_announcement_reads_user_announcement"
+            )
+        )
+        return int(result.rowcount or 0)
 
     async def create(
         self, payload: CreateAnnouncementRequest, *, actor: User

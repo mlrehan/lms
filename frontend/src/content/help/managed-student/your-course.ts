@@ -81,7 +81,7 @@ export const yourCourse: Section = {
           fix: "You may not have been enrolled yet. Ask whoever arranged your place on the course.",
         },
       ],
-      related: ["timetable", "join-class", "grades"],
+      related: ["timetable", "join-class", "performance"],
     },
 
     {

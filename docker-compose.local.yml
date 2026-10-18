@@ -1,0 +1,179 @@
+# =============================================================================
+# LOCAL DEVELOPMENT & TESTING ENVIRONMENT (Windows 11 / Mac / Linux)
+# Usage: docker compose -f docker-compose.local.yml up --build
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Local PostgreSQL 16 Database
+  # Mapped to host port 5433 to avoid conflicts with any local Postgres on 5432
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: lms-local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lms_db
+      POSTGRES_USER: lms_dev
+      POSTGRES_PASSWORD: devpassword123
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - lms-local-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms_dev -d lms_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Local Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: lms-local-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - local_redis_data:/data
+    networks:
+      - lms-local-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Local FastAPI Backend
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: lms-local-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - APP_ENVIRONMENT=development
+      - APP_NAME=LMS (Local Dev)
+      - APP_DEBUG=true
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+      - SERVER_FORWARDED_ALLOW_IPS=*
+      - API_PREFIX=/api/v1
+      - API_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+      - API_TRUSTED_HOSTS=localhost,127.0.0.1,backend
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=lms_db
+      - DATABASE_MIGRATION_USER=lms_dev
+      - DATABASE_MIGRATION_PASSWORD=devpassword123
+      - DATABASE_RUNTIME_USER=lms_dev
+      - DATABASE_RUNTIME_PASSWORD=devpassword123
+      - DATABASE_SSL_MODE=disable
+      - DATABASE_ECHO_SQL=false
+      - REALTIME_ENABLED=true
+      - REALTIME_BACKEND=redis
+      - REALTIME_REDIS_URL=redis://redis:6379/0
+      - SECURITY_JWT_SECRET=local_development_jwt_secret_must_be_32_bytes_minimum_length
+      - SECURITY_MASTER_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      - STORAGE_MODE=local
+      - STORAGE_LOCAL_PATH=/app/var/storage
+      - LMS_ADMIN_PASSWORD=adminpassword123
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=console
+    ports:
+      - "8000:8000"
+    volumes:
+      - local_storage_data:/app/var/storage
+    networks:
+      - lms-local-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/livez || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Local Background Webhook Worker
+  # ---------------------------------------------------------------------------
+  webhooks-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: lms-local-webhooks-worker
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - APP_ENVIRONMENT=development
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=lms_db
+      - DATABASE_MIGRATION_USER=lms_dev
+      - DATABASE_MIGRATION_PASSWORD=devpassword123
+      - DATABASE_RUNTIME_USER=lms_dev
+      - DATABASE_RUNTIME_PASSWORD=devpassword123
+      - DATABASE_SSL_MODE=disable
+      - REALTIME_ENABLED=true
+      - REALTIME_BACKEND=redis
+      - REALTIME_REDIS_URL=redis://redis:6379/0
+      - SECURITY_JWT_SECRET=local_development_jwt_secret_must_be_32_bytes_minimum_length
+      - SECURITY_MASTER_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    command: ["python", "-m", "backend.cli.dispatch_webhooks", "--interval", "10"]
+    volumes:
+      - local_storage_data:/app/var/storage
+    networks:
+      - lms-local-network
+
+  # ---------------------------------------------------------------------------
+  # Local Next.js 16 Standalone Frontend
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lms-local-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - LMS_API_URL=http://backend:8000/api/v1
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    ports:
+      - "3000:3000"
+    networks:
+      - lms-local-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/login || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  local_postgres_data:
+  local_redis_data:
+  local_storage_data:
+
+networks:
+  lms-local-network:
+    name: lms-local-network
+    driver: bridge
+

@@ -18,13 +18,18 @@ look", not "run every minute".
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.core.errors import ConflictError
 from backend.core.logging import get_logger
 from backend.models.administration import SystemSetting
+from backend.models.sync_pipeline import SyncPipelineRun
 
 logger = get_logger("sync.schedule")
 
@@ -80,3 +85,84 @@ async def read_schedule(session: AsyncSession) -> SyncSchedule:
             return SyncSchedule(enabled=False, interval_hours=DEFAULT_INTERVAL_HOURS)
 
     return SyncSchedule(enabled=enabled, interval_hours=interval)
+
+
+async def should_run_now(
+    session: AsyncSession,
+    schedule: SyncSchedule,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return True if automatic sync is enabled and the interval has elapsed since the last run."""
+    if not schedule.enabled:
+        return False
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    # Do not start if any pipeline is currently running
+    running = (
+        await session.execute(
+            select(SyncPipelineRun.id).where(SyncPipelineRun.status == "RUNNING").limit(1)
+        )
+    ).first()
+    if running:
+        return False
+
+    # Find the most recent finished run
+    last_run = (
+        await session.execute(
+            select(SyncPipelineRun)
+            .where(SyncPipelineRun.status.in_(("COMPLETED", "PARTIAL", "FAILED")))
+            .order_by(SyncPipelineRun.finished_at.desc().nullslast(), SyncPipelineRun.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if last_run is None:
+        return True
+
+    reference_time = last_run.finished_at or last_run.started_at
+    if reference_time is None:
+        return True
+
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+
+    cutoff = reference_time + timedelta(seconds=schedule.interval_seconds)
+    return now >= cutoff
+
+
+async def run_sync_scheduler(
+    factory: async_sessionmaker[AsyncSession],
+    service: Any,
+    *,
+    poll_interval_seconds: float = 15.0,
+) -> None:
+    """Continuously poll schedule settings and execute pipeline when due."""
+    logger.info("Automatic sync scheduler loop started", extra={"poll_interval": poll_interval_seconds})
+    try:
+        while True:
+            try:
+                await service.current()
+                async with factory() as session:
+                    schedule = await read_schedule(session)
+                    due = await should_run_now(session, schedule)
+
+                if due:
+                    logger.info("Automatic sync is due; starting pipeline run")
+                    try:
+                        run = await service.start(trigger_type="SCHEDULED", triggered_by_user_id=None)
+                        await service.execute(run.id)
+                    except ConflictError:
+                        logger.info("Automatic sync skipped; another synchronization is already running")
+                    except Exception:
+                        logger.exception("Automatic sync run failed during execution")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Unexpected error in automatic sync scheduler iteration")
+
+            await asyncio.sleep(poll_interval_seconds)
+    except asyncio.CancelledError:
+        logger.info("Automatic sync scheduler loop stopped")

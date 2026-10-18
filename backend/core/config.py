@@ -68,6 +68,24 @@ class AppSettings(BaseSettings):
     environment: Environment = Environment.LOCAL
     debug: bool = False    
 
+    # -------------------------------------------------------------------------
+    # Complete system reset
+    # -------------------------------------------------------------------------
+    # Off unless somebody deliberately turns it on, and never reachable in
+    # production at all (see `SystemResetService`). A reset is the one
+    # operation here with no recovery path through the product, so the switch
+    # lives in deployment configuration rather than in the interface: the
+    # person who may run it and the person who may enable it are different
+    # people, holding different kinds of access.
+    system_reset_enabled: bool = False
+
+    # A readable database dump no older than `system_reset_backup_max_age_hours`
+    # must exist here, or the reset refuses. Unset is a refusal too: "there is
+    # no backup configured" and "the backup is fine" must not look the same to
+    # the person about to erase everything.
+    system_reset_backup_path: Path | None = None
+    system_reset_backup_max_age_hours: int = Field(default=24, ge=1, le=720)
+
     @property
     def is_local(self) -> bool:
         return self.environment == Environment.LOCAL  

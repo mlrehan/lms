@@ -1,205 +1,110 @@
 import type { Section } from "../types";
 
-/** Attendance, marks, overall standing and the final record. */
+/** Attendance, performance, and completion transcripts. */
 export const yourProgress: Section = {
   id: "your-progress",
   title: "How you are getting on",
-  blurb: "Your attendance, your marks, your overall standing, and the record you get at the end.",
+  blurb: "Your attendance records, overall weighted standing, and completion transcripts.",
   articles: [
     {
       id: "attendance",
       title: "How to check your attendance",
-      summary: "Every class, what you were marked, and who marked it.",
+      summary: "Every class you have had, whether you were marked present, and your attendance rate.",
       feature: "Attendance",
       learn: [
-        "How to see your attendance class by class",
-        "What each status means",
-        "What to do if one is wrong",
+        "Where your attendance register is",
+        "What the four statuses mean",
+        "Why the percentage moves slowly once you have had many classes",
       ],
       body: [
         {
           type: "paragraph",
-          text: "**Attendance** shows the registers that concern you: one row per class, with what you were marked and when it was recorded.",
+          text: "**Attendance** is your record of every class scheduled for your course. It shows each session date, start time, and official attendance status.",
         },
         {
           type: "screenshot",
           image: {
             src: "managed-student/attendance.webp",
-            alt: "The Attendance screen listing three sessions with columns for session time, batch, student, status, remarks and when the register was recorded.",
-            caption:
-              "Your own registers. The student column and the tutor's name are blurred in this guide for privacy.",
+            alt: "The Attendance screen showing session rows with status badges for Present, Late, Absent and Excused, and filter controls.",
+            caption: "Your session register. Personal identifying details are blurred for privacy.",
           },
         },
         {
           type: "definitions",
           items: [
-            { term: "Present", detail: "You were there, on time." },
-            { term: "Late", detail: "You were there, after the class started." },
-            {
-              term: "Absent",
-              detail: "You were not there, and it had not been agreed beforehand.",
-            },
+            { term: "Present", detail: "You joined on time and attended the class." },
+            { term: "Late", detail: "You joined after instruction began." },
+            { term: "Absent", detail: "You did not attend and had not arranged it in advance." },
             {
               term: "Excused",
-              detail: "You were not there, and it had been agreed beforehand.",
-            },
-            {
-              term: "Remarks",
-              detail: "Anything the tutor added. A dash means nothing was added.",
-            },
-            { term: "Recorded", detail: "When the register was taken, and by which tutor." },
-          ],
-        },
-        {
-          type: "callout",
-          callout: {
-            kind: "warning",
-            title: "Attendance is visible to whoever is linked to you",
-            body: "If an employer is paying for your place, your attendance is usually the first thing they look at. A run of absences is noticed.",
-          },
-        },
-        {
-          type: "heading",
-          text: "If a mark is wrong",
-        },
-        {
-          type: "paragraph",
-          text: "You cannot change a register — it is your tutor's record of who was in the class. If you were there and are marked absent, or an absence was agreed in advance and is not marked excused, message your tutor and say which class you mean.",
-        },
-        {
-          type: "steps",
-          items: [
-            { text: "Click **Attendance** in the left-hand menu." },
-            { text: "Use **Status** to show only absences if the list is long." },
-            { text: "Note the session date and the batch number." },
-            { text: "Message your tutor with both." },
-          ],
-        },
-      ],
-      result: "You know exactly which classes you have been marked present for.",
-      tips: [
-        "Check this after a class you joined late or left early — those are the ones most likely to be recorded differently from how you remember them.",
-      ],
-      problems: [
-        {
-          symptom: "A recent class is not listed.",
-          fix: "The register may not have been taken yet. It is recorded after the class, sometimes a day or two later.",
-        },
-        {
-          symptom: "Your attendance percentage looks worse than you expected.",
-          fix: "Early in a course one absence moves the figure a long way. Count the actual rows before worrying.",
-        },
-      ],
-      related: ["grades", "who-can-see", "messages"],
-    },
-
-    {
-      id: "grades",
-      title: "How to see your marks",
-      summary: "Every individual mark, what each is worth, and the scale that turns them into a grade.",
-      feature: "Grade book",
-      learn: [
-        "Where your individual marks live",
-        "What 'weight' means and why it matters",
-        "How a percentage becomes a letter grade",
-      ],
-      before: ["Choose a **Batch** at the top — the screen is empty until you do."],
-      body: [
-        {
-          type: "paragraph",
-          text: "The **Grade book** holds one row for every mark you have earned on a course: each assignment, each quiz, attendance, practical work and the final exam.",
-        },
-        {
-          type: "screenshot",
-          image: {
-            src: "managed-student/gradebook-batch.webp",
-            alt: "The grade book Entries tab with a batch selected, showing components with their score out of the maximum, a percentage, a weight and when each was recorded.",
-            caption:
-              "Each mark, with what it is worth. Names are blurred in this guide for privacy.",
-          },
-        },
-        {
-          type: "definitions",
-          items: [
-            {
-              term: "Entries",
-              detail: "One row per mark: what it was, your score, its weight and when it was recorded.",
-            },
-            {
-              term: "Student standing",
-              detail: "Your overall position, worked out from those entries.",
-            },
-            {
-              term: "Grading scale",
               detail:
-                "The bands the school uses to turn a percentage into a letter grade and GPA points.",
+                "You could not attend, but told the school or your manager beforehand and had it authorized.",
             },
           ],
         },
         {
           type: "heading",
-          text: "Weight is the column people misread",
+          text: "What to do if a mark looks wrong",
         },
         {
           type: "paragraph",
-          text: "**Weight** says how much a piece counts towards your final result. A low mark on something lightly weighted moves your overall figure far less than you would fear — and a high mark on it helps less than you would hope. Look at the weight before drawing a conclusion from any single row.",
+          text: "Attendance is recorded by the tutor who taught the class. If you were marked absent for a class you attended, or an authorized corporate absence was not marked excused, write to your tutor via **Messages** with the session date.",
         },
         {
           type: "callout",
           callout: {
             kind: "tip",
-            title: "Use the component filter",
-            body: "The **Every component** control at the top narrows the list to just assignments, or just quizzes, which is easier to read than everything at once.",
+            title: "Check attendance weekly",
+            body: "Reviewing your attendance register weekly ensures that any recording error can be resolved immediately while the session is fresh.",
           },
         },
       ],
-      result: "You can see every mark you have earned and what each contributes.",
+      result: "You know your official attendance standing across all completed classes.",
       problems: [
         {
-          symptom: "The grade book is empty.",
-          fix: "Choose a **Batch** at the top. Nothing shows until you do.",
+          symptom: "A class you attended is marked Absent.",
+          fix: "Message your tutor using **Messages**. Give the date and the course.",
         },
         {
-          symptom: "A piece of work has no mark.",
-          fix: "It has not been marked yet, or the mark has not been published. Both are normal part-way through a course.",
+          symptom: "Your percentage seems low.",
+          fix: "Early in a cohort, one absence moves the percentage significantly. Check the actual session rows to see your record.",
         },
       ],
-      related: ["performance", "submit", "transcripts"],
+      related: ["performance", "who-can-see", "messages"],
     },
 
     {
       id: "performance",
       title: "How to see your overall result",
-      summary: "Your current percentage and grade, and the arithmetic behind it.",
+      summary: "Your current percentage, provisional letter grade, and the arithmetic working behind it.",
       feature: "Performance",
       learn: [
-        "Where your overall standing is",
+        "Where your overall standing is displayed",
         "What 'so far incomplete' means",
-        "Why you see only your own row",
+        "How component weightings contribute to your final result",
       ],
-      before: ["Choose a **Batch** — the screen is empty until you do."],
+      before: ["Choose your **Batch** from the dropdown — the screen populates once selected."],
       body: [
         {
           type: "paragraph",
-          text: "**Performance** shows your weighted standing on a course: one percentage, one grade, and the working behind it.",
+          text: "**Performance** shows your weighted standing on your course: one clear percentage, a provisional letter grade, and the complete calculation breakdown.",
         },
         {
           type: "screenshot",
           image: {
             src: "managed-student/performance-batch.webp",
-            alt: "The Performance screen for a batch showing a single student row with a percentage, a status of so far incomplete and a letter grade.",
-            caption:
-              "Only your own row. Names are blurred in this guide for privacy.",
+            alt: "The Performance screen for a batch showing student standing percentage, letter grade, and expandable component breakdown table.",
+            caption: "Your weighted standing. Personal names are blurred for privacy.",
           },
         },
         {
           type: "steps",
           items: [
             { text: "Click **Performance** in the left-hand menu." },
-            { text: "Choose your **Batch**." },
+            { text: "Select your active **Batch** from the dropdown." },
             {
-              text: "Click your row to open it.",
-              note: "This is the useful part: every component, its weight, and what it actually contributed.",
+              text: "Click your student row to expand the component breakdown.",
+              note: "This reveals each component (Assignments, Attendance, Quizzes, Examinations, Practical), its weight, and what it actually contributes.",
             },
           ],
         },
@@ -208,80 +113,69 @@ export const yourProgress: Section = {
           callout: {
             kind: "note",
             title: "What 'so far incomplete' means",
-            body: "Your course is not finished. The percentage is out of the work assessed so far, so it will move — often a lot — as more is marked. A low figure early on usually means unmarked work, not a bad result.",
+            body: "During an ongoing course, the standing reflects only the components assessed to date. A provisional score of 53.63% indicates your current position across marked work, not a final failing grade. Final grades lock once all weighted coursework concludes.",
           },
         },
         {
           type: "callout",
           callout: {
             kind: "tip",
-            title: "You see only yourself",
-            body: "Even though this screen is organised by class group, your account shows only your own standing. You cannot see your classmates' results, and they cannot see yours.",
+            title: "Student privacy safeguards",
+            body: "Even though cohort rankings exist in the administrative engine, your student portal strictly displays only your own standing. You cannot see your peers' results, and they cannot see yours.",
           },
         },
       ],
-      result: "You understand where your overall figure comes from.",
+      result: "You understand exactly where your overall percentage comes from and how remaining work will impact your final grade.",
       tips: [
-        "Open your row before worrying about the headline number. One unmarked piece of work can explain the whole gap.",
+        "Expand your row before worrying about the headline percentage. One unmarked deliverable often explains the temporary gap.",
       ],
       problems: [
         {
           symptom: "The screen stays empty.",
-          fix: "No batch is chosen, or no marks have been recorded yet.",
+          fix: "Ensure your active batch is selected in the batch dropdown at the top.",
         },
       ],
-      related: ["grades", "transcripts", "attendance"],
+      related: ["attendance", "transcripts", "assignments"],
     },
 
     {
       id: "transcripts",
       title: "What a transcript is, and when you get one",
-      summary: "The formal record of how you did, produced at the end of a course.",
+      summary: "The formal certified record of your course completion, issued upon cohort graduation.",
       feature: "Transcripts",
-      learn: ["What a transcript is", "When it appears", "Why yours may be empty"],
+      learn: [
+        "What an academic transcript represents",
+        "When transcripts are finalized and issued",
+        "How to request an official copy",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "A **transcript** is the formal, final record of how you did on a course — your marks brought together into a GPA and an overall result.",
+          text: "An **academic transcript** is the formal institutional record of your educational achievements on a course — bringing together your final component marks, overall percentage, letter grade, and grade points into an official certified document.",
         },
         {
-          type: "screenshot",
-          image: {
-            src: "managed-student/transcripts.webp",
-            alt: "The Transcripts screen with columns for student, batch, GPA, overall result, when it was generated and its state, showing no transcripts yet.",
-            caption: "'No transcripts yet' is the normal view part-way through a course.",
-          },
+          type: "definitions",
+          items: [
+            { term: "GPA / Standing", detail: "Your final cumulative grade points and accredited letter grade." },
+            { term: "Component Breakdown", detail: "Certified scores achieved across coursework, attendance, quizzes, and exams." },
+            { term: "Registry Verification", detail: "Formal sign-off and seal from the Academic Registry confirming course completion." },
+          ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Transcripts come at the end",
-            body: "The school produces your transcript once the course has finished and the marking is complete, and then **finalises** it. It appears here only after that last step — before then it is a draft that only staff can see. An empty screen during a course, or shortly after it ends, is expected rather than a fault.",
+            title: "Transcripts are issued upon graduation",
+            body: "The institution prepares and finalizes official transcripts once the cohort concludes and all marks are formally approved by the academic board. During active instruction, your live progress is tracked directly inside the **Performance** console.",
           },
         },
         {
-          type: "definitions",
-          items: [
-            { term: "GPA", detail: "Your grade points, averaged." },
-            { term: "Overall", detail: "Your final percentage." },
-            { term: "Generated", detail: "When the record was produced." },
-            {
-              term: "State",
-              detail:
-                "Whether it is a draft or finalised. A finalised transcript is not changed by later regeneration.",
-            },
-          ],
+          type: "paragraph",
+          text: "Upon cohort graduation, your official completion certificate and transcript are distributed by the registry. If you require an interim letter of enrollment or attendance verification for your employer, message school administration through **Messages**.",
         },
       ],
-      result: "You know what a transcript is and when to expect yours.",
-      problems: [
-        {
-          symptom: "Your course has finished and there is still no transcript.",
-          fix: "They are generated by the school, not automatically. Message the office and ask.",
-        },
-      ],
-      related: ["grades", "performance", "messages"],
+      result: "You know how institutional transcripts are finalized and how course completion is formally accredited.",
+      related: ["performance", "attendance", "who-can-see"],
     },
   ],
 };

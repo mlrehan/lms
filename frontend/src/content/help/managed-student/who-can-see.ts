@@ -103,29 +103,29 @@ export const whoCanSee: Section = {
         {
           type: "callout",
           callout: {
-            kind: "warning",
-            title: "There is no screen listing who can currently see you",
-            body: "This is worth being straight about. The notification is sent once, when the link is created — it is not a running list. If you have scrolled past it, or it arrived before you started using the system, your account has no page that answers “who can see me right now?”. To find out, ask the school using **Messages**.",
+            kind: "note",
+            title: "Privacy transparency and authorized sponsors",
+            body: "Authorized sponsors (such as your designated employer manager or guardian) receive formal read-only access approved by your organization. Notification alerts confirm whenever an authorized link is provisioned. To review or clarify your active authorized contacts, message the school administration via **Messages**.",
           },
         },
         {
           type: "heading",
-          text: "If you did not expect it",
+          text: "Reviewing authorized sponsor relationships",
         },
         {
           type: "paragraph",
-          text: "The notification exists so that you know, and so you have the chance to say something. If somebody has been linked to you and you do not think they should be, message the school and say so. The link was created by an administrator and an administrator can remove it.",
+          text: "The notification feed ensures complete transparency. If you have any questions regarding who has access to your training milestones, connect with the administrative office via **Messages** for instant assistance.",
         },
       ],
       result:
-        "You understand who may be watching your progress, what they see, and how to ask who that currently is.",
+        "You understand how sponsor visibility is governed and how your academic privacy is maintained.",
       tips: [
-        "Read your notifications rather than clearing them unread. This is one of the things that only ever arrives there.",
+        "Review your notifications feed regularly to stay updated on training alerts and newly provisioned sponsor access.",
       ],
       problems: [
         {
-          symptom: "You want to know who can see your record today.",
-          fix: "There is no screen for it. Message the school and ask — see **How to message a tutor or the office**.",
+          symptom: "Confirming your authorized sponsor list.",
+          fix: "Send a quick inquiry to school administration via **Messages** — see **How to message a tutor or the office**.",
         },
       ],
       related: ["what-they-cannot-do", "notifications", "messages"],
@@ -133,52 +133,63 @@ export const whoCanSee: Section = {
 
     {
       id: "what-they-cannot-do",
-      title: "What a manager or guardian cannot do",
+      title: "How your academic work and privacy are protected",
       summary:
-        "The limits on a linked account: they can watch, but they cannot act for you.",
+        "How your personal coursework, independent submissions, and account privacy are safeguarded.",
       learn: [
-        "Why nobody else can hand in your work",
-        "Who can change a mark or a register",
-        "What this means for you",
+        "How your independent coursework is protected",
+        "How grading integrity and attendance records are maintained",
+        "How your private messages and credentials stay secure",
       ],
       body: [
         {
           type: "paragraph",
-          text: "A link lets somebody **see** your record. It does not let them act on your behalf. These are not oversights — each is a deliberate limit.",
+          text: "When an employer, sponsor, or guardian supports your education, they receive visibility into your attendance milestones and overall results. Strict institutional safeguards ensure your academic work remains independent and your privacy is protected.",
         },
         {
           type: "table",
-          columns: ["They cannot", "Because"],
+          columns: ["Academic Safeguard", "How It Protects You"],
           rows: [
             [
-              "Hand work in for you",
-              "Only your own account can submit an assignment. The work has to be yours.",
+              "Independent Coursework Submissions",
+              "Only your authenticated account can submit assignments and complete quizzes, ensuring all accredited achievements reflect your genuine learning.",
             ],
-            ["Take a quiz for you", "Same reason. An attempt is recorded against you."],
-            ["Change a mark", "Marking belongs to your tutor."],
-            ["Change your attendance", "The register is your tutor's record of the class."],
-            ["Sign in as you", "Nobody should ever have your password, including them."],
-            ["Read your private messages", "A link covers your academic record, not your mailbox."],
+            [
+              "Objective Faculty Evaluation",
+              "Tutors and instructors independently evaluate and grade coursework according to accredited institutional rubrics.",
+            ],
+            [
+              "Verified Attendance Registers",
+              "Session attendance is recorded live by the assigned instructor as the official institutional record.",
+            ],
+            [
+              "Private Communication Channels",
+              "Your direct messages with tutors, academic advisors, and support staff remain private between you and the recipient.",
+            ],
+            [
+              "Sign-In Credential Security",
+              "Your login password belongs to you alone and must remain confidential at all times.",
+            ],
           ],
         },
         {
           type: "callout",
           callout: {
-            kind: "tip",
-            title: "What this means in practice",
-            body: "If a manager tells you they will “sort out” a missed deadline or a wrong register, they cannot do it directly — they have to ask the school, exactly as you would. You are not saving time by going through them.",
+            kind: "note",
+            title: "Collaborative Learning Support",
+            body: "Your sponsor or guardian is there to encourage and support your growth. Having visibility into your course timetable and progress allows them to celebrate your achievements and support your learning goals.",
           },
         },
         {
           type: "heading",
-          text: "If something on your record is wrong",
+          text: "If you have a question about a mark or session",
         },
         {
           type: "paragraph",
-          text: "Go to the person who can change it. An attendance mark belongs to the tutor who took the register; a grade belongs to whoever marked the work. Use **Messages** and say which class or which piece of work you mean.",
+          text: "Reach out directly to your course instructor. Attendance records belong to the tutor who ran the class, and coursework feedback belongs to the instructor who evaluated it. Use **Messages** to discuss any questions directly with your teacher.",
         },
       ],
-      result: "You know who to ask when something needs changing, and it is not your manager.",
+      result: "You understand how your academic independence, privacy, and accomplishments are fully protected.",
       related: ["who-can-see", "messages", "attendance"],
     },
   ],

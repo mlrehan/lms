@@ -38,7 +38,7 @@ from backend.core.errors import ConflictError
 from backend.core.logging import configure_logging, get_logger
 from backend.db.manager import DatabaseManager
 from backend.services.sync_pipeline_service import SyncPipelineService
-from backend.services.sync_schedule import read_schedule
+from backend.services.sync_schedule import read_schedule, should_run_now
 
 logger = get_logger("sync.pipeline.cli")
 
@@ -80,22 +80,26 @@ async def _run(args: argparse.Namespace) -> int:
         while True:
             async with db.session_factory() as session:
                 schedule = await read_schedule(session)
-
-            if args.once or schedule.enabled:
-                failed, summary = await _one_pass(service)
-                print(summary, flush=True)
-            else:
-                print("idle: automatic synchronisation is switched off", flush=True)
+                due = await should_run_now(session, schedule) if not args.once else True
 
             if args.once:
+                failed, summary = await _one_pass(service)
+                print(summary, flush=True)
                 break
-
-            # An override is a cadence, never a way past the off switch.
-            if schedule.enabled:
-                delay = args.interval or schedule.interval_seconds
+            elif args.interval > 0 and schedule.enabled:
+                failed, summary = await _one_pass(service)
+                print(summary, flush=True)
+                await asyncio.sleep(args.interval)
+            elif due:
+                failed, summary = await _one_pass(service)
+                print(summary, flush=True)
+                await asyncio.sleep(_IDLE_POLL_SECONDS)
             else:
-                delay = _IDLE_POLL_SECONDS
-            await asyncio.sleep(delay)
+                if not schedule.enabled:
+                    print("idle: automatic synchronisation is switched off", flush=True)
+                else:
+                    print("idle: automatic synchronisation is not due yet", flush=True)
+                await asyncio.sleep(_IDLE_POLL_SECONDS)
     finally:
         await db.dispose()
     return 1 if failed else 0

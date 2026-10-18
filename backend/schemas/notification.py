@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -45,3 +45,17 @@ class SetNotificationPreferenceRequest(RequestModel):
 
 class PreferenceResetResponse(APIModel):
     cleared: int
+
+
+class NotificationSoundResponse(APIModel):
+    sound: Literal["off", "subtle", "prominent"]
+
+
+class SetNotificationSoundRequest(RequestModel):
+    sound: Literal["off", "subtle", "prominent"] = Field(
+        description=(
+            "off, subtle or prominent. `prominent` is a longer, more insistent "
+            "tone -- not a louder one: the volume belongs to the device, and a "
+            "page cannot raise it."
+        )
+    )

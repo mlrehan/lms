@@ -160,12 +160,55 @@ class TeachingPanel(APIModel):
 
 
 class CarePanel(APIModel):
-    """Guardians and corporate managers: the people in their care."""
+    """Guardians: the people in their care."""
 
     people: int = 0
     attendance_rate: float | None = None
     assignments_overdue: int = 0
     upcoming_sessions: list[SessionBrief] = Field(default_factory=list)
+
+
+class CorporateCourseSummary(APIModel):
+    course_title: str
+    course_code: str | None = None
+    batch_code: str
+    enrollment_count: int
+    tutor_name: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class CorporateAtRiskEmployee(APIModel):
+    user_id: int
+    full_name: str
+    email: str
+    attendance_rate: float | None = None
+    attended_sessions: int = 0
+    total_sessions: int = 0
+    assignments_overdue: int = 0
+    enrolled_courses: list[str] = Field(default_factory=list)
+    risk_level: str = "warning"
+    risk_reason: str
+
+
+class CorporatePanel(APIModel):
+    """Corporate workforce dashboard for corporate managers."""
+
+    organization_name: str | None = None
+    organization_code: str | None = None
+    manager_title: str | None = None
+    total_employees: int = 0
+    total_enrollments: int = 0
+    active_enrollments: int = 0
+    attendance_rate: float | None = None
+    assignments_overdue: int = 0
+    at_risk_count: int = 0
+    health_score: int = 100
+    health_status: str = "Optimal"
+    at_risk_employees: list[CorporateAtRiskEmployee] = Field(default_factory=list)
+    active_courses: list[CorporateCourseSummary] = Field(default_factory=list)
+    upcoming_sessions: list[SessionBrief] = Field(default_factory=list)
+
 
 
 class InstitutionPanel(APIModel):
@@ -188,4 +231,6 @@ class DashboardResponse(APIModel):
     student: StudentPanel | None = None
     teaching: TeachingPanel | None = None
     care: CarePanel | None = None
+    corporate: CorporatePanel | None = None
     institution: InstitutionPanel | None = None
+

@@ -28,7 +28,7 @@ export const managedStudentGuide: Guide = {
     "How to use your course: when your classes are, the work you have been set, how to hand it in, and how you are getting on. Written for complete beginners.",
   audience:
     "For students whose place was arranged by an employer, a sponsor or a family member — someone who can see how you are getting on.",
-  updated: "2026-10-13",
+  updated: "2026-10-18",
   sibling: {
     slug: "individual-student",
     label: "read the Individual Student guide instead",

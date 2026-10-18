@@ -52,6 +52,14 @@ class User(Base, TimestampMixin, PublicIdMixin):
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     postcode: Mapped[Optional[str]] = mapped_column(String(35), nullable=True)
     timezone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    #: How loudly to announce a notification in the browser: off, subtle or
+    #: prominent. A per-person interface preference, which is why it sits here
+    #: beside `timezone` rather than in `notification_preferences` -- that
+    #: table records which *types* somebody has switched off, and cannot say
+    #: "keep them all, just stop chiming".
+    notification_sound: Mapped[str] = mapped_column(
+        String(12), nullable=False, server_default="subtle"
+    )
     # True while `timezone` was filled in from the person's IP address rather than chosen by them; only then may a
     # later change of address change it. A zone somebody typed is never overwritten.
     timezone_is_auto: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)

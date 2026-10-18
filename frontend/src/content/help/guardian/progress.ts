@@ -142,7 +142,7 @@ export const progress: Section = {
             { text: "Check the student you expected is listed." },
             {
               text: "If somebody is missing, ask the school to add the link.",
-              note: "You cannot create a link yourself. There is no button for it on your account.",
+              note: "Student guardianship links are formally established through school administration to safeguard student privacy.",
             },
           ],
         },
@@ -195,8 +195,8 @@ export const progress: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "You cannot change a register",
-            body: "The register is the tutor's record of the class. If something looks wrong — an absence you believe was agreed, for instance — message the school rather than assuming the record is right or wrong.",
+            title: "Attendance records & official verification",
+            body: "The attendance register is the official classroom record maintained by the course instructor. If a session record requires verification or an excused absence was not reflected, message the school through **Messages**.",
           },
         },
       ],

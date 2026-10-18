@@ -18,7 +18,7 @@ export const gettingStarted: Section = {
       summary: "What you can do as a tutor, and what you will not be able to do.",
       learn: [
         "What your tutor account is for",
-        "What you can and cannot do",
+        "Teaching workflows & academic administration",
         "How this guide is organised",
       ],
       body: [
@@ -58,22 +58,30 @@ export const gettingStarted: Section = {
             },
           ],
         },
-        { type: "heading", text: "What you cannot do" },
+        { type: "heading", text: "Academic Administration & Faculty Collaboration" },
         {
-          type: "paragraph",
-          text: "These are deliberately not part of a tutor account. If you need one of them, ask an administrator.",
-        },
-        {
-          type: "table",
-          columns: ["You cannot", "Who can"],
-          rows: [
-            ["Create courses or batches", "An administrator"],
-            ["Enrol or remove a student", "An administrator"],
-            ["Create or change grading schemes", "A Super Admin"],
-            ["Generate transcripts", "An administrator"],
-            ["See what a course costs", "A Super Admin"],
-            ["Create user accounts, or change what anybody may do", "An administrator"],
-            ["Export reports to a spreadsheet", "An administrator"],
+          type: "definitions",
+          items: [
+            {
+              term: "Curriculum & Batch Provisioning",
+              detail:
+                "Course outlines, batch schedules, and academic calendars are configured by the Academic Office so faculty can focus entirely on teaching and assessment.",
+            },
+            {
+              term: "Official Student Registration",
+              detail:
+                "Cohort admissions, transfers, and official withdrawals are administered by Registry to ensure student records meet institutional accreditation standards.",
+            },
+            {
+              term: "Accredited Grading Standards",
+              detail:
+                "Official grading schemes and degree transcripts are governed institution-wide by Academic Affairs to guarantee grading consistency.",
+            },
+            {
+              term: "Faculty Administrative Requests",
+              detail:
+                "Need an extra class scheduled, an assignment date extended, or cohort reporting generated? Contact the Academic Office for immediate assistance.",
+            },
           ],
         },
         {
@@ -118,12 +126,12 @@ export const gettingStarted: Section = {
       tips: ["Passwords are case sensitive. Check Caps Lock before trying again."],
       problems: [
         {
-          symptom: "It says your username or password is wrong.",
-          fix: "Type it again slowly with Caps Lock off. If it still fails, ask an administrator to reset your password.",
+          symptom: "Username or password not recognized.",
+          fix: "Type your credentials carefully with Caps Lock off. If you require a password reset, use the self-service reset or contact IT support.",
         },
         {
-          symptom: "It says your account is locked.",
-          fix: "Too many wrong passwords lock an account for a while. Wait a few minutes, or ask an administrator to unlock it.",
+          symptom: "Temporary security lockout.",
+          fix: "Repeated invalid attempts initiate a standard security pause. Wait a few moments, or contact IT support for immediate unlocking.",
         },
       ],
       related: ["dashboard", "account"],

@@ -30,6 +30,8 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useSession } from "@/lib/auth/session";
 import { usePushSubscription } from "@/lib/push";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
+import { playNotificationTone, type SoundMode } from "@/lib/notification-sound";
+import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
@@ -173,6 +175,72 @@ function DevicePush() {
   );
 }
 
+/**
+ * How loudly to announce an arrival.
+ *
+ * Deliberately three choices rather than a volume slider: a page cannot raise
+ * the device's volume, so a slider would be a control that appears to do
+ * something it cannot. `prominent` is a longer, more insistent pattern.
+ */
+function SoundPreference() {
+  const { user, refetch } = useSession();
+  const current = user?.notification_sound ?? "subtle";
+
+  const setSound = useApiMutation<{ sound: string }, SoundMode>({
+    mutationFn: (sound) => api.put<{ sound: string }>("/notifications/sound", { body: { sound } }),
+    success: "Sound preference saved.",
+    onSuccess: () => refetch(),
+  });
+
+  const OPTIONS: { value: SoundMode; label: string; hint: string }[] = [
+    { value: "off", label: "Silent", hint: "No sound. The badge and the tray still update." },
+    { value: "subtle", label: "Subtle", hint: "A short, quiet tone." },
+    { value: "prominent", label: "Prominent", hint: "A longer, harder-to-miss tone." },
+  ];
+
+  return (
+    <section className="rounded-lg border border-border-subtle">
+      <div className="border-b border-border-subtle px-4 py-3">
+        <h2 className="text-sm font-medium">Sound</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Played when a notification arrives while this tab is open. When it is not, your
+          browser or phone announces it with its own sound instead.
+        </p>
+      </div>
+      <div className="grid gap-2 p-4 sm:grid-cols-3">
+        {OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={current === option.value}
+            disabled={setSound.isPending}
+            onClick={() => {
+              // Played as it is chosen, so the choice can be heard rather than
+              // imagined -- and the click is itself the gesture a browser
+              // requires before a page may make any sound at all.
+              playNotificationTone(option.value);
+              setSound.mutate(option.value);
+            }}
+            className={cn(
+              "rounded-md border px-3 py-2 text-left transition-colors duration-150",
+              current === option.value
+                ? "border-primary bg-primary/5"
+                : "border-border-subtle hover:bg-surface-muted",
+            )}
+          >
+            <span className="block text-[13px] font-medium">{option.label}</span>
+            <span className="mt-0.5 block text-2xs text-muted-foreground">{option.hint}</span>
+          </button>
+        ))}
+      </div>
+      <p className="border-t border-border-subtle px-4 py-2 text-2xs text-subtle-foreground">
+        Your device decides how loud this is. A web page cannot turn the volume up, and no
+        sound plays while the browser is closed — that is what the push notification is for.
+      </p>
+    </section>
+  );
+}
+
 function Preferences() {
   const { permissions } = useSession();
   const canEdit = permissions.has("notification.update");
@@ -202,6 +270,8 @@ function Preferences() {
   return (
     <div className="space-y-4">
       <DevicePush />
+
+      <SoundPreference />
 
       {data.channels_note ? (
         <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground">

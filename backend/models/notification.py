@@ -108,3 +108,35 @@ class Announcement(Base, PublicIdMixin):
     course: Mapped[Optional["Course"]] = relationship("Course", lazy="selectin")
     batch: Mapped[Optional["Batch"]] = relationship("Batch", lazy="selectin")
     author: Mapped[Optional["User"]] = relationship("User", lazy="selectin")
+
+
+class AnnouncementRead(Base):
+    """One person has read one announcement.
+
+    A notification carries its own `is_read`, because a notification belongs to
+    exactly one person. An announcement is one row read by many, so the read
+    state belongs to the pair rather than to either side.
+
+    Rows appear only when somebody reads something, so an announcement nobody
+    opened costs nothing and the unread count is a LEFT JOIN that finds no row.
+    """
+
+    __tablename__ = "announcement_reads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    announcement_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False
+    )
+    read_at: Mapped[datetime] = utc_datetime_column(nullable=False)
+
+    __table_args__ = (
+        # Reading twice is not an event: the upsert on this constraint is what
+        # makes "mark read" idempotent across several open tabs.
+        UniqueConstraint(
+            "user_id", "announcement_id", name="uq_announcement_reads_user_announcement"
+        ),
+        Index("ix_announcement_reads_user", "user_id"),
+    )

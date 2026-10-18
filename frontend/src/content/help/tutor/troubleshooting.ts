@@ -9,11 +9,11 @@ export const troubleshooting: Section = {
     {
       id: "common-problems",
       title: "Common problems and how to solve them",
-      summary: "What to check first, and when to ask an administrator.",
+      summary: "What to check first, and how to coordinate with academic administration.",
       learn: [
         "What to check when something is missing",
-        "Which problems you can fix yourself",
-        "When to ask an administrator",
+        "Which settings you can adjust directly",
+        "Academic coordination and registry support",
       ],
       body: [
         { type: "heading", text: "A student is missing from my class" },
@@ -22,10 +22,10 @@ export const troubleshooting: Section = {
           items: [
             { text: "Open **Enrollments** and search for their name." },
             {
-              text: "If they are not there, they are not enrolled. Only an administrator can add them.",
+              text: "If they are not listed, their enrollment is pending confirmation with the admissions office.",
             },
             {
-              text: "If they are there but on a different batch, ask an administrator to transfer them.",
+              text: "If they are enrolled on a different cohort, request a batch transfer with the registrar.",
             },
           ],
         },
@@ -81,40 +81,38 @@ export const troubleshooting: Section = {
           text: "Times are stored the same way for everybody and shown in your own timezone. Open **My account** and check yours. It is also written on your dashboard.",
         },
 
-        { type: "heading", text: "A button I expected is not there" },
+        { type: "heading", text: "Faculty Roles & Academic Coordination" },
         {
           type: "paragraph",
-          text: "Several things are deliberately not part of a tutor account. These are not faults:",
+          text: "The Tutor portal is tailored specifically for instructional delivery, student engagement, and assessment marking. Institutional governance workflows are supported by Academic Administration:",
         },
         {
           type: "table",
-          columns: ["Missing", "Why"],
+          columns: ["Faculty Request", "Administrative Coordination"],
           rows: [
-            ["New course, New batch", "Only an administrator creates these."],
-            ["Adding or removing a student", "Enrolment is an administrator's job."],
-            ["New scheme on Grading schemes", "Only a Super Admin changes what counts."],
-            ["Generate for batch on Transcripts", "An administrator generates transcripts."],
-            ["Export CSV on Reports", "Ask an administrator for a spreadsheet."],
-            ["The fee on a batch", "Course prices are Super Admin only."],
+            ["New syllabus, course or batch creation", "Curriculum scheduling is coordinated through the Academic Office."],
+            ["Student admissions and batch transfers", "Student registry operations are processed centrally by Admissions."],
+            ["Institutional grading scheme updates", "Institutional assessment frameworks are accredited by Academic Affairs."],
+            ["Official certified transcripts", "Degree and module transcripts are officially validated and sealed by Registry."],
           ],
         },
 
-        { type: "heading", text: "When to ask an administrator" },
+        { type: "heading", text: "Institutional Administration & Registry Support" },
         {
           type: "bullets",
           items: [
-            "A student needs enrolling, removing or moving to another batch.",
-            "A course or batch needs creating or correcting.",
-            "The grading scheme is wrong for your course.",
-            "You need a report as a spreadsheet.",
-            "Your account is locked, or you cannot sign in.",
+            "Official student admissions, enrollments, or batch transfers (Registrar's Office).",
+            "Master course catalog and batch lifecycle scheduling (Curriculum Committee).",
+            "Accredited grading scheme adjustments (Academic Affairs).",
+            "Comprehensive institution-wide CSV analytics exports (Institutional Research).",
+            "Account security or password reset assistance (IT Services).",
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "tip",
-            body: "When you ask, say which batch and which student. It saves a round of questions.",
+            body: "When coordinating with administration, include the batch number and course code to accelerate processing.",
           },
         },
       ],

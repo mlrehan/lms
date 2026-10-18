@@ -12,6 +12,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Cog,
+  Trash2,
   FileSpreadsheet,
   FolderTree,
   GraduationCap,
@@ -126,7 +127,13 @@ export const NAVIGATION: NavSection[] = [
       },
       { href: "/quizzes", label: "Quizzes", icon: Notebook, permission: "quiz.read" },
       { href: "/exams", label: "Examinations", icon: BadgeCheck, permission: "exam.read" },
-      { href: "/gradebook", label: "Grade book", icon: FileSpreadsheet, permission: "grade.read" },
+      {
+        href: "/gradebook",
+        label: "Grade book",
+        icon: FileSpreadsheet,
+        permission: "grade.read",
+        alsoRequires: "grade.update",
+      },
       // The calculation engine's own output, and the only screen that explains
       // how a mark was reached (§37). Gated on `performance.read` rather than
       // `grade.read`: a guardian and a corporate manager hold the first and not
@@ -137,7 +144,13 @@ export const NAVIGATION: NavSection[] = [
         icon: TrendingUp,
         permission: "performance.read",
       },
-      { href: "/transcripts", label: "Transcripts", icon: ScrollText, permission: "grade.read" },
+      {
+        href: "/transcripts",
+        label: "Transcripts",
+        icon: ScrollText,
+        permission: "transcript.read",
+        alsoRequires: "transcript.generate",
+      },
       // Sits with the assessment tools rather than under Settings: it is the
       // rule the marks on those screens are turned into grades by, and an
       // operator reaching for it is thinking about assessment, not about
@@ -222,9 +235,26 @@ export const NAVIGATION: NavSection[] = [
   {
     label: "Administration",
     items: [
-      { href: "/academic", label: "Academic setup", icon: GraduationCap, permission: "academic.read" },
+      {
+        href: "/academic",
+        label: "Academic setup",
+        icon: GraduationCap,
+        permission: "academic.read",
+        alsoRequires: "academic.create",
+      },
       { href: "/integrations", label: "Integrations", icon: Webhook, permission: "integration.read" },
       { href: "/settings", label: "System settings", icon: Cog, permission: "setting.read" },
+      // Last in the section, and named for what it does rather than for a
+      // "danger zone": somebody looking for how to remove a leaver's record
+      // searches for deletion, not for danger. The screen itself carries the
+      // warning. `system.purge` is held by the Super Admin alone, and the
+      // routes are gated on the role as well -- see backend/api/v1/purge.py.
+      {
+        href: "/purge",
+        label: "Permanent deletion",
+        icon: Trash2,
+        permission: "system.purge",
+      },
     ],
   },
   {
@@ -239,9 +269,16 @@ export const NAVIGATION: NavSection[] = [
 ];
 
 /** Every route in the map, flattened -- used by the route guard. */
-export const ROUTE_PERMISSIONS: { prefix: string; permission?: PermissionName }[] = NAVIGATION.flatMap(
-  (section) =>
-    section.items.map((item) => ({ prefix: item.href, permission: item.permission })),
+export const ROUTE_PERMISSIONS: {
+  prefix: string;
+  permission?: PermissionName;
+  alsoRequires?: PermissionName;
+}[] = NAVIGATION.flatMap((section) =>
+  section.items.map((item) => ({
+    prefix: item.href,
+    permission: item.permission,
+    alsoRequires: item.alsoRequires,
+  })),
 )
   // Longest prefix first, so `/courses/123` matches `/courses` and not `/`.
   .sort((a, b) => b.prefix.length - a.prefix.length);
@@ -251,6 +288,16 @@ export function permissionForPath(pathname: string): PermissionName | undefined 
     if (route.prefix === "/") continue;
     if (pathname === route.prefix || pathname.startsWith(`${route.prefix}/`)) {
       return route.permission;
+    }
+  }
+  return undefined;
+}
+
+export function alsoRequiresForPath(pathname: string): PermissionName | undefined {
+  for (const route of ROUTE_PERMISSIONS) {
+    if (route.prefix === "/") continue;
+    if (pathname === route.prefix || pathname.startsWith(`${route.prefix}/`)) {
+      return route.alsoRequires;
     }
   }
   return undefined;

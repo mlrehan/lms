@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const config: NextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   // There are deliberately no `NEXT_PUBLIC_*` variables for the API origin:
   // the browser never talks to the LMS API directly, it goes through the
   // same-origin proxy at /api/backend, so the origin is not something the

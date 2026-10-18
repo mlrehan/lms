@@ -1,0 +1,10 @@
+__pycache__
+*.py[cod]
+*$py.class
+*.log
+.pytest_cache
+.coverage
+tests
+var/storage/*
+!var/storage/.gitkeep
+

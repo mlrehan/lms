@@ -60,27 +60,25 @@ export const troubleshooting: Section = {
           ],
         },
 
-        { type: "heading", text: "I cannot find a phone number or email address" },
+        { type: "heading", text: "Contacting teachers and school staff" },
         {
           type: "paragraph",
-          text: "That is deliberate. Contact details are never shown on these screens, to anybody. Use **Messages** to contact the school through the system.",
+          text: "To protect student privacy and ensure safe communication channels, personal phone numbers and email addresses are protected. You can contact your student's tutors and administrative staff directly through the integrated **Messages** tab.",
         },
 
-        { type: "heading", text: "There is no button to do the thing I want" },
+        { type: "heading", text: "Understanding Guardian Access and Student Independence" },
         {
           type: "paragraph",
-          text: "A guardian account is for watching, not for doing. None of these is a fault:",
+          text: "The Guardian portal is designed to provide family visibility into attendance, coursework, and grades while preserving the student's independent learning responsibility:",
         },
         {
           type: "table",
-          columns: ["Missing", "Why"],
+          columns: ["Academic Area", "How It Operates"],
           rows: [
-            ["Any way to change attendance", "The register is the tutor's record."],
-            ["Any way to hand work in", "Only the student can submit their own work."],
-            ["Any way to change a mark", "Marking belongs to the tutor."],
-            ["Any way to enrol somebody", "The school arranges places."],
-            ["Link a guardian on the Guardians screen", "The school creates links."],
-            ["A Reports screen", "Guardians do not have one. Use My team and Performance."],
+            ["Coursework Submissions", "Students submit their own assignments and quizzes through their student accounts."],
+            ["Grading & Evaluation", "Instructors grade submissions objectively according to accredited academic schemes."],
+            ["Attendance Registers", "Class attendance is recorded live by the instructor during each session."],
+            ["Course Enrollment", "Enrollments onto new academic terms and courses are coordinated with the school registry."],
           ],
         },
 

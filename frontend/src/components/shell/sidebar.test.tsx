@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SidebarContent } from "./sidebar";
 import { NAVIGATION } from "@/lib/navigation";
 import { ROLE_GRANTS } from "@/test/role-grants";
@@ -13,12 +14,31 @@ const sessionMock = vi.hoisted(() => ({ granted: [] as readonly string[] }));
 
 vi.mock("@/lib/auth/session", async () => {
   const actual = await import("@/lib/auth/permissions");
-  return { useSession: () => ({ permissions: actual.permissionSet(sessionMock.granted) }) };
+  return {
+    useSession: () => ({
+      permissions: actual.permissionSet(sessionMock.granted),
+      // `user` is what gates the badge query. Left undefined so this file keeps
+      // testing one thing -- which screens a permission set may open -- and
+      // never reaches the network for counts. Badge *rendering* is covered by
+      // its own tests, and badge *applicability* by the backend's.
+      user: undefined,
+      roles: [],
+    }),
+  };
 });
 
 function renderFor(granted: readonly string[]) {
   sessionMock.granted = granted;
-  return render(<SidebarContent />);
+  // The sidebar reads the menu counts through react-query, so it needs a
+  // client even when the query is disabled: the hook is called either way.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SidebarContent />
+    </QueryClientProvider>,
+  );
 }
 
 function visibleLabels(): string[] {

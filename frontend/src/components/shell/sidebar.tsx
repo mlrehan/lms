@@ -1,13 +1,19 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, X } from "lucide-react";
+import { GraduationCap, PanelLeft, PanelLeftClose, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { NAVIGATION } from "@/lib/navigation";
 import { useSession } from "@/lib/auth/session";
+import { badgeFor, useSidebarCounts } from "@/lib/sidebar-counts";
+import { useSidebarState } from "@/lib/sidebar-state";
+import { CountBadge } from "@/components/ui/count-badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/primitives";
 import { HelpNavItem } from "@/components/help/help-nav-item";
+import { EditorNav } from "@/components/shell/editor-nav";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string): boolean {
@@ -15,9 +21,19 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): ReactNode {
+export function SidebarContent({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}): ReactNode {
   const pathname = usePathname();
-  const { permissions, roles } = useSession();
+  const { permissions, roles, user } = useSession();
+  // One request for every badge, and not until there is a session to fetch
+  // it for: the sidebar renders during loading and on the sign-in redirect,
+  // and asking then is one guaranteed 401 per mount.
+  const { data: counts } = useSidebarCounts(Boolean(user));
 
   const sections = NAVIGATION.map((section) => ({
     ...section,
@@ -32,27 +48,73 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): Rea
   })).filter((section) => section.items.length > 0);
 
   return (
-    <nav className="flex h-full flex-col gap-6 overflow-y-auto scrollbar-thin px-3 py-4" aria-label="Main">
-      {sections.map((section) => (
-        <div key={section.label} className="space-y-1">
-          <p className="eyebrow px-2.5 pb-0.5">{section.label}</p>
-          <ul className="space-y-0.5">
+    <nav
+      className={cn(
+        "flex h-full flex-col overflow-y-auto scrollbar-thin py-4 transition-all duration-200",
+        collapsed ? "items-center gap-3 px-2" : "gap-6 px-3",
+      )}
+      aria-label="Main"
+    >
+      {sections.map((section, idx) => (
+        <div key={section.label} className={cn("w-full space-y-1", collapsed && "flex flex-col items-center")}>
+          {collapsed ? (
+            idx > 0 ? <div className="my-1 h-px w-6 bg-border-subtle" /> : null
+          ) : (
+            <p className="eyebrow px-2.5 pb-0.5">{section.label}</p>
+          )}
+          <ul className={cn("space-y-0.5", collapsed && "w-full space-y-1 flex flex-col items-center")}>
             {section.items.map((item) => {
               const active = isActive(pathname, item.href);
               const Icon = item.icon;
+              const count = badgeFor(item.href, counts);
+
+              if (collapsed) {
+                return (
+                  <li key={item.href} className="flex justify-center">
+                    <Tooltip content={item.label} side="right">
+                      <Link
+                        href={item.href}
+                        onClick={onNavigate}
+                        aria-current={active ? "page" : undefined}
+                        aria-label={item.label}
+                        className={cn(
+                          "group relative flex size-9 items-center justify-center rounded-md text-[13px]",
+                          "transition-all duration-200 ease-out",
+                          active
+                            ? "bg-surface font-medium text-primary shadow-xs ring-1 ring-border-subtle"
+                            : "font-normal text-muted-foreground hover:bg-surface/70 hover:text-foreground",
+                        )}
+                      >
+                        <Icon
+                          className={cn(
+                            "size-4 shrink-0 transition-colors duration-200",
+                            active ? "text-primary" : "text-subtle-foreground group-hover:text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        {count !== undefined && count > 0 && (
+                          <span
+                            className={cn(
+                              "absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none ring-2 ring-background",
+                              active ? "bg-primary text-primary-foreground" : "bg-danger text-danger-foreground",
+                            )}
+                          >
+                            {count > 99 ? "99+" : count}
+                          </span>
+                        )}
+                        <span className="sr-only">{item.label}</span>
+                      </Link>
+                    </Tooltip>
+                  </li>
+                );
+              }
+
               return (
                 <li key={item.href}>
                   <Link
                     href={item.href}
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
-                    /*
-                     * The rail sits on the canvas, so the selected item is the one
-                     * thing on it rendered as a raised surface -- a chip pulled out
-                     * of the nav rather than a coloured pill painted onto it. The
-                     * icon carries the accent; the label stays foreground, because
-                     * tinting both makes the row read as a link rather than a place.
-                     */
                     className={cn(
                       "group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px]",
                       "transition-all duration-200 ease-out",
@@ -69,6 +131,22 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): Rea
                       aria-hidden
                     />
                     <span className="truncate">{item.label}</span>
+                    {(() => {
+                      if (count === undefined) return null;
+                      return (
+                        <CountBadge
+                          count={count}
+                          max={999}
+                          label="waiting"
+                          className="ml-auto"
+                          badgeClassName={cn(
+                            active
+                              ? "bg-primary/10 text-primary"
+                              : "bg-surface-muted text-muted-foreground group-hover:text-foreground",
+                          )}
+                        />
+                      );
+                    })()}
                   </Link>
                 </li>
               );
@@ -77,18 +155,11 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }): Rea
         </div>
       ))}
 
-      {/*
-        The user guide. Chosen from the roles the *server* reports, not from
-        what the sidebar happens to render: the guide somebody needs follows
-        from who they are, and a person with no screens at all still needs to
-        be able to read about signing in. Nothing is shown for a role whose
-        guide is not written yet, because a link to an empty guide is worse
-        than no link.
-      */}
-      <HelpNavItem roles={roles} onNavigate={onNavigate} />
+      <EditorNav enabled={Boolean(user)} onNavigate={onNavigate} collapsed={collapsed} />
+      <HelpNavItem roles={roles} onNavigate={onNavigate} collapsed={collapsed} />
 
       {sections.length === 0 ? (
-        <p className="px-2.5 text-xs leading-relaxed text-muted-foreground">
+        <p className={cn("px-2.5 text-xs leading-relaxed text-muted-foreground", collapsed && "sr-only")}>
           Your account holds no permissions that open a screen here. Ask an
           administrator to review your roles.
         </p>
@@ -104,22 +175,71 @@ export function Sidebar({
   mobileOpen: boolean;
   onMobileClose: () => void;
 }): ReactNode {
+  const { collapsed, toggle, hydrate } = useSidebarState();
+
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
+
   return (
     <>
-      <aside className="hidden w-60 shrink-0 border-r border-border-subtle bg-background lg:block">
-        <div className="flex h-14 items-center gap-2.5 border-b border-border-subtle px-4">
-          <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.16)]">
-            <GraduationCap className="size-4" />
-          </div>
-          <span className="font-display text-sm font-semibold tracking-tight">LMS Console</span>
+      <aside
+        className={cn(
+          "hidden shrink-0 border-r border-border-subtle bg-background transition-[width] duration-200 ease-in-out md:block",
+          collapsed ? "w-16" : "w-60",
+        )}
+      >
+        <div
+          className={cn(
+            "flex h-14 items-center border-b border-border-subtle",
+            collapsed ? "justify-center px-2" : "justify-between px-3.5",
+          )}
+        >
+          {!collapsed ? (
+            <>
+              <Link href="/" className="flex items-center gap-2.5 min-w-0 group">
+                <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.16)]">
+                  <GraduationCap className="size-4" />
+                </div>
+                <span className="font-display text-sm font-semibold tracking-tight truncate group-hover:text-primary transition-colors">
+                  LMS Console
+                </span>
+              </Link>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-muted-foreground hover:text-foreground"
+                onClick={toggle}
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            </>
+          ) : (
+            <Tooltip content="Expand sidebar" side="right">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 text-muted-foreground hover:text-foreground"
+                onClick={toggle}
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+              >
+                <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs shadow-[inset_0_1px_0_0_rgb(255_255_255_/_0.16)]">
+                  <GraduationCap className="size-4" />
+                </div>
+              </Button>
+            </Tooltip>
+          )}
         </div>
         <div className="h-[calc(100dvh-3.5rem)]">
-          <SidebarContent />
+          <SidebarContent collapsed={collapsed} />
         </div>
       </aside>
 
       {mobileOpen ? (
-        <div className="fixed inset-0 z-40 lg:hidden">
+        <div className="fixed inset-0 z-40 md:hidden">
           <button
             type="button"
             aria-label="Close navigation"
@@ -134,7 +254,7 @@ export function Sidebar({
               </Button>
             </div>
             <div className="min-h-0 flex-1">
-              <SidebarContent onNavigate={onMobileClose} />
+              <SidebarContent onNavigate={onMobileClose} collapsed={false} />
             </div>
           </div>
         </div>

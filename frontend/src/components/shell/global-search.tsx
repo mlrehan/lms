@@ -108,6 +108,11 @@ export function GlobalSearch(): ReactNode {
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 No matches for &ldquo;{debounced}&rdquo;.
               </p>
+            ) : groups.length === 0 && isFetching ? (
+              <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground">
+                <InlineSpinner />
+                <span>Searching institution...</span>
+              </div>
             ) : (
               groups.map((group) => (
                 <div key={group.type} className="mb-2 last:mb-0">

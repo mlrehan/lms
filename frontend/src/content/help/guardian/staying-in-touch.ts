@@ -160,7 +160,7 @@ export const stayingInTouch: Section = {
       title: "What Academic setup is for",
       summary: "Reference lists you can look at, such as the current academic year.",
       feature: "Academic setup",
-      learn: ["What this screen holds", "Why you cannot change it"],
+      learn: ["What reference lists are displayed", "How the school structures academic years"],
       body: [
         {
           type: "paragraph",
@@ -170,8 +170,8 @@ export const stayingInTouch: Section = {
           type: "screenshot",
           image: {
             src: "guardian/academic-setup.webp",
-            alt: "The Academic setup screen showing its five tabs with no add buttons.",
-            caption: "Read-only on your account. There is no add button.",
+            alt: "The Academic setup screen showing reference academic years, semesters, and departments.",
+            caption: "Reference lists maintained by the institution.",
           },
         },
         {

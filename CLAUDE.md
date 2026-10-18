@@ -4701,3 +4701,269 @@ explain "finalised" and never did; it now has the step, what it publishes, and
 why finalising is sometimes refused. Two articles were missing entirely and
 are now written from the real screens: marking class performance, and sharing
 a class recording or video.
+
+## Permanent deletion and the complete system reset
+
+Two Super-Admin-only operations, built to the "hard warning, no MFA, no
+CAPTCHA" instruction. Both are gated **twice**: on a new permission
+(`system.purge` / `system.reset`) *and* on the Super Admin role, because
+`role_permissions` is editable data and a permission alone could be granted to
+a lesser role by somebody who did not appreciate what they were handing over.
+The permission makes the gate discoverable and auditable; the role check is the
+floor underneath it. **Re-run the identity seeder** (or `bootstrap_identity`)
+after upgrading — the catalogue went from 127 to 129.
+
+### The dependency plan is read from `pg_constraint`, never hand-written
+
+A hand-kept list of "things to delete first" is wrong the moment somebody adds
+a table, and wrong *silently*: the delete either fails with a foreign-key error
+an administrator cannot act on, or — where the constraint happens to be
+`ON DELETE CASCADE` — succeeds and takes rows nobody listed. So `PurgeService`
+reads the graph at run time. It cannot drift from the schema because it *is*
+the schema.
+
+The three kinds of dependency are reported differently, because they are
+different outcomes. On `users` this database has 25 CASCADE, 22 SET NULL, 26
+NO ACTION and 1 RESTRICT. Cascades the database deletes itself; `SET NULL` rows
+**survive with a link removed** and are shown apart (merging them into one
+"47 rows affected" figure would overstate the damage by however many records
+the person had ever touched); NO ACTION and RESTRICT are deleted first,
+deepest-first, in the same transaction. The single RESTRICT in the whole schema
+is `class_performance_marks.recorded_by -> users`, and it is the best proof
+available that blockers are handled: a cascade-only implementation fails on it
+loudly.
+
+**Rows are addressed by nested subquery, never by a materialised id list.**
+Fetching child ids to recurse on needs a cap, and a cap on a *delete* path is
+the worst kind — the parent delete still takes every child, so exceeding it
+leaves orphaned grandchildren, found when the transaction aborts or not at all.
+
+**One transaction, and the service never commits**: the caller owns it, so the
+audit record and the deletion land together or neither does.
+
+### Four protections, and why each is unrecoverable without it
+
+The last active Super Admin (nothing in the product creates the first one);
+self-deletion; the permission catalogue (deleting a permission row removes the
+*check*, not the ability — the one deletion that grants access rather than
+withdrawing it); and the audit trail.
+
+**`audit_logs` turned out to be stronger than assumed, in two ways.** It has
+**no foreign keys in either direction**, so the record survives the records it
+describes — which is what makes it possible to delete a person and still answer
+who deleted them. And `trg_audit_logs_append_only` is a BEFORE DELETE OR UPDATE
+OR TRUNCATE trigger that raises. An earlier draft of the reset offered a "clear
+the audit trail too" option; it could only ever have **failed at run time**, so
+it was removed rather than worked around. Defeating the trigger from an HTTP
+route was never on the table: an append-only guarantee an endpoint can switch
+off is not one.
+
+### The reset refuses by default, four ways
+
+`APP_SYSTEM_RESET_ENABLED` is off unless somebody turns it on, in deployment
+configuration rather than the interface — the person who may *run* a reset and
+the person who may *enable* one hold different kinds of access. Production is
+refused outright, with no setting that changes it. A verified recent backup
+must exist, and **an unset backup path is itself a refusal**: "there is no
+backup configured" and "the backup is fine" must never look the same to the
+person about to erase everything. The typed phrase names the database, so a
+screen left open against staging cannot reset something else. A running
+synchronisation is a refusal, not something the reset terminates — killing a
+pipeline mid-flight leaves the external system believing it handed over records
+that no longer exist here.
+
+The backup check verifies a recent, non-empty, readable file. It **cannot**
+verify that a dump restores, and the refusal message says so rather than
+implying otherwise.
+
+Re-seeding calls the same `bootstrap_identity` / `bootstrap_geo` /
+`bootstrap_grading` a new deployment runs, so "reset" and "freshly installed"
+cannot drift apart. `TRUNCATE ... RESTART IDENTITY` rather than `DELETE`,
+because a fresh installation whose first course is number 4,312 is not what
+anybody means by the word. The one remaining account keeps the operator's own
+username and email with a **new** password shown once: leaving the old one
+working would mean the credentials of a system somebody just erased are still
+the credentials of the new one.
+
+### Tested on data created for the purpose, never on real records
+
+`tests/integration/test_permanent_deletion.py` (13) creates every row it
+touches, tagged, and asserts the untouched tables hold exactly as many rows
+afterwards as before. **`execute` is never called with a real administrator's
+id**, even to prove the last-Super-Admin refusal — a test that can cause the
+accident it checks for is not worth the coverage, so that blocker is proven
+through the read-only preview and the "blockers mean refusal" half through a
+tagged row.
+
+`test_system_reset_on_a_disposable_database.py` (7) **creates its own
+PostgreSQL database**, migrates it with the project's own Alembic config (so it
+has the real triggers, not a `metadata.create_all` approximation), seeds it,
+resets it for real, and drops it. It skips rather than failing if the role
+cannot `CREATEDB`: a test that cannot isolate itself must not fall back to a
+shared database. `test_system_reset_guards.py` (11) asserts every gate against
+the dev installation without ever calling `execute` in a way that could get
+through.
+
+**Mutation-tested: 10/10 on the purge, 12/12 on the reset.** Only the
+disposable-database suite is mutated, for the reason above. One miss on the
+first run was a genuine coverage hole — nothing had a *two-level* blocker
+chain, so a mutation stopping the recursion at one level passed everything.
+`courses -> assignments -> assignment_submissions` closed it.
+
+### Found by running it, invisible to a green suite
+
+* **`Row.t` and `Row.n` collide with SQLAlchemy `Row`'s own attributes** and
+  resolve to the wrong object. This was in the reset's production `_impact`
+  query, not only in a test — the preview returned wrong labels. Column aliases
+  are now `tbl` / `cnt`.
+* **`text(":t::regclass")` is a syntax error**: `text()`'s parser reads the
+  second colon as another bind parameter. `CAST(:t AS regclass)` says the same
+  thing unambiguously.
+* Four copy defects only the browser showed: "1 people" and "1 records"; "1 of
+  the 1 numbers you entered do not exist. Only the 0 that do will be deleted.";
+  a raw table name (`batches`) where the label map had no entry; and
+  "Enrolments(via Enrolments)", a parent reference that only ever repeated the
+  child's own name. The singular now comes from the server
+  (`Entity.singular`), because the server already owns that vocabulary.
+
+### Driven in the browser, on isolated records
+
+A tagged account previewed, confirmed and deleted (audit row written naming the
+real actor and the target; user count returned to its original 224). A tagged
+`course -> batch -> enrolment` chain deleted through the UI: **the student
+survived**, correctly — an enrolment is deleted but the person is not. A
+partial confirmation phrase leaves the button disabled. The reset card shows
+"Not available on this installation", both blockers in full, the real impact
+(2,658 records) — and **renders no confirmation controls at all**.
+
+### What is deliberately absent
+
+No second factor and no CAPTCHA, by instruction. The gate is a Super Admin
+session, an explicit permission, the role check, a dependency preview, and a
+typed confirmation carrying the real record count. The screen says so in as
+many words, under "What stands between a click and a loss" — an operator who
+believes a second factor stands behind this will treat it more casually than
+they should.
+
+## Live badges, dashboard and presence, without a refresh
+
+Two complaints, one cause each. Badges abbreviated to "99+" with no way to see
+the real figure; and badge counts, dashboard KPIs and Active Users only moved
+on a page load.
+
+### The per-user channel was never enough, and that is why the dashboard was stale
+
+`core/events.py` addresses every event to one person, for a stated reason:
+fan-out happens where recipients are already resolved, under audience rules the
+transport cannot evaluate. Right for "your grade was published"; it cannot
+express "the course list changed", which is what a badge counts. **Nobody is
+notified when an administrator adds a batch**, so those numbers could only
+correct themselves on the next refetch.
+
+Worse, `["dashboard"]` was in no invalidation map *and* had no
+`refetchInterval` -- so the dashboard was the one surface with no refresh
+mechanism at all. That is the screen the complaint was about.
+
+**New: topics** (`core/topics.py`). Five coarse ones -- `directory`,
+`academic`, `assessment`, `announcements`, `presence`. A topic event carries
+the topic name and **nothing else**: every subscriber re-reads through the
+ordinary endpoint, so `core/privacy.py` and every permission check still decide
+what each of them sees. That is what makes a shared channel safe here where one
+carrying content would not be. Subscription is resolved from permissions at
+connect time, from the token: a student is not subscribed to `directory`, and
+`presence` additionally needs `institution.view_all`, matching the gate on
+`GET /presence/active` exactly.
+
+### One hook, so no service has to remember
+
+Detection is a single SQLAlchemy listener over the session, mapping written
+tables to topics. Forty call sites would each have to announce themselves, and
+forgetting is invisible -- a screen that quietly never updates. A table nobody
+mapped stays silent rather than guessing, which is why `audit_logs`, `tokens`
+and `sync_pipeline_runs` raise nothing.
+
+**It is bound to `after_flush`, and that is the whole correctness of it.** The
+obvious hook is `before_commit`, which is what the first version used and what
+every test here passed against. Creating a course through the real endpoint
+then announced nothing, because a service that calls `flush()` to obtain an id
+has already emptied `session.new`:
+
+```
+with an explicit flush:  after_flush sees 1, before_commit sees 0
+without a flush:         after_flush sees 1, before_commit sees 1
+```
+
+So `before_commit` catches exactly the case a test writes and none of the cases
+the application performs. Flushing is not committing, so this only *stages* the
+event; `after_commit` promotes and `after_rollback` discards, as for any
+notification.
+
+### Bounded, in three places
+
+* **Per transaction, server side.** Twelve marks saved together are one piece
+  of news to a badge, so one frame.
+* **Across transactions, client side.** A leading-edge throttle per topic
+  (`REFETCH_WINDOW_MS`): the first event refetches immediately so the screen is
+  live, and the rest of a burst collapses into one trailing refetch. Measured:
+  **12 writes produced 5 refetches, not 12.**
+* **Presence reports transitions only.** `touch()` is called on every
+  heartbeat; returning True each time would mean one person at their desk
+  publishing to every administrator for ever. Arrivals and clean departures
+  announce; heartbeats do not. A browser that was *killed* cannot announce
+  anything -- nothing runs when a window lapses -- which is why a slow poll
+  stays underneath.
+
+Polling is now a backstop rather than the mechanism: dashboard 10 min (was: no
+interval at all), today's classes 5 min (was 1), presence 90 s (was 30) while
+the stream is up, and the short intervals when it is not. `useRealtimeLive()`
+shares that flag through `useSyncExternalStore`, because the connection is
+opened in the topbar and the dashboard is its sibling, not its child.
+
+### The badge shows the exact figure on hover, and on tap
+
+`components/ui/count-badge.tsx`, used by both the sidebar and the topbar.
+
+* The sidebar now abbreviates at **999** rather than 99, so most counts simply
+  show in full and need no reveal.
+* **Hover or focus** reveals the exact figure; **tapping** does too, because
+  touch has no hover. The badge takes that tap instead of following the link
+  underneath -- a deliberate exception, since it is a ~20px target inside a much
+  larger one and somebody aiming at it wants the number. Everything else on the
+  row navigates as before, and a badge that is *not* abbreviated stays inert
+  rather than swallowing taps for nothing.
+* **A span, never a button**: these render inside `<Link>`, and a button inside
+  an anchor is invalid HTML that hydrates inconsistently -- a trap already hit
+  once here, in the tenant switcher. The exact count reaches assistive
+  technology through `aria-label` on every render, so a screen reader never
+  hears "99 plus" and never depends on the reveal.
+
+### Verified live, which is what found the real defect
+
+Driven in a browser against the running stack. A course created through the
+real endpoint moved the sidebar badge **32 to 33 with no reload**, and one
+write triggered exactly three refetches (`/sidebar/counts`, `/dashboard`,
+`/dashboard/today` -- the last by prefix match) and nothing else. Twelve
+messages sent from a *second user's session* moved the topbar badges to "9+"
+and the dashboard KPIs to 12, live; hovering showed "12 unread messages", and
+at 375px a tap showed the same. A second user connecting from another session
+appeared in Active Users within seconds, and their login also raised a
+`directory` frame -- the hook working on a path nobody wrote code for.
+
+**Tests:** 753 backend (15 new topic tests, 9 detection, 4 presence
+transitions), 267 frontend (7 new topic/throttle, 10 badge). Mutation-tested
+**12/12** on the topic layer plus the presence transition, including the
+regression that would put detection back on `before_commit`.
+
+### A pre-existing test that could not fail
+
+While mutating the rollback listeners, the whole suite stayed green with both
+removed. `test_a_rolled_back_transaction_announces_nothing` queued an event,
+rolled back, and drained -- but draining reads the *committed* list, which a
+transaction that never committed has not filled, so the assertion held whether
+the discard ran or not. What `_discard` actually prevents needs a second
+transaction: the abandoned event is still queued, and the *next* commit on that
+session promotes it. The test now does that, and fails without the listeners.
+
+**Not changed:** writes made outside the application -- direct SQL, another
+service against the same database -- raise no event, because the hook is on the
+ORM session. Those still correct on the next poll or focus.

@@ -77,9 +77,16 @@ _LOCK_POLL_SECONDS = 3.0
 
 
 class SyncPipelineService:
-    def __init__(self, factory: async_sessionmaker[AsyncSession], settings: Settings) -> None:
+    def __init__(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        *,
+        event_bus: Any | None = None,
+    ) -> None:
         self._factory = factory
         self._settings = settings
+        self._event_bus = event_bus
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -141,6 +148,22 @@ class SyncPipelineService:
                     .values(status="SKIPPED", finished_at=datetime.now(timezone.utc))
                 )
                 logger.warning("Reaped abandoned sync pipeline", extra={"run_id": run.id})
+
+            # Also release any inner user/academic sync row left RUNNING by a dead process
+            user_runs_reaped = await session.execute(
+                update(UserSyncRun)
+                .where(UserSyncRun.status == "RUNNING", UserSyncRun.started_at < cutoff)
+                .values(
+                    status="FAILED",
+                    finished_at=datetime.now(timezone.utc),
+                    failure_reason="Abandoned: the process running it stopped without finishing.",
+                )
+            )
+            if user_runs_reaped.rowcount:
+                logger.warning(
+                    "Reaped abandoned user/academic sync runs",
+                    extra={"count": user_runs_reaped.rowcount},
+                )
 
     async def retry(self, public_id: Any, *, triggered_by_user_id: int | None) -> SyncPipelineRun:
         """Re-run only what did not succeed.
@@ -490,6 +513,23 @@ class SyncPipelineService:
             run.status = status
             run.finished_at = datetime.now(timezone.utc)
             run.failure_reason = failure[:300] if failure else None
+
+        if self._event_bus is not None:
+            try:
+                from backend.core.events import EventKind, RealtimeEvent
+
+                for topic in ("directory", "academic"):
+                    await self._event_bus.publish(
+                        RealtimeEvent(
+                            kind=EventKind.DATA_CHANGED,
+                            user_id=0,
+                            topic=topic,
+                            data={"action": "sync_completed", "run_id": run_id, "status": status},
+                        )
+                    )
+            except Exception:
+                logger.exception("Failed to publish sync completion realtime event")
+
         return await self.get(run_id)
 
     # ---------------------------------------------------------------- reads
@@ -518,6 +558,7 @@ class SyncPipelineService:
 
     async def current(self) -> SyncPipelineRun | None:
         """The pipeline in flight, if any."""
+        await self._reap_stale()
         async with self._factory() as session:
             run = (
                 await session.execute(

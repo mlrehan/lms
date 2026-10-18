@@ -22,7 +22,11 @@ import { Stat, StatGrid } from "@/components/ui/stat";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { SyncPanel } from "@/components/domain/sync-panel";
+import { TodayClasses } from "@/components/domain/dashboard/today-classes";
+import { ActiveUsers } from "@/components/domain/dashboard/active-users";
+import { CorporatePanel } from "@/components/domain/dashboard/corporate-panel";
 import { useSession } from "@/lib/auth/session";
+import { useRealtimeLive } from "@/lib/realtime";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
 
@@ -128,9 +132,16 @@ export default function DashboardPage() {
     permissions.has("course.sync") &&
     permissions.has("managed_student.create");
 
+  // Invalidated by `realtime.ts` on any personal event and on every topic a
+  // KPI counts, so this is current without a refresh. Before that wiring it
+  // had no interval and no invalidation at all, which is why the dashboard
+  // was the one screen that genuinely needed the page reloading.
+  const live = useRealtimeLive();
   const { data, isPending, error, refetch } = useQuery<DashboardResponse, ApiError>({
     queryKey: ["dashboard"],
     queryFn: () => api.get<DashboardResponse>("/dashboard"),
+    refetchInterval: live ? 600_000 : 120_000,
+    refetchOnWindowFocus: true,
   });
 
   const firstName = user?.first_name || user?.username || "there";
@@ -138,11 +149,17 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Welcome back, ${firstName}`}
+        title={
+          data?.corporate?.organization_name
+            ? `${data.corporate.organization_name} Workforce Command Center`
+            : `Welcome back, ${firstName}`
+        }
         description={
-          data
-            ? `Generated ${formatDateTime(data.generated_at, { timeZone })}. Panels are chosen by what your roles let you see.`
-            : "Your dashboard."
+          data?.corporate
+            ? `Real-time workforce capability metrics, attendance tracking, and cohort compliance intelligence.`
+            : data
+              ? `Generated ${formatDateTime(data.generated_at, { timeZone })}.`
+              : "Your dashboard."
         }
       />
 
@@ -152,176 +169,222 @@ export default function DashboardPage() {
         <LoadingState rows={4} label="Loading your dashboard" />
       ) : error ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
-      ) : !data ? null : (
-        <div className="space-y-7">
-          <StatGrid>
-            <Stat
-              label="Unread messages"
-              value={data.personal.unread_messages}
-              icon={Mail}
-              tone={data.personal.unread_messages ? "warning" : "default"}
-            />
-            <Stat
-              label="Unread notifications"
-              value={data.personal.unread_notifications}
-              icon={ClipboardList}
-            />
-            <Stat label="Live announcements" value={data.personal.live_announcements} icon={Megaphone} />
-            <Stat
-              label="Your timezone"
-              value={timeZone}
-              icon={CalendarClock}
-              hint="Stored in UTC, shown in your timezone."
-            />
-          </StatGrid>
+      ) : !data ? null : data.corporate ? (
+        /* Dedicated Executive Enterprise Workforce Command Center */
+        <div className="space-y-8">
+          <CorporatePanel data={data.corporate} />
 
-          {data.student ? (
-            <section className="space-y-3.5">
-              <SectionHeader title="Your studies" />
-              <StatGrid>
-                <Stat label="Enrolled batches" value={data.student.enrolled_batches} icon={GraduationCap} />
-                <Stat label="Active courses" value={data.student.active_courses} icon={BookOpen} />
-                <Stat
-                  label="Attendance"
-                  value={percent(data.student.attendance_rate)}
-                  suffix="%"
-                  icon={Percent}
-                  tone={
-                    data.student.attendance_rate !== null &&
-                    data.student.attendance_rate !== undefined &&
-                    data.student.attendance_rate < 75
-                      ? "warning"
-                      : "default"
-                  }
-                />
-                <Stat
-                  label="Overdue assignments"
-                  value={data.student.assignments_overdue}
-                  icon={ClipboardList}
-                  tone={data.student.assignments_overdue ? "danger" : "default"}
-                  hint={
-                    data.student.assignments_outstanding
-                      ? `${data.student.assignments_outstanding} outstanding in total`
-                      : undefined
-                  }
-                />
-              </StatGrid>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Card>
-                  <CardHeader title="Next sessions" />
-                  <UpcomingSessions sessions={data.student.upcoming_sessions ?? []} />
-                </Card>
-                <Card>
-                  <CardHeader title="Next deadlines" />
-                  <Deadlines items={data.student.next_deadlines ?? []} />
-                </Card>
-              </div>
-            </section>
-          ) : null}
-
-          {data.teaching ? (
-            <section className="space-y-3.5">
-              <SectionHeader title="Your teaching" />
-              <StatGrid>
-                <Stat label="Batches" value={data.teaching.batches_taught} icon={GraduationCap} />
-                <Stat label="Students" value={data.teaching.students_taught} icon={Users} />
-                <Stat
-                  label="Awaiting grading"
-                  value={data.teaching.submissions_awaiting_grading}
-                  icon={ClipboardCheck}
-                  tone={data.teaching.submissions_awaiting_grading ? "warning" : "default"}
-                  hint={
-                    data.teaching.quiz_attempts_awaiting_grading
-                      ? `${data.teaching.quiz_attempts_awaiting_grading} quiz attempts too`
-                      : undefined
-                  }
-                />
-                <Stat
-                  label="Sessions next 7 days"
-                  value={data.teaching.sessions_next_7_days}
-                  icon={CalendarClock}
-                />
-              </StatGrid>
-              <Card>
-                <CardHeader title="Your next sessions" />
-                <UpcomingSessions sessions={data.teaching.upcoming_sessions ?? []} />
-              </Card>
-            </section>
-          ) : null}
-
-          {data.care ? (
-            <section className="space-y-3.5">
-              <SectionHeader title="People in your care" />
-              <StatGrid>
-                <Stat label="People" value={data.care.people} icon={Users} />
-                <Stat
-                  label="Attendance"
-                  value={percent(data.care.attendance_rate)}
-                  suffix="%"
-                  icon={Percent}
-                />
-                <Stat
-                  label="Overdue assignments"
-                  value={data.care.assignments_overdue}
-                  icon={ClipboardList}
-                  tone={data.care.assignments_overdue ? "danger" : "default"}
-                />
-              </StatGrid>
-              <Card>
-                <CardHeader title="Their next sessions" />
-                <UpcomingSessions sessions={data.care.upcoming_sessions ?? []} />
-              </Card>
-            </section>
-          ) : null}
-
-          {data.institution ? (
-            <section className="space-y-3.5">
-              <SectionHeader title="Institution" />
-              <StatGrid>
-                <Stat
-                  label="Active users"
-                  value={data.institution.active_users}
-                  icon={Users}
-                  hint={
-                    data.institution.suspended_users
-                      ? `${data.institution.suspended_users} suspended`
-                      : undefined
-                  }
-                />
-                <Stat
-                  label="Published courses"
-                  value={data.institution.courses_published}
-                  icon={BookOpen}
-                  hint={
-                    data.institution.courses_draft
-                      ? `${data.institution.courses_draft} still in draft`
-                      : undefined
-                  }
-                />
-                <Stat label="Active batches" value={data.institution.active_batches} icon={Boxes} />
-                <Stat
-                  label="Attendance (30d)"
-                  value={percent(data.institution.attendance_rate_30d)}
-                  suffix="%"
-                  icon={Percent}
-                />
-              </StatGrid>
-              <StatGrid>
-                <Stat
-                  label="Confirmed enrollments"
-                  value={data.institution.enrollments_confirmed}
-                  icon={GraduationCap}
-                />
-                <Stat
-                  label="Submissions awaiting grading"
-                  value={data.institution.submissions_awaiting_grading}
-                  icon={ClipboardCheck}
-                  tone={data.institution.submissions_awaiting_grading ? "warning" : "default"}
-                />
-              </StatGrid>
-            </section>
-          ) : null}
+          {/* Manager Personal Workspace & Communication Metrics */}
+          <section className="space-y-3.5 pt-2 border-t border-border-subtle">
+            <SectionHeader title="Manager Workspace & Communications" />
+            <StatGrid>
+              <Stat
+                label="Unread messages"
+                value={data.personal.unread_messages}
+                icon={Mail}
+                tone={data.personal.unread_messages ? "warning" : "default"}
+              />
+              <Stat
+                label="Unread notifications"
+                value={data.personal.unread_notifications}
+                icon={ClipboardList}
+              />
+              <Stat
+                label="Live announcements"
+                value={data.personal.live_announcements}
+                icon={Megaphone}
+              />
+              <Stat
+                label="Your timezone"
+                value={timeZone}
+                icon={CalendarClock}
+                hint="UTC storage · Local display"
+              />
+            </StatGrid>
+          </section>
         </div>
+      ) : (
+        /* Standard Dashboard Layout for Students, Tutors, Guardians, and SuperAdmins */
+        <>
+          {/* Today's classes come first because they are the one thing on this
+              page somebody acts on in the next few minutes. */}
+          <TodayClasses />
+
+          {/* Who is actually at their desk */}
+          {permissions.has("user.read") && permissions.has("institution.view_all") ? (
+            <ActiveUsers />
+          ) : null}
+
+          <div className="space-y-7">
+            <StatGrid>
+              <Stat
+                label="Unread messages"
+                value={data.personal.unread_messages}
+                icon={Mail}
+                tone={data.personal.unread_messages ? "warning" : "default"}
+              />
+              <Stat
+                label="Unread notifications"
+                value={data.personal.unread_notifications}
+                icon={ClipboardList}
+              />
+              <Stat label="Live announcements" value={data.personal.live_announcements} icon={Megaphone} />
+              <Stat
+                label="Your timezone"
+                value={timeZone}
+                icon={CalendarClock}
+                hint="Stored in UTC, shown in your timezone."
+              />
+            </StatGrid>
+
+            {data.student ? (
+              <section className="space-y-3.5">
+                <SectionHeader title="Your studies" />
+                <StatGrid>
+                  <Stat label="Enrolled batches" value={data.student.enrolled_batches} icon={GraduationCap} />
+                  <Stat label="Active courses" value={data.student.active_courses} icon={BookOpen} />
+                  <Stat
+                    label="Attendance"
+                    value={percent(data.student.attendance_rate)}
+                    suffix="%"
+                    icon={Percent}
+                    tone={
+                      data.student.attendance_rate !== null &&
+                      data.student.attendance_rate !== undefined &&
+                      data.student.attendance_rate < 75
+                        ? "warning"
+                        : "default"
+                    }
+                  />
+                  <Stat
+                    label="Overdue assignments"
+                    value={data.student.assignments_overdue}
+                    icon={ClipboardList}
+                    tone={data.student.assignments_overdue ? "danger" : "default"}
+                    hint={
+                      data.student.assignments_outstanding
+                        ? `${data.student.assignments_outstanding} outstanding in total`
+                        : undefined
+                    }
+                  />
+                </StatGrid>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader title="Next sessions" />
+                    <UpcomingSessions sessions={data.student.upcoming_sessions ?? []} />
+                  </Card>
+                  <Card>
+                    <CardHeader title="Next deadlines" />
+                    <Deadlines items={data.student.next_deadlines ?? []} />
+                  </Card>
+                </div>
+              </section>
+            ) : null}
+
+            {data.teaching ? (
+              <section className="space-y-3.5">
+                <SectionHeader title="Your teaching" />
+                <StatGrid>
+                  <Stat label="Batches" value={data.teaching.batches_taught} icon={GraduationCap} />
+                  <Stat label="Students" value={data.teaching.students_taught} icon={Users} />
+                  <Stat
+                    label="Awaiting grading"
+                    value={data.teaching.submissions_awaiting_grading}
+                    icon={ClipboardCheck}
+                    tone={data.teaching.submissions_awaiting_grading ? "warning" : "default"}
+                    hint={
+                      data.teaching.quiz_attempts_awaiting_grading
+                        ? `${data.teaching.quiz_attempts_awaiting_grading} quiz attempts too`
+                        : undefined
+                    }
+                  />
+                  <Stat
+                    label="Sessions next 7 days"
+                    value={data.teaching.sessions_next_7_days}
+                    icon={CalendarClock}
+                  />
+                </StatGrid>
+                <Card>
+                  <CardHeader title="Your next sessions" />
+                  <UpcomingSessions sessions={data.teaching.upcoming_sessions ?? []} />
+                </Card>
+              </section>
+            ) : null}
+
+            {data.care ? (
+              <section className="space-y-3.5">
+                <SectionHeader title="People in your care" />
+                <StatGrid>
+                  <Stat label="People" value={data.care.people} icon={Users} />
+                  <Stat
+                    label="Attendance"
+                    value={percent(data.care.attendance_rate)}
+                    suffix="%"
+                    icon={Percent}
+                  />
+                  <Stat
+                    label="Overdue assignments"
+                    value={data.care.assignments_overdue}
+                    icon={ClipboardList}
+                    tone={data.care.assignments_overdue ? "danger" : "default"}
+                  />
+                </StatGrid>
+                <Card>
+                  <CardHeader title="Their next sessions" />
+                  <UpcomingSessions sessions={data.care.upcoming_sessions ?? []} />
+                </Card>
+              </section>
+            ) : null}
+
+            {data.institution ? (
+              <section className="space-y-3.5">
+                <SectionHeader title="Institution" />
+                <StatGrid>
+                  <Stat
+                    label="Active users"
+                    value={data.institution.active_users}
+                    icon={Users}
+                    hint={
+                      data.institution.suspended_users
+                        ? `${data.institution.suspended_users} suspended`
+                        : undefined
+                    }
+                  />
+                  <Stat
+                    label="Published courses"
+                    value={data.institution.courses_published}
+                    icon={BookOpen}
+                    hint={
+                      data.institution.courses_draft
+                        ? `${data.institution.courses_draft} still in draft`
+                        : undefined
+                    }
+                  />
+                  <Stat label="Active batches" value={data.institution.active_batches} icon={Boxes} />
+                  <Stat
+                    label="Attendance (30d)"
+                    value={percent(data.institution.attendance_rate_30d)}
+                    suffix="%"
+                    icon={Percent}
+                  />
+                </StatGrid>
+                <StatGrid>
+                  <Stat
+                    label="Confirmed enrollments"
+                    value={data.institution.enrollments_confirmed}
+                    icon={GraduationCap}
+                  />
+                  <Stat
+                    label="Submissions awaiting grading"
+                    value={data.institution.submissions_awaiting_grading}
+                    icon={ClipboardCheck}
+                    tone={data.institution.submissions_awaiting_grading ? "warning" : "default"}
+                  />
+                </StatGrid>
+              </section>
+            ) : null}
+          </div>
+        </>
       )}
     </div>
   );

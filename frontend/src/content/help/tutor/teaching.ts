@@ -40,8 +40,8 @@ export const teaching: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Only an administrator creates a course",
-            body: "There is no **New course** button on your account. If a course is missing or wrong, ask an administrator.",
+            title: "Course Provisioning & Curriculum Administration",
+            body: "Course catalogues and syllabus modules are provisioned centrally by Academic Administration. If you need syllabus updates or a new course assigned to your teaching portfolio, coordinate with the Academic Office.",
           },
         },
       ],
@@ -144,8 +144,8 @@ export const teaching: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Some details are not yours to change",
-            body: "You can read the batch details, but creating batches, enrolling students and setting the fee belong to an administrator. The fee shows as a dash on your account.",
+            title: "Batch administration & academic registry",
+            body: "Batch provisioning, student admissions, and fee scheduling are administered centrally by the academic registry. Your faculty workspace is configured specifically for teaching delivery, session logging, and grading.",
           },
         },
       ],
@@ -156,7 +156,7 @@ export const teaching: Section = {
       problems: [
         {
           symptom: "A student is not on the Enrollments tab.",
-          fix: "They are not enrolled yet. Only an administrator can add them.",
+          fix: "Confirm that their enrollment registration has been completed with the academic office.",
         },
       ],
       related: ["attendance", "timetable", "gradebook", "performance"],
@@ -242,7 +242,8 @@ export const teaching: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            body: "You can see enrolments but not change them. Adding, removing or transferring a student is an administrator's job.",
+            title: "Cohort roster governance",
+            body: "Student enrollment rosters are maintained by the registrar's office. Faculty members have direct access to verify enrolled participants, monitor attendance, and issue evaluations.",
           },
         },
       ],
@@ -350,7 +351,7 @@ export const teaching: Section = {
       problems: [
         {
           symptom: "A student is missing from the register.",
-          fix: "They are not enrolled on that batch. Ask an administrator to enrol them.",
+          fix: "Verify with the admissions office that the student's cohort registration is active.",
         },
         {
           symptom: "The class you want is not in the list.",

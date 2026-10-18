@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { BookOpen, Check, Link2 } from "lucide-react";
 import { guideForRoles } from "@/content/help";
+import { Tooltip } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,9 +26,11 @@ import { cn } from "@/lib/utils";
 export function HelpNavItem({
   roles,
   onNavigate,
+  collapsed = false,
 }: {
   roles: readonly string[];
   onNavigate?: () => void;
+  collapsed?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const guide = guideForRoles(roles);
@@ -44,6 +47,35 @@ export function HelpNavItem({
     } catch {
       window.prompt("Copy this link:", url);
     }
+  }
+
+  if (collapsed) {
+    return (
+      <div className="w-full flex flex-col items-center pt-1">
+        <div className="my-1.5 h-px w-7 bg-border-subtle" />
+        <Tooltip content={`${guide.role} guide`} side="right">
+          <Link
+            href={path}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNavigate}
+            title={`${guide.title} — opens in a new tab`}
+            aria-label={`${guide.role} guide`}
+            className={cn(
+              "group flex size-9 items-center justify-center rounded-md",
+              "text-muted-foreground transition-all duration-200 ease-out",
+              "hover:bg-surface/70 hover:text-foreground",
+            )}
+          >
+            <BookOpen
+              className="size-4 shrink-0 text-subtle-foreground transition-colors duration-200 group-hover:text-muted-foreground"
+              aria-hidden
+            />
+            <span className="sr-only">{guide.role} guide</span>
+          </Link>
+        </Tooltip>
+      </div>
+    );
   }
 
   return (

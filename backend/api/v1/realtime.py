@@ -35,6 +35,7 @@ from backend.core.errors import AuthenticationError
 from backend.core.events import EventKind, RealtimeEvent
 from backend.core.logging import get_logger
 from backend.core.permissions import Action, Module, perm
+from backend.core.topics import PRESENCE, topics_for
 from backend.db.manager import DatabaseManager
 from backend.repositories.user import UserRepository
 
@@ -48,6 +49,10 @@ _bearer = HTTPBearer(auto_error=False)
 # an account with no inbox at all hold a connection open.
 _AUDIENCE = (perm(Module.MESSAGE, Action.READ), perm(Module.NOTIFICATION, Action.READ))
 
+#: Institution-wide visibility. Decides the `presence` topic, which has no
+#: per-scope version to offer a caller who lacks it.
+_VIEW_ALL = perm(Module.INSTITUTION, Action.VIEW_ALL)
+
 
 class _Listener:
     """The authenticated identity behind one stream. No ORM objects.
@@ -57,11 +62,17 @@ class _Listener:
     after the request looked successful.
     """
 
-    __slots__ = ("user_id", "public_id")
+    __slots__ = ("user_id", "public_id", "topics")
 
-    def __init__(self, user_id: int, public_id: str) -> None:
+    def __init__(self, user_id: int, public_id: str, topics: tuple[str, ...] = ()) -> None:
         self.user_id = user_id
         self.public_id = public_id
+        #: Resolved from this caller's permissions while the session was still
+        #: open, and fixed for the life of the stream. A permission revoked
+        #: mid-stream therefore keeps delivering *hints* until the connection
+        #: turns over, which is harmless: a hint carries no data, and the
+        #: endpoint the client then calls re-checks the permission properly.
+        self.topics = topics
 
 
 async def _identify(
@@ -90,10 +101,15 @@ async def _identify(
         if user is None or not user.is_login_permitted or user.is_locked_out:
             raise AuthenticationError("Authentication required.")
 
-        if not resolve_permissions(user).intersection(_AUDIENCE):
+        held = resolve_permissions(user)
+        if not held.intersection(_AUDIENCE):
             raise AuthenticationError("Authentication required.")
 
-        listener = _Listener(user.id, str(user.public_id))
+        listener = _Listener(
+            user.id,
+            str(user.public_id),
+            topics_for(held, unrestricted=_VIEW_ALL in held),
+        )
 
     user_id_ctx.set(listener.public_id)
     return listener
@@ -103,6 +119,26 @@ def _settings(request: Request) -> Settings:
     from backend.core.config import get_settings
 
     return get_settings()
+
+
+async def _announce_presence(bus: object) -> None:
+    """Tell every dashboard that the online list moved.
+
+    Best effort, and deliberately silent on failure: this runs inside a live
+    stream, and an unreachable bus must cost a late presence update rather than
+    tear down the connection carrying everybody's notifications.
+
+    **A departure detected by expiry raises nothing**, and cannot: nobody is
+    executing code at the moment a window lapses. A browser that crashed is
+    discovered by the next read, which is why the dashboard keeps a slow poll
+    underneath this rather than relying on events alone.
+    """
+    try:
+        await bus.publish(  # type: ignore[attr-defined]
+            RealtimeEvent(kind=EventKind.DATA_CHANGED, user_id=0, topic=PRESENCE)
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Presence announcement failed", exc_info=True)
 
 
 @router.get(
@@ -150,7 +186,10 @@ async def realtime_stream(
         return StreamingResponse(too_many(), media_type="text/event-stream", headers=_HEADERS)
 
     live[listener.user_id] = live.get(listener.user_id, 0) + 1
-    subscription = bus.subscribe(listener.user_id)
+    subscription = bus.subscribe(listener.user_id, listener.topics)
+    # Presence is a side effect of this stream: holding it open *is* being
+    # at your desk, so no polling endpoint and no client code are needed.
+    presence = getattr(request.app.state, "presence", None)
     deadline = time.monotonic() + realtime.max_stream_seconds
 
     async def stream() -> AsyncIterator[bytes]:
@@ -159,6 +198,11 @@ async def realtime_stream(
             # nothing has happened" from "never connected" -- both of which
             # otherwise look like an idle socket.
             yield RealtimeEvent(kind=EventKind.READY, user_id=listener.user_id).sse().encode()
+            if presence is not None and await presence.touch(listener.user_id):
+                # An arrival, not a heartbeat. Published to the topic so every
+                # dashboard showing "who is online" updates at once instead of
+                # waiting out its poll.
+                await _announce_presence(bus)
 
             while True:
                 remaining = deadline - time.monotonic()
@@ -188,6 +232,12 @@ async def realtime_stream(
             raise
         finally:
             await subscription.aclose()
+            # A courtesy, so closing the last tab shows up at once instead of
+            # at the end of the window. Nothing depends on it arriving: a
+            # crash sends no `finally` either.
+            if presence is not None and live.get(listener.user_id, 1) <= 1:
+                if await presence.drop(listener.user_id):
+                    await _announce_presence(bus)
             remaining_for_user = live.get(listener.user_id, 1) - 1
             if remaining_for_user <= 0:
                 live.pop(listener.user_id, None)

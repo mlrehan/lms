@@ -35,12 +35,28 @@ def channel_for(user_id: int) -> str:
     return f"rt:user:{user_id}"
 
 
+def channel_for_topic(topic: str) -> str:
+    """A channel several connections share.
+
+    Distinct prefix from the per-user channels so the two namespaces cannot
+    collide: a topic named `7` must never land on user 7's channel.
+    """
+    return f"rt:topic:{topic}"
+
+
+def _channels(evt: RealtimeEvent) -> str:
+    """Where one event goes. Exactly one of topic / user is meaningful."""
+    return channel_for_topic(evt.topic) if evt.topic else channel_for(evt.user_id)
+
+
 class EventBus(Protocol):
     """Publish to one person; subscribe as one person."""
 
     async def publish(self, evt: RealtimeEvent) -> None: ...
 
-    def subscribe(self, user_id: int) -> "Subscription": ...
+    def subscribe(
+        self, user_id: int, topics: "tuple[str, ...]" = ()
+    ) -> "Subscription": ...
 
     async def close(self) -> None: ...
 
@@ -67,7 +83,10 @@ class Subscription(Protocol):
 
 
 class _MemorySubscription:
-    def __init__(self, bus: "InProcessBus", user_id: int) -> None:
+    def __init__(
+        self, bus: "InProcessBus", user_id: int, topics: tuple[str, ...] = ()
+    ) -> None:
+        self.topics = topics
         self._bus = bus
         self._user_id = user_id
         self._queue: asyncio.Queue[RealtimeEvent] = asyncio.Queue(maxsize=QUEUE_LIMIT)
@@ -106,42 +125,64 @@ class InProcessBus:
 
     def __init__(self) -> None:
         self._subscribers: dict[int, set[_MemorySubscription]] = {}
+        #: Keyed by topic name. Separate from `_subscribers` rather than
+        #: sharing one dict keyed by channel string, so the per-user path --
+        #: the hot one, and the one carrying personal events -- keeps its
+        #: integer key and cannot be reached by a crafted topic name.
+        self._topics: dict[str, set[_MemorySubscription]] = {}
 
     async def publish(self, evt: RealtimeEvent) -> None:
+        if evt.topic:
+            for sub in tuple(self._topics.get(evt.topic, ())):
+                sub.offer(evt)
+            return
         for sub in tuple(self._subscribers.get(evt.user_id, ())):
             sub.offer(evt)
 
-    def subscribe(self, user_id: int) -> _MemorySubscription:
-        sub = _MemorySubscription(self, user_id)
+    def subscribe(self, user_id: int, topics: tuple[str, ...] = ()) -> _MemorySubscription:
+        sub = _MemorySubscription(self, user_id, topics)
         self._subscribers.setdefault(user_id, set()).add(sub)
+        for topic in topics:
+            self._topics.setdefault(topic, set()).add(sub)
         return sub
 
     def _remove(self, user_id: int, sub: _MemorySubscription) -> None:
         holders = self._subscribers.get(user_id)
-        if not holders:
-            return
-        holders.discard(sub)
-        if not holders:
-            # Otherwise the dict grows one empty set per user who ever
-            # connected, for the life of the process.
-            self._subscribers.pop(user_id, None)
+        if holders:
+            holders.discard(sub)
+            if not holders:
+                # Otherwise the dict grows one empty set per user who ever
+                # connected, for the life of the process.
+                self._subscribers.pop(user_id, None)
+        for topic in sub.topics:
+            members = self._topics.get(topic)
+            if not members:
+                continue
+            members.discard(sub)
+            if not members:
+                self._topics.pop(topic, None)
 
     async def close(self) -> None:
         self._subscribers.clear()
+        self._topics.clear()
 
     # Introspection for `/readyz` and tests; never used to make a decision.
     @property
     def subscriber_count(self) -> int:
         return sum(len(s) for s in self._subscribers.values())
 
+    @property
+    def topic_subscriber_count(self) -> int:
+        return sum(len(s) for s in self._topics.values())
+
 
 # -------------------------------------------------------------------- redis ---
 
 
 class _RedisSubscription:
-    def __init__(self, pubsub, channel: str) -> None:  # noqa: ANN001
+    def __init__(self, pubsub, channels: tuple[str, ...]) -> None:  # noqa: ANN001
         self._pubsub = pubsub
-        self._channel = channel
+        self._channels = channels
         self._subscribed = False
 
     async def next_event(self, timeout: float) -> RealtimeEvent | None:
@@ -149,7 +190,10 @@ class _RedisSubscription:
             # Subscribing here rather than in `EventBus.subscribe` keeps that
             # method synchronous, so both adapters share one shape instead of
             # the port going async for redis's convenience alone.
-            await self._pubsub.subscribe(self._channel)
+            # One `SUBSCRIBE` carrying every channel, not one call each: a
+            # connection holding five topics would otherwise cost five round
+            # trips before it can read its first event.
+            await self._pubsub.subscribe(*self._channels)
             self._subscribed = True
 
         message = await self._pubsub.get_message(
@@ -168,14 +212,15 @@ class _RedisSubscription:
             # a half-deployed rollout. Dropping one beats tearing down a live
             # connection for every subscriber on this worker.
             logger.warning(
-                "Discarding malformed realtime frame", extra={"channel": self._channel}
+                "Discarding malformed realtime frame",
+                extra={"channels": ",".join(self._channels)},
             )
             return None
 
     async def aclose(self) -> None:
         with suppress(Exception):
             if self._subscribed:
-                await self._pubsub.unsubscribe(self._channel)
+                await self._pubsub.unsubscribe(*self._channels)
         with suppress(Exception):
             await self._pubsub.aclose()
 
@@ -196,11 +241,12 @@ class RedisBus:
         self._redis = redis.from_url(url, decode_responses=True)
 
     async def publish(self, evt: RealtimeEvent) -> None:
-        await self._redis.publish(channel_for(evt.user_id), evt.to_json())
+        await self._redis.publish(_channels(evt), evt.to_json())
 
-    def subscribe(self, user_id: int) -> _RedisSubscription:
+    def subscribe(self, user_id: int, topics: tuple[str, ...] = ()) -> _RedisSubscription:
         return _RedisSubscription(
-            self._redis.pubsub(ignore_subscribe_messages=True), channel_for(user_id)
+            self._redis.pubsub(ignore_subscribe_messages=True),
+            (channel_for(user_id), *(channel_for_topic(t) for t in topics)),
         )
 
     async def close(self) -> None:

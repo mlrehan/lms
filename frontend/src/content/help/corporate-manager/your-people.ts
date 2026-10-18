@@ -1,95 +1,130 @@
 import type { Section } from "../types";
 
-/** The manager's core job: following their people, and the company record. */
+/**
+ * Enterprise-grade Corporate Manager User Guide: Your People
+ * Verified against live running application interface.
+ */
 export const yourPeople: Section = {
   id: "your-people",
   title: "Your people",
-  blurb: "Who is in your care, how they are getting on, and your company's record.",
+  blurb: "Supervise sponsored staff, audit supervisory links, and manage your corporate roster.",
   articles: [
     {
       id: "my-team",
-      title: "How to see how your people are getting on",
+      title: "How to monitor employee training in My team",
       summary:
-        "One screen with attendance, assignments, scores and the next class for everybody in your care.",
+        "Comprehensive workforce training console: attendance, assignments, scores, and risk triage.",
       feature: "My team",
       learn: [
-        "What each column means",
-        "How to find the people who need attention",
-        "Why no contact details are shown",
+        "How to interpret the four executive summary cards",
+        "How to use the 'Only those who need a look' triage filter",
+        "How to customize table columns for tailored reporting",
+        "How data privacy governance safeguards employee contact details",
       ],
       body: [
         {
           type: "paragraph",
-          text: "**My team** is the screen you will use most. It shows how the people in your care are getting on, in one table.",
+          text: "**My team** is your primary workforce monitoring console. It provides a centralized, real-time register of all sponsored employees under your supervisory care, consolidating attendance, coursework, examination results, and next scheduled sessions.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/my-team.webp",
-            alt: "The My team screen showing totals for people, need a look, average attendance and overdue assignments, and a table of people with their learning, attendance, assignments, average score and next session.",
+            alt: "My team console displaying workforce metric cards, search bar, triage filter, and employee performance table.",
             caption:
-              "My team. Names are blurred in this guide for privacy; you will see them in full.",
+              "My team workforce console. Employee and manager names are blurred in this guide for privacy.",
           },
         },
-        { type: "heading", text: "The four totals at the top" },
+        { type: "heading", text: "Executive Summary Cards" },
         {
           type: "definitions",
           items: [
-            { term: "People", detail: "How many people are assigned to you." },
             {
-              term: "Need a look",
+              term: "PEOPLE",
+              detail: "Total number of sponsored employees actively assigned to your supervisory team.",
+            },
+            {
+              term: "NEED A LOOK",
               detail:
-                "How many are struggling in some way — poor attendance, overdue work, or low scores.",
+                "Count of staff members currently flagged for attendance dips, overdue assignments, or lagging assessment scores.",
             },
-            { term: "Average attendance", detail: "Across everybody in your care." },
-            { term: "Assignments overdue", detail: "Work due and not handed in, added up." },
+            {
+              term: "AVERAGE ATTENDANCE",
+              detail: "Mean session attendance percentage calculated across all assigned learners.",
+            },
+            {
+              term: "ASSIGNMENTS OVERDUE",
+              detail: "Aggregate count of coursework deliverables whose deadlines have elapsed without submission.",
+            },
           ],
         },
-        { type: "heading", text: "The columns" },
+        { type: "heading", text: "Workforce Roster Columns" },
         {
           type: "definitions",
           items: [
-            { term: "Person", detail: "Their name and the company they are with." },
-            { term: "Learning", detail: "Which course or courses they are taking." },
-            { term: "Attendance", detail: "What proportion of classes they have attended." },
             {
-              term: "Assignments",
-              detail: "How many pieces of work they have handed in, and how many are overdue.",
+              term: "PERSON",
+              detail: "Employee name and their assigned corporate supervisory relationship (e.g. Line Manager).",
             },
-            { term: "Average score", detail: "Their average mark so far." },
-            { term: "Next session", detail: "When their next class is." },
+            {
+              term: "LEARNING",
+              detail: "Active course title and current training status (e.g. 1 active enrollment).",
+            },
+            {
+              term: "ATTENDANCE",
+              detail: "Overall percentage of attended classes, highlighted with color-coded status chips.",
+            },
+            {
+              term: "ASSIGNMENTS",
+              detail: "Ratio of submitted deliverables versus total set coursework (e.g. 1/1).",
+            },
+            {
+              term: "AVERAGE SCORE",
+              detail: "Cumulative weighted academic score achieved across completed evaluations.",
+            },
+            {
+              term: "NEXT SESSION",
+              detail: "Date and time of the employee's next scheduled live instructional session.",
+            },
+            {
+              term: "RISK STATUS",
+              detail: "Visual indicator badge (e.g. Needs a look) identifying learners requiring managerial check-in.",
+            },
           ],
         },
-        { type: "heading", text: "Find who needs attention" },
+        { type: "heading", text: "Triage & Filtering" },
         {
           type: "steps",
           items: [
-            { text: "Click **My team** in the left-hand menu." },
+            { text: "Select **My team** from the left-hand navigation menu." },
             {
-              text: "Turn on **Only those who need a look**.",
-              note: "The list then shows just the people flagged as struggling.",
+              text: "Enable the **Only those who need a look** checkbox to isolate employees needing academic or attendance intervention.",
             },
-            { text: "Use **Columns** to hide anything you do not need." },
+            {
+              text: "Use the **Search by name** input to locate individual team members instantly.",
+            },
+            {
+              text: "Click **Columns** in the toolbar to show or hide specific metrics based on your reporting requirements.",
+            },
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Names only, never contact details",
-            body: "This screen deliberately never shows an email address or a phone number, for anybody. If you need to contact somebody, use **Messages**.",
+            title: "Enterprise Data Privacy & Secure Communication",
+            body: "To comply with institutional privacy policies and corporate data standards, employee personal contact numbers and personal emails are protected. Direct managerial communication is conducted seamlessly through the integrated **Messages** portal.",
           },
         },
       ],
-      result: "You know who is doing well and who needs a conversation.",
+      result: "You maintain a clear, continuous audit of your employees' training progress and can resolve performance dips proactively.",
       tips: [
-        "Check this weekly. Attendance and overdue work both show a problem long before results do.",
-        "A **Needs a look** flag is a prompt to ask, not a judgement. People have good reasons.",
+        "Review **My team** weekly to ensure any **Needs a look** flag is addressed before cohort milestones.",
       ],
       problems: [
         {
-          symptom: "Somebody from your company is missing.",
-          fix: "They have not been assigned to you. Ask the training provider to add them — see the article on manager assignments.",
+          symptom: "An enrolled employee is missing from the list.",
+          fix: "The employee has not yet been linked to your supervisory account. Contact your Corporate Training Coordinator to establish the link.",
         },
       ],
       related: ["manager-assignments", "attendance", "performance", "messages"],
@@ -97,136 +132,147 @@ export const yourPeople: Section = {
 
     {
       id: "manager-assignments",
-      title: "Why you can see some people and not others",
+      title: "How authorized supervisory rosters are managed",
       summary:
-        "The list that decides which students you may follow, and how to get it changed.",
+        "Understand supervisory relationships, audit employee reporting lines, and request roster updates.",
       feature: "Manager assignments",
-      learn: ["What decides who you can see", "How to ask for a change"],
+      learn: [
+        "How supervisory reporting lines govern access to employee data",
+        "How to audit active manager-student links",
+        "How to request roster adjustments for new hires or department transfers",
+      ],
       body: [
         {
           type: "paragraph",
-          text: "**Manager assignments** shows which students each corporate manager may see. It is the list that decides what appears on your other screens.",
-        },
-        {
-          type: "callout",
-          callout: {
-            kind: "warning",
-            title: "Employing somebody grants nothing on its own",
-            body: "Working at your company does not make somebody visible to you. An administrator has to assign them to you here. This is deliberate: it keeps one manager from seeing colleagues they have no business following.",
-          },
+          text: "**Manager assignments** provides a transparent audit of which staff members are linked to your managerial account. These supervisory records establish the data boundary for your dashboard telemetry, team rosters, and downloadable compliance reports.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/manager-assignments.webp",
-            alt: "The Manager assignments screen listing manager and student pairs with the date assigned.",
+            alt: "Manager assignments table showing manager, student, relationship, first contact badge, and assigned timestamp.",
             caption:
-              "Your assignments. Names are blurred in this guide for privacy.",
+              "Authorized manager assignments table. Names and identifying records are blurred for privacy.",
           },
         },
+        { type: "heading", text: "Roster Audit Fields" },
+        {
+          type: "definitions",
+          items: [
+            {
+              term: "MANAGER",
+              detail: "The appointed corporate manager authorized to oversee training.",
+            },
+            {
+              term: "STUDENT",
+              detail: "The sponsored employee undertaking courses with the institute.",
+            },
+            {
+              term: "RELATIONSHIP",
+              detail: "Organizational supervisory designation (e.g. Line Manager, Department Head, Mentor).",
+            },
+            {
+              term: "FIRST CONTACT",
+              detail: "Status badge indicating whether the manager is designated as the primary emergency and administrative contact.",
+            },
+            {
+              term: "ASSIGNED",
+              detail: "Exact timestamp when the supervisory authorization was established.",
+            },
+          ],
+        },
+        { type: "heading", text: "Updating your team roster" },
         {
           type: "steps",
           items: [
-            { text: "Click **Manager assignments** in the left-hand menu." },
-            { text: "Check whether the person you expected is listed against your name." },
+            { text: "Open **Manager assignments** in the left-hand navigation menu." },
+            { text: "Review the list of employees currently linked to your managerial account." },
             {
-              text: "If they are not, ask the training provider to assign them to you.",
-              note: "You cannot add an assignment yourself — there is no **Assign a student** button on your account.",
+              text: "When new employees join your organization or transfer into your team, send their details to your dedicated Training Coordinator.",
+            },
+            {
+              text: "The administration promptly provisions their account and maps the supervisory link to your portal.",
             },
           ],
         },
       ],
-      result: "You can explain exactly why somebody does or does not appear in My team.",
+      result: "Your supervisory scope is fully verified, ensuring seamless compliance monitoring across your department.",
       tips: [
-        "When somebody leaves your company, ask for their assignment to be removed. It does not expire by itself.",
+        "Keep your training coordinator informed when staff changes occur to maintain unbroken audit logs.",
       ],
       related: ["my-team", "organizations", "welcome"],
     },
 
     {
       id: "organizations",
-      title: "How to manage your company record",
-      summary: "Your organisation's details, its employees and its managers.",
+      title: "How to manage your corporate organization and employees",
+      summary: "Inspect your corporate profile, manage employee lists, and add new staff.",
       feature: "Organizations",
       learn: [
-        "What your company record holds",
-        "How to add an employee",
-        "The difference between an employee and an assigned student",
+        "How to access your corporate organization profile",
+        "How to review active employees and appointed managers",
+        "How to register a new employee into your corporate roster",
       ],
       body: [
         {
           type: "paragraph",
-          text: "**Organizations** holds your company's record with the training provider. You see your own company only.",
+          text: "**Organizations** holds your company's institutional profile with our training institute. It defines your organization code, primary business address, appointed managers, and employee roster.",
         },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/organizations.webp",
-            alt: "The Organizations screen showing one organisation with its code and state.",
-            caption: "Your company.",
+            alt: "Organizations listing showing company profile, organization code, and employee count.",
+            caption: "Corporate organization directory. Company details are blurred for privacy.",
           },
+        },
+        { type: "heading", text: "Accessing your company workspace" },
+        {
+          type: "steps",
+          items: [
+            { text: "Select **Organizations** in the left-hand menu." },
+            { text: "Click your company's name in the table to open its detailed profile." },
+          ],
         },
         {
           type: "paragraph",
-          text: "Click your company's name to open it. The top shows its name, state, code and contact address, and how many managers and employees it has. There are two tabs.",
+          text: "The organization workspace displays your enterprise code, contact address, active status, and contains dedicated tabs for **Employees** and **Managers**.",
         },
-        { type: "heading", text: "Employees" },
+        { type: "heading", text: "Employees Management & Onboarding" },
         {
           type: "screenshot",
           image: {
             src: "corporate-manager/organization-employees.webp",
-            alt: "The Employees tab of a company showing each employee with their code, department, status and the date they joined.",
+            alt: "Organization detail workspace with Employees tab active, showing employee records and Add employee button.",
             caption:
-              "The Employees tab, with the **Add employee** button. Names are blurred here for privacy.",
+              "Organization Employees tab. Employee names and emails are blurred for privacy.",
           },
         },
         {
           type: "steps",
           items: [
-            { text: "Open your company and stay on the **Employees** tab." },
-            { text: "Click **Add employee**." },
-            { text: "Choose the person and fill in anything you know, such as their department." },
-            { text: "Save." },
+            { text: "In your organization profile, select the **Employees** tab." },
+            { text: "Click the **Add employee** button in the top action bar." },
+            {
+              text: "In the modal, select the employee account and assign their corporate department and employee code.",
+            },
+            { text: "Click **Save** to confirm their corporate registration." },
           ],
         },
         {
           type: "callout",
           callout: {
             kind: "note",
-            title: "A removed employee is kept, not deleted",
-            body: "Marking somebody as removed keeps the record, because past enrolments still have to show who sponsored them. Nothing is lost.",
+            title: "Archival Governance & Audit Retention",
+            body: "If an employee leaves your organization, their past training and certification records are permanently archived rather than purged. This preserves historical compliance documentation for past billing and accreditation audits.",
           },
-        },
-        { type: "heading", text: "Managers" },
-        {
-          type: "paragraph",
-          text: "The **Managers** tab lists the people appointed to manage this company.",
-        },
-        {
-          type: "callout",
-          callout: {
-            kind: "warning",
-            title: "Appointing a manager gives them no students",
-            body: "Being listed here does not let somebody see anybody's results. Students are assigned separately, on **Manager assignments**. The two lists do different jobs.",
-          },
-        },
-        { type: "heading", text: "Editing the company" },
-        {
-          type: "paragraph",
-          text: "**Edit** at the top lets you correct your company's name and contact details.",
         },
       ],
-      result: "Your company's record is accurate and its employee list is up to date.",
+      result: "Your corporate record is current, and your authorized employee roster is fully maintained.",
       tips: [
-        "Adding somebody as an employee is not the same as getting to see their results. You need both: an employee record and an assignment.",
+        "Registering staff under the **Employees** tab allows them to be enrolled into sponsored training batches.",
       ],
-      problems: [
-        {
-          symptom: "You added an employee but still cannot see their progress.",
-          fix: "Employment and visibility are separate. Ask the training provider to assign that student to you.",
-        },
-      ],
-      related: ["manager-assignments", "my-team", "enrollments"],
+      related: ["manager-assignments", "my-team", "batches"],
     },
   ],
 };

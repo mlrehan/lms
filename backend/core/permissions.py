@@ -75,6 +75,13 @@ class Module:
     #: whereas `grade.update` is the whole grade book. Same reasoning that
     #: keeps `assignment.grade` separate from `exam.grade`.
     CLASS_PERFORMANCE: Final = "class_performance"
+    #: Irreversible operations on the installation itself: permanently erasing
+    #: records, and resetting the system. Its own module rather than an action
+    #: on each entity, because the distinction that matters is not *what* is
+    #: being deleted but that nothing can bring it back. An institution may
+    #: well want somebody who can delete a course the ordinary way and nobody
+    #: at all who can erase it beyond recovery.
+    SYSTEM: Final = "system"
 
 
 class Action:
@@ -113,6 +120,14 @@ class Action:
     #: acts, and an institution will want the second to need more authority.
     GENERATE: Final = "generate"
     OVERRIDE: Final = "override"
+    #: Erase records permanently, past the soft delete every other screen
+    #: performs. Deliberately not `delete`: `course.delete` already exists and
+    #: means something recoverable. Giving the irreversible act the same verb
+    #: as the reversible one is how somebody ends up holding a power they
+    #: thought they were granting in a milder form.
+    PURGE: Final = "purge"
+    #: Return the installation to a freshly-installed state.
+    RESET: Final = "reset"
 
 
 def perm(module: str, action: str) -> str:
@@ -160,6 +175,8 @@ def _register(
         Action.VIEW_CONTACT: f"See other people's email addresses, phone numbers and login names in {noun}",
         Action.VIEW_PRICING: f"See the price of {noun}",
         Action.OVERRIDE: f"Take or correct {noun} on behalf of the assigned tutor",
+        Action.PURGE: f"Permanently erase {noun}, beyond any recovery",
+        Action.RESET: f"Reset {noun} to a freshly-installed state",
     }
     if phrasing:
         verb_phrasing.update(phrasing)
@@ -300,6 +317,18 @@ _register(Module.GOOGLE, (Action.READ, Action.UPDATE, Action.SYNC), "the Google 
 # few write rights, and `if role in (ADMIN, SUPER_ADMIN)` scattered through
 # the service layer cannot express that without a code change.
 _register(Module.INSTITUTION, (Action.VIEW_ALL,), "records")
+
+# Two capabilities nobody but a Super Admin holds, and the only two in this
+# catalogue whose effects cannot be undone by any other screen.
+#
+# They are *also* gated on the Super Admin role at the route, which looks like
+# belt and braces and is deliberate: `role_permissions` is editable data, so a
+# permission alone could be granted to a lesser role by somebody who did not
+# appreciate what they were handing over. Being in the catalogue is what makes
+# the gate discoverable and auditable; the role check is the floor underneath
+# it. See `require_roles()` in api/deps.py, whose docstring describes exactly
+# this case.
+_register(Module.SYSTEM, (Action.PURGE, Action.RESET), "the installation's own records")
 
 # --- the academic assessment system ----------------------------------------
 # `transcript.view` is separate from `grade.read` because a transcript is an

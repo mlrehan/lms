@@ -299,6 +299,66 @@ def test_a_stale_running_pipeline_is_released(env):  # noqa: ANN001, ANN201
     assert stale.failure_reason and "Abandoned" in stale.failure_reason
 
 
+def test_current_reaps_stale_running_pipeline_automatically(env):  # noqa: ANN001, ANN201
+    """Polling current() must automatically heal an abandoned pipeline."""
+    run = env.start()
+
+    async def age_it() -> None:
+        async with env.db.session_factory.begin() as session:
+            await session.execute(
+                text(
+                    "UPDATE sync_pipeline_runs SET started_at = now() - interval '30 days'"
+                    " WHERE id = :id"
+                ),
+                {"id": run.id},
+            )
+
+    env.run(age_it())
+    active = env.run(env.service.current())
+    assert active is None
+
+    stale = env.run(env.service.get(run.id))
+    assert stale.status == "FAILED"
+    assert stale.failure_reason and "Abandoned" in stale.failure_reason
+
+
+def test_reap_stale_also_reaps_stale_user_sync_run(env):  # noqa: ANN001, ANN201
+    """An abandoned child UserSyncRun must also be released."""
+    from backend.models.user_sync import UserSyncRun
+    from datetime import datetime, timezone, timedelta
+
+    user_run_id: int | None = None
+
+    async def setup_stale_user_run() -> int:
+        async with env.db.session_factory.begin() as session:
+            stale_user = UserSyncRun(
+                kind="USERS",
+                trigger_type="MANUAL",
+                triggered_by_user_id=None,
+                dry_run=False,
+                status="RUNNING",
+                started_at=datetime.now(timezone.utc) - timedelta(days=2),
+            )
+            session.add(stale_user)
+            await session.flush()
+            return stale_user.id
+
+    user_run_id = env.run(setup_stale_user_run())
+
+    # Invoking current() should reap both pipeline and user sync runs
+    env.run(env.service.current())
+
+    async def verify_user_run(run_id: int) -> UserSyncRun:
+        async with env.db.session_factory() as session:
+            return (
+                await session.execute(select(UserSyncRun).where(UserSyncRun.id == run_id))
+            ).scalar_one()
+
+    reaped_user_run = env.run(verify_user_run(user_run_id))
+    assert reaped_user_run.status == "FAILED"
+    assert reaped_user_run.failure_reason and "Abandoned" in reaped_user_run.failure_reason
+
+
 def test_last_successful_counts_a_run_whose_steps_all_ran(env):  # noqa: ANN001, ANN201
     """A single unimportable record must not pin "last successful" to Never.
 

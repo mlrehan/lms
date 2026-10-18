@@ -27,6 +27,10 @@ from backend.api.v1 import (
     grading_schemes,
     guardians,
     managed_students,
+    editors,
+    presence,
+    purge,
+    sidebar,
     team,
     google_calendar,
     integrations,
@@ -81,6 +85,15 @@ router.include_router(resources.router)
 router.include_router(organizations.router)
 router.include_router(guardians.router)
 router.include_router(managed_students.router)
+# The menu badges: one request for every number the caller may see.
+router.include_router(sidebar.router)
+# Who is actually at their desk, from the realtime heartbeat.
+router.include_router(presence.router)
+# Which code editor a course needs, and the mapping behind it.
+router.include_router(editors.router)
+# Permanent deletion and the complete system reset. Super Admin only, gated on
+# both `system.*` permissions and the role -- see the module docstring.
+router.include_router(purge.router)
 router.include_router(team.router)
 router.include_router(messages.router)
 router.include_router(notifications.router)

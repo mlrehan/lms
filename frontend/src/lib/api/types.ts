@@ -549,7 +549,7 @@ export interface CalendarSession {
 }
 
 /**
- * Guardians and corporate managers: the people in their care.
+ * Guardians: the people in their care.
  */
 export interface CarePanel {
   people?: number;
@@ -557,6 +557,47 @@ export interface CarePanel {
   assignments_overdue?: number;
   upcoming_sessions?: SessionBrief[];
 }
+
+export interface CorporateCourseSummary {
+  course_title: string;
+  course_code?: string | null;
+  batch_code: string;
+  enrollment_count: number;
+  tutor_name?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface CorporateAtRiskEmployee {
+  user_id: number;
+  full_name: string;
+  email: string;
+  attendance_rate?: number | null;
+  attended_sessions?: number;
+  total_sessions?: number;
+  assignments_overdue: number;
+  enrolled_courses?: string[];
+  risk_level: "critical" | "warning";
+  risk_reason: string;
+}
+
+export interface CorporatePanel {
+  organization_name?: string | null;
+  organization_code?: string | null;
+  manager_title?: string | null;
+  total_employees: number;
+  total_enrollments: number;
+  active_enrollments?: number;
+  attendance_rate?: number | null;
+  assignments_overdue: number;
+  at_risk_count: number;
+  health_score?: number;
+  health_status?: string;
+  at_risk_employees: CorporateAtRiskEmployee[];
+  active_courses: CorporateCourseSummary[];
+  upcoming_sessions: SessionBrief[];
+}
+
 
 export interface CategoryCreateRequest {
   name: string;
@@ -966,6 +1007,8 @@ export interface CurrentUserResponse {
   locale_city?: string | null;
   locale_country?: string | null;
   timezone_is_auto?: boolean;
+  /** How loudly to announce a notification in this browser. */
+  notification_sound?: "off" | "subtle" | "prominent";
 }
 
 export interface DashboardResponse {
@@ -976,6 +1019,7 @@ export interface DashboardResponse {
   student?: StudentPanel | null;
   teaching?: TeachingPanel | null;
   care?: CarePanel | null;
+  corporate?: CorporatePanel | null;
   institution?: InstitutionPanel | null;
 }
 

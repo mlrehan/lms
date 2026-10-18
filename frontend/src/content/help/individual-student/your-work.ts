@@ -164,7 +164,7 @@ export const yourWork: Section = {
           fix: "It has not been marked, or the mark has not been published. Marks appear as the tutor works through them.",
         },
       ],
-      related: ["assignments", "grades", "messages"],
+      related: ["assignments", "performance", "messages"],
     },
 
     {
@@ -262,7 +262,7 @@ export const yourWork: Section = {
           fix: "Message your tutor. Whether you get another attempt is their decision, not something the system can give you.",
         },
       ],
-      related: ["examinations", "grades", "assignments"],
+      related: ["examinations", "performance", "assignments"],
     },
 
     {
@@ -312,14 +312,14 @@ export const yourWork: Section = {
         },
         {
           type: "paragraph",
-          text: "When your result is released you will get a notification saying so, and the mark appears in your **Grade book**.",
+          text: "When your result is released you will get a notification saying so, and the mark appears in your **Performance** standing and coursework breakdown.",
         },
       ],
       result: "You know when your examination is and where the result will appear.",
       tips: [
         "An examination with no date yet is normal part-way through a course. Keep an eye on your notifications.",
       ],
-      related: ["grades", "notifications", "quizzes"],
+      related: ["performance", "notifications", "quizzes"],
     },
   ],
 };

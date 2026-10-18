@@ -38,8 +38,8 @@ export const yourCourse: Section = {
           type: "callout",
           callout: {
             kind: "note",
-            title: "Seeing a course is not joining it",
-            body: "You can browse everything on offer, but you cannot enrol yourself — there is no button for it. If something here interests you, message the office.",
+            title: "Course catalog & admissions",
+            body: "The course catalog lets you explore all learning tracks offered by the institution. To register for upcoming cohorts or new courses, connect with admissions through **Messages**.",
           },
         },
         { type: "heading", text: "Batches — your actual class" },
@@ -91,7 +91,7 @@ export const yourCourse: Section = {
           fix: "You may not have been enrolled yet. Message the office.",
         },
       ],
-      related: ["timetable", "join-class", "grades"],
+      related: ["timetable", "join-class", "performance"],
     },
 
     {

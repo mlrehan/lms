@@ -28,9 +28,11 @@ from backend.schemas.messaging import (
 from backend.core.notification_types import CATEGORIES
 from backend.schemas.notification import (
     NotificationPreferenceResponse,
+    NotificationSoundResponse,
     NotificationPreferencesResponse,
     PreferenceResetResponse,
     SetNotificationPreferenceRequest,
+    SetNotificationSoundRequest,
 )
 from backend.services.notification_service import NotificationService
 
@@ -200,3 +202,28 @@ async def mark_read(
     return _response(
         await NotificationService(session).mark_read(notification_id, actor=actor)
     )
+
+
+@router.put(
+    "/sound",
+    response_model=NotificationSoundResponse,
+    summary="How loudly to announce a notification",
+)
+async def set_notification_sound(
+    payload: SetNotificationSoundRequest,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.NOTIFICATION, Action.UPDATE)))
+    ],
+) -> NotificationSoundResponse:
+    """A personal interface preference, kept beside the timezone rather than in
+    `notification_preferences` -- that table records which *types* somebody has
+    switched off, and cannot express "keep them all, just stop chiming".
+
+    What the browser will and will not allow is not ours to decide and is not
+    worked around here: a page may not play sound until the person has
+    interacted with it, and the volume belongs to the device. `prominent` is a
+    longer, more insistent tone, not a louder one.
+    """
+    actor.notification_sound = payload.sound
+    return NotificationSoundResponse(sound=payload.sound)

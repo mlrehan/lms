@@ -29,7 +29,7 @@ export const individualStudentGuide: Guide = {
     "How to use your course: when your classes are, the work you have been set, how to hand it in, and how you are getting on. Written for complete beginners.",
   audience:
     "For students studying on their own account, with no employer or family member following their progress.",
-  updated: "2026-10-13",
+  updated: "2026-10-18",
   sibling: {
     slug: "managed-student",
     label: "read the Managed Student guide instead",

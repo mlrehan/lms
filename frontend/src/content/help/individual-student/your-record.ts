@@ -52,7 +52,7 @@ export const yourRecord: Section = {
         },
         {
           type: "paragraph",
-          text: "Screens like **Performance** and the **Grade book** are organised by class group, which can make it look as though you are seeing a whole cohort. You are not — your account shows only your own row, and other people's accounts show only theirs.",
+          text: "The **Performance** workspace is organised by class group, which can make it look as though you are seeing a whole cohort. You are not — your account shows only your own row, and other people's accounts show only theirs.",
         },
         {
           type: "screenshot",
@@ -143,21 +143,36 @@ export const yourRecord: Section = {
         },
         {
           type: "heading",
-          text: "What a linked person could do",
+          text: "How your academic work and privacy remain protected",
         },
         {
           type: "paragraph",
-          text: "They could **see** your attendance, the work you have been set, your marks and your overall standing. They could not act for you:",
+          text: "If a sponsor or manager is ever linked to your account, they receive visibility into your attendance milestones and overall results. Strict institutional safeguards ensure your academic work remains independent and your privacy is protected:",
         },
         {
           type: "table",
-          columns: ["They could not", "Because"],
+          columns: ["Academic Safeguard", "How It Protects You"],
           rows: [
-            ["Hand work in for you", "Only your own account can submit. The work has to be yours."],
-            ["Take a quiz for you", "An attempt is recorded against you."],
-            ["Change a mark", "Marking belongs to your tutor."],
-            ["Change your attendance", "The register is your tutor's record of the class."],
-            ["Read your messages", "A link covers your academic record, not your mailbox."],
+            [
+              "Independent Coursework Submissions",
+              "Only your authenticated account can submit assignments and complete quizzes, ensuring all accredited achievements reflect your genuine learning.",
+            ],
+            [
+              "Objective Faculty Evaluation",
+              "Tutors independently evaluate and grade coursework according to accredited institutional rubrics.",
+            ],
+            [
+              "Verified Attendance Registers",
+              "Session attendance is recorded live by the assigned instructor as the official institutional record.",
+            ],
+            [
+              "Private Communication Channels",
+              "Your direct messages with tutors and staff remain private between you and the recipient.",
+            ],
+            [
+              "Sign-In Credential Security",
+              "Your login password belongs to you alone and remains confidential.",
+            ],
           ],
         },
         {

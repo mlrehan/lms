@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/states";
 import { Card, TooltipProvider } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
 import { useSession } from "@/lib/auth/session";
-import { permissionForPath } from "@/lib/navigation";
+import { alsoRequiresForPath, permissionForPath } from "@/lib/navigation";
 
 /**
  * The signed-in shell, and the route guard.
@@ -68,7 +68,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }
 
   const required = permissionForPath(pathname);
-  const allowed = !required || permissions.has(required);
+  const alsoRequired = alsoRequiresForPath(pathname);
+  const missing =
+    (required && !permissions.has(required) ? required : undefined) ??
+    (alsoRequired && !permissions.has(alsoRequired) ? alsoRequired : undefined);
+  const allowed = !missing;
 
   return (
     <TooltipProvider>
@@ -96,7 +100,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                       <>
                         It needs the{" "}
                         <code className="rounded-xs bg-muted px-1 py-0.5 font-mono text-2xs text-foreground">
-                          {required}
+                          {missing}
                         </code>{" "}
                         permission, which your roles do not grant. Ask an administrator if you
                         need it.

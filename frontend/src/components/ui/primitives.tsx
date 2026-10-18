@@ -324,9 +324,13 @@ export const TooltipProvider = BaseTooltip.Provider;
  */
 export function Tooltip({
   content,
+  side = "top",
+  align = "center",
   children,
 }: {
   content: ReactNode;
+  side?: "top" | "bottom" | "left" | "right";
+  align?: "start" | "center" | "end";
   children: ReactNode;
 }): ReactNode {
   if (!content) return <>{children}</>;
@@ -334,7 +338,7 @@ export function Tooltip({
     <BaseTooltip.Root>
       <BaseTooltip.Trigger render={<span className="inline-flex" />}>{children}</BaseTooltip.Trigger>
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner sideOffset={6} className="z-50">
+        <BaseTooltip.Positioner side={side} align={align} sideOffset={6} className="z-50">
           <BaseTooltip.Popup
             className={cn(
               "max-w-xs rounded-md bg-foreground px-2 py-1 text-2xs font-medium text-background shadow-md",

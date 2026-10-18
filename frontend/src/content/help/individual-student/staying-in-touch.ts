@@ -1,10 +1,10 @@
 import type { Section } from "../types";
 
-/** Messages, discussions, notices, alerts, shared files and the reference lists. */
+/** Messages, notices, discussions, alerts, and shared files. */
 export const stayingInTouch: Section = {
   id: "staying-in-touch",
   title: "Staying in touch",
-  blurb: "Messages, discussions, notices, alerts and files shared with you.",
+  blurb: "Messages, notices, discussions, alerts and files shared with you.",
   articles: [
     {
       id: "messages",
@@ -15,7 +15,7 @@ export const stayingInTouch: Section = {
       body: [
         {
           type: "paragraph",
-          text: "**Messages** is the mailbox inside the system. Studying on your own, this is your main way of asking for anything — an extension, a correction, a place on another course.",
+          text: "**Messages** is the mailbox inside the system. It is how you contact your tutor or the office about anything to do with your course.",
         },
         {
           type: "screenshot",
@@ -55,9 +55,9 @@ export const stayingInTouch: Section = {
       result: "Your message appears in your **Sent** folder and in their inbox.",
       tips: [
         "Say which course and which class or piece of work you mean. Tutors teach a lot of people.",
-        "Ask early. An extension requested before a deadline is a different conversation from one requested after it.",
+        "Use this rather than a personal email. It keeps the conversation attached to your course record.",
       ],
-      related: ["discussions", "notifications", "privacy"],
+      related: ["notifications", "discussions", "privacy"],
     },
 
     {
@@ -69,7 +69,7 @@ export const stayingInTouch: Section = {
       body: [
         {
           type: "paragraph",
-          text: "**Discussions** are threads attached to a course. Unlike messages, which go to one person, a discussion is visible to the course — which makes it the closest thing you have to classmates you can ask.",
+          text: "**Discussions** are threads attached to a course. Unlike messages, which go to one person, a discussion is visible to the course.",
         },
         {
           type: "screenshot",
@@ -98,14 +98,14 @@ export const stayingInTouch: Section = {
         {
           type: "callout",
           callout: {
-            kind: "warning",
-            title: "This one is public to your course",
-            body: "Everything else about your record is private to you and the school. A discussion post is not. Use **Messages** for anything personal — a mark you are unhappy with, or a reason you missed a class.",
+            kind: "tip",
+            title: "Use it for questions others will share",
+            body: "A question about the brief or a deadline is usually worth asking here: your classmates probably have it too, and the answer stays where everybody can find it. Use **Messages** for anything personal.",
           },
         },
       ],
       result: "Your question is posted where your tutor and your course can see it.",
-      related: ["messages", "announcements", "privacy"],
+      related: ["messages", "announcements"],
     },
 
     {
@@ -123,8 +123,8 @@ export const stayingInTouch: Section = {
           type: "screenshot",
           image: {
             src: "individual-student/announcements.webp",
-            alt: "The Announcements screen showing the feed with nothing currently announced.",
-            caption: "The feed. 'Nothing announced' means there are no current notices.",
+            alt: "The Announcements screen showing the feed with notices and updates.",
+            caption: "The announcements feed. Displays current institutional notices.",
           },
         },
         {
@@ -144,7 +144,7 @@ export const stayingInTouch: Section = {
       id: "notifications",
       title: "How to manage notifications",
       summary:
-        "What the system has told you, and how to choose what you keep being told.",
+        "What the system has told you, and how to choose what you keep being told — including the alerts that arrive nowhere else.",
       feature: "Notifications",
       learn: [
         "Where to read your alerts",
@@ -154,17 +154,20 @@ export const stayingInTouch: Section = {
       body: [
         {
           type: "paragraph",
-          text: "**Notifications** has two tabs: **Feed**, what the system has told you, and **Preferences**, what you want to keep being told. With nobody chasing you about deadlines, this is the closest thing you have to a prompt.",
+          text: "**Notifications** has two tabs: **Feed**, what the system has told you, and **Preferences**, what you want to keep being told.",
         },
         {
           type: "screenshot",
           image: {
             src: "individual-student/notifications.webp",
-            alt: "The Notifications screen showing the Feed tab with alerts about a scheduled exam, a new quiz and a new assignment, with Mark all read and Unread only controls.",
+            alt: "The Notifications screen showing the Feed tab with alerts about a scheduled exam, a new quiz, a new assignment and a graded submission, with Mark all read and Unread only controls.",
             caption: "Your feed. Each alert can be marked read individually, or all at once.",
           },
         },
-        { type: "heading", text: "What arrives here" },
+        {
+          type: "heading",
+          text: "What arrives here",
+        },
         {
           type: "bullets",
           items: [
@@ -172,7 +175,7 @@ export const stayingInTouch: Section = {
             "**New work was set** — an assignment or a quiz.",
             "**Your work was graded**, with the score.",
             "**An examination was scheduled**, or its result published.",
-            "**Somebody was linked to your account.** This one arrives nowhere else at all — see **What would happen if somebody were linked to you**.",
+            "**A manager or guardian was linked to your account.** This one arrives nowhere else at all — there is no screen that lists it afterwards.",
           ],
         },
         {
@@ -189,7 +192,7 @@ export const stayingInTouch: Section = {
           callout: {
             kind: "warning",
             title: "Read before you clear",
-            body: "Marking everything read is quick, and it is how people miss the one alert that mattered. Somebody being linked to your account is announced here once and never repeated.",
+            body: "Marking everything read is quick, and it is how people miss the one alert that mattered. Being linked to a manager or guardian is announced here once and never repeated.",
           },
         },
       ],
@@ -215,7 +218,7 @@ export const stayingInTouch: Section = {
           type: "screenshot",
           image: {
             src: "individual-student/shared-with-me.webp",
-            alt: "The Shared resources screen explaining that files shared by tutors and administrators appear here, with nothing shared yet.",
+            alt: "The Shared resources screen displaying files shared by tutors and administrators.",
             caption: "Files shared with you. Empty simply means nothing has been shared yet.",
           },
         },
@@ -224,34 +227,8 @@ export const stayingInTouch: Section = {
           text: "Click a file to open it. If you are expecting something that is not here, ask your tutor — sharing is a step they take deliberately.",
         },
       ],
+      result: "You can open, download, and review shared learning assets whenever needed.",
       related: ["messages", "course"],
-    },
-
-    {
-      id: "academic-setup",
-      title: "What Academic setup is for",
-      summary: "Reference lists you can look at but not change.",
-      feature: "Academic setup",
-      learn: ["What this screen holds", "Why there is nothing to change"],
-      body: [
-        {
-          type: "paragraph",
-          text: "**Academic setup** holds the school's reference lists: academic years, semesters, departments, course categories and tags.",
-        },
-        {
-          type: "screenshot",
-          image: {
-            src: "individual-student/academic-setup.webp",
-            alt: "The Academic setup screen showing tabs for academic years, semesters, departments, categories and tags, with no academic years defined.",
-            caption: "Read-only on your account. There is nothing here to add or edit.",
-          },
-        },
-        {
-          type: "paragraph",
-          text: "You will rarely need it. It is occasionally useful for checking which academic year or semester is current. Everything on it belongs to the school to maintain.",
-        },
-      ],
-      related: ["course"],
     },
   ],
 };

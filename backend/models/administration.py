@@ -4,8 +4,8 @@ categories, tags, settings. None of these existed before this pass --
 
 from datetime import date
 
-from sqlalchemy import (Integer, String, ForeignKey, Date, Text,
-                        UniqueConstraint)
+from sqlalchemy import (CheckConstraint, Integer, String, ForeignKey, Date, Index,
+                        Text, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
@@ -106,3 +106,50 @@ class SystemSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+class CategoryEditor(Base):
+    """A category's courses need this code editor.
+
+    The rule, rather than the exception: courses arrive from the sync on a
+    schedule, so a decision stored per course would be permanently out of date
+    for anything new. A course inherits its category's editors unless it has
+    rows of its own.
+    """
+
+    __tablename__ = "category_editors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False
+    )
+    editor: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("category_id", "editor", name="uq_category_editors_category_id_editor"),
+        CheckConstraint("editor IN ('sql', 'python')", name="ck_category_editors_editor"),
+        Index("ix_category_editors_category_id", "category_id"),
+    )
+
+
+class CourseEditor(Base):
+    """This one course needs this code editor, whatever its category says.
+
+    The exception. Present for a course with no category -- eleven of them when
+    this was written -- and for the course whose category is right about its
+    siblings and wrong about it.
+    """
+
+    __tablename__ = "course_editors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    course_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    editor: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "editor", name="uq_course_editors_course_id_editor"),
+        CheckConstraint("editor IN ('sql', 'python')", name="ck_course_editors_editor"),
+        Index("ix_course_editors_course_id", "course_id"),
+    )

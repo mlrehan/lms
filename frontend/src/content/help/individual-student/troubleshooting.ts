@@ -21,7 +21,7 @@ export const troubleshooting: Section = {
           type: "bullets",
           items: [
             "**Give it a moment.** Some screens show 'Loading' briefly, especially the first time.",
-            "**Some screens need a class group first.** Grade book and Performance show nothing until you choose a **Batch**.",
+            "**Some screens need a class group first.** Performance shows nothing until you choose a **Batch**.",
             "**A date range may be excluding everything.** Clear **From** and **To** on the Timetable.",
             "**A filter may still be set from last time.** Put filters back to 'Any'.",
           ],
@@ -78,42 +78,25 @@ export const troubleshooting: Section = {
           ],
         },
 
-        { type: "heading", text: "I want to take another course" },
+        { type: "heading", text: "Enrolling in an additional course" },
         {
           type: "paragraph",
-          text: "You can browse everything the school offers on **Courses**, but you cannot enrol yourself — there is no button for it, on any account like yours. Message the office with the course you are interested in.",
+          text: "You can explore available subjects and modules under **Courses**. When you find a program you wish to join, submit an enrollment request via **Messages** to Student Services, and an advisor will guide you through the registration process.",
         },
 
-        { type: "heading", text: "There is no button to do the thing I want" },
+        { type: "heading", text: "Student Academic Roles & Institutional Support" },
         {
           type: "paragraph",
-          text: "Some of these are limits on a student account rather than faults:",
+          text: "The Student Portal is focused on your learning, coursework submissions, timetable, and study resources. Institutional actions are managed by your school support team:",
         },
         {
           type: "table",
-          columns: ["Missing", "Why"],
+          columns: ["Topic", "Support Contact"],
           rows: [
-            [
-              "Any way to change your attendance",
-              "The register is the tutor's record of the class.",
-            ],
-            ["Any way to change a mark", "Marking belongs to your tutor."],
-            ["Any way to enrol yourself on a course", "Places are arranged by the school."],
-            ["Anything to add on Academic setup", "Those lists belong to the school."],
-            ["The correct answers to a quiz", "The answer key is never sent to a student account."],
-            ["Other students' marks", "You see only your own, and they see only theirs."],
-          ],
-        },
-
-        { type: "heading", text: "Who to ask" },
-        {
-          type: "table",
-          columns: ["About", "Ask"],
-          rows: [
-            ["A mark, a register, an extension, the brief", "Your tutor"],
-            ["A place on another course, or a missing enrolment", "The office"],
-            ["A transcript after your course has finished", "The office"],
-            ["Signing in, or a locked account", "The office"],
+            ["Coursework, assignment extensions, or quiz questions", "Contact your course tutor via Messages."],
+            ["Course enrollment, batch schedules, or room locations", "Contact Student Services."],
+            ["Official transcripts or enrollment letters", "Contact the Academic Registry."],
+            ["Account sign-in or password issues", "Use the reset link or contact the Helpdesk."],
           ],
         },
         {

@@ -265,7 +265,7 @@ export function SyncPanel({ canSync }: { canSync: boolean }) {
     invalidated.current = current.public_id;
     for (const key of [
       ["users"], ["courses"], ["batches"], ["sessions"], ["enrollments"],
-      ["dashboard"], ["manager-links"],
+      ["dashboard"], ["manager-links"], ["guardians"], ["sidebar-counts"],
     ]) {
       void queryClient.invalidateQueries({ queryKey: key });
     }

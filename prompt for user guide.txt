@@ -1,0 +1,803 @@
+## ROLE
+
+Act as an:
+
+- Enterprise SaaS Product Documentation Specialist
+- LMS Implementation Consultant
+- UX Writer
+- Technical Trainer
+- User Experience Researcher
+- Frontend Documentation Developer
+
+
+Your mission is to create a complete, professional, customer-ready Learning Management System User Guide based ONLY on the actual application interface.
+
+The final documentation must be suitable for real LMS customers and must require no developer assistance.
+
+---
+
+# IMPORTANT RULES
+
+## Never Assume Features
+
+You MUST NOT invent:
+
+- Pages
+- Buttons
+- Settings
+- Features
+- Workflows
+- Reports
+- Permissions
+
+Only document features that actually exist in the application.
+
+If a feature is unavailable:
+
+Write:
+
+"This feature is not currently available in this version."
+
+Do not create imaginary instructions.
+
+---
+
+# Application Information
+
+## Product
+
+Enterprise Learning Management System
+
+
+## Frontend
+
+http://localhost:3000
+
+
+## Backend
+
+http://localhost:8000
+
+
+---
+
+# User Roles To Document
+
+
+Create separate user manuals for:
+
+
+## Role 1
+
+Corporate Manager / Organization Administrator
+
+
+Responsibilities:
+
+- Manage organization learning activities
+- Manage users
+- Manage courses
+- Monitor performance
+- Review reports
+- Configure settings
+
+
+---
+
+
+## Role 2
+
+Tutor / Instructor
+
+
+Responsibilities:
+
+- Create learning content
+- Manage courses
+- Teach students
+- Evaluate assignments
+- Provide feedback
+
+
+---
+
+
+## Role 3
+
+Student / Learner
+
+
+Responsibilities:
+
+- Access courses
+- Complete lessons
+- Submit assignments
+- Take assessments
+- Monitor progress
+
+
+---
+
+
+## Role 4
+
+Guardian / Parent
+
+
+Responsibilities:
+
+- Monitor student progress
+- Review learning activities
+- Receive notifications
+- Track performance
+
+
+---
+
+# Test Accounts
+
+Use these accounts for browser automation.
+
+
+## Corporate Manager
+
+Email:
+
+lakshmimathiyazhagan4@gmail.com
+
+Password:
+
+lait-__00457
+
+
+---
+
+## Guardian
+
+Email:
+
+gina@lmsdemo.com
+
+Password:
+
+gina@0123456
+
+
+---
+
+## Student
+
+Email:
+
+ibn.benin@lait.training
+
+Password:
+
+ibn.benin@123456
+
+
+---
+
+## Student
+
+Email:
+
+cal@lmsdemo.com
+
+Password:
+
+cal@0123456789
+
+
+---
+
+## Tutor
+
+Email:
+
+mlrehan@gmail.com
+
+Password:
+
+mlrehan@123456
+
+
+---
+
+## Tutor
+
+Email:
+
+younus.kazi@londonacademyofit.co.uk
+
+Password:
+
+kazi@0123456
+
+
+---
+
+# Browser Automation Requirement
+
+You MUST use browser automation.
+
+For each role:
+
+1. Login using the provided account.
+2. Explore every available menu.
+3. Open every accessible page.
+4. Identify all available functions.
+5. Capture real screenshots.
+6. Record exact page names.
+7. Record exact button names.
+8. Record actual workflow steps.
+
+
+DO NOT:
+
+- Create fake screenshots
+- Use placeholder images
+- Use generated UI images
+- Describe unavailable features
+
+
+All screenshots must come from the real application.
+
+
+---
+
+# Screenshot Rules
+
+
+Every documented feature must include:
+
+
+## Screenshot
+
+High-quality screenshot showing the real interface.
+
+
+## Page Name
+
+Example:
+
+Student Dashboard
+
+
+## Purpose
+
+Explain:
+
+"What this page is used for."
+
+
+## Steps
+
+Provide clear numbered instructions.
+
+
+Example:
+
+
+1. Open Dashboard.
+2. Select My Courses.
+3. Click the course name.
+4. Start the lesson.
+
+
+## Tips
+
+Provide useful user advice.
+
+
+---
+
+# Documentation Style
+
+
+The guide must feel similar to:
+
+
+- Microsoft Learn
+- Salesforce Help Center
+- HubSpot Knowledge Base
+- Moodle Documentation
+- Canvas LMS Guide
+
+
+Writing style:
+
+
+Use:
+
+- Simple English
+- Short sentences
+- Clear explanations
+- Professional tone
+- Non-technical language
+
+
+Avoid:
+
+- Developer terminology
+- Complex explanations
+- Internal system details
+
+
+---
+
+# Documentation Structure
+
+
+# Cover Page
+
+
+Include:
+
+
+Product:
+
+Enterprise Learning Management System
+
+
+Subtitle:
+
+Complete User Guide
+
+Corporate Manager | Tutor | Student | Guardian
+
+
+Include:
+
+- Version
+- Release date
+- Last updated date
+
+
+---
+
+# Section 1
+
+# Welcome
+
+
+Explain:
+
+
+- What is LMS?
+- Why organizations use it
+- Benefits
+- How different users interact
+
+
+---
+
+# Section 2
+
+# Getting Started
+
+
+Include:
+
+
+## Login
+
+
+Explain:
+
+- Login URL
+- Email login
+- Password
+- First login process
+- Security recommendations
+
+
+Screenshot:
+
+Login Page
+
+
+---
+
+# Section 3
+
+# Corporate Manager Guide
+
+
+Document:
+
+
+## Dashboard
+
+Explain:
+
+- Available statistics
+- KPIs
+- Learning overview
+
+
+Include screenshots.
+
+
+---
+
+## User Management
+
+
+Document:
+
+
+- Student management
+- Tutor management
+- Guardian management
+- Roles
+- Permissions
+
+
+Include screenshots.
+
+
+---
+
+## Course Management
+
+
+Document:
+
+
+- Course creation
+- Course editing
+- Publishing
+- Categories
+- Assigning tutors
+
+
+Include screenshots.
+
+
+---
+
+## Reports
+
+
+Document:
+
+
+- Performance reports
+- Learning analytics
+- Progress reports
+
+
+Include screenshots.
+
+
+---
+
+## Settings
+
+
+Document:
+
+
+- Organization settings
+- Notifications
+- Security
+
+
+Include screenshots.
+
+
+---
+
+# Section 4
+
+# Tutor Guide
+
+
+Document:
+
+
+## Tutor Dashboard
+
+
+Explain:
+
+- Assigned courses
+- Students
+- Activities
+
+
+---
+
+
+## Course Creation
+
+
+Document:
+
+
+- Creating courses
+- Adding lessons
+- Uploading materials
+- Adding videos
+- Creating assessments
+
+
+---
+
+
+## Student Evaluation
+
+
+Document:
+
+
+- Assignment checking
+- Marks
+- Feedback
+
+
+---
+
+
+## Communication
+
+
+Document:
+
+- Messages
+- Announcements
+- Discussions
+
+
+---
+
+# Section 5
+
+# Student Guide
+
+
+Document:
+
+
+## Student Dashboard
+
+
+Explain:
+
+- Courses
+- Progress
+- Activities
+
+
+---
+
+
+## Learning Process
+
+
+Explain:
+
+
+1. Access course
+2. Study lesson
+3. Complete activities
+4. Submit assignments
+5. View results
+
+
+---
+
+
+## Assessment
+
+
+Document:
+
+
+- Quiz
+- Assignment
+- Results
+- Feedback
+
+
+---
+
+# Section 6
+
+# Guardian Guide
+
+
+Document:
+
+
+## Guardian Dashboard
+
+
+Explain:
+
+
+- Student overview
+- Progress
+- Performance
+
+
+---
+
+
+## Monitoring
+
+
+Document:
+
+
+- Course completion
+- Grades
+- Activities
+- Notifications
+
+
+---
+
+# Section 7
+
+# Notifications and Communication
+
+
+Document:
+
+- Messages
+- Alerts
+- Announcements
+
+
+---
+
+# Section 8
+
+# Troubleshooting
+
+
+Create minimum 20 FAQ problems.
+
+
+Example:
+
+
+Problem:
+
+Unable to login
+
+
+Possible reasons:
+
+- Wrong password
+- Account inactive
+- Browser issue
+
+
+Solution:
+
+Step-by-step fix.
+
+
+Include:
+
+
+- Login problems
+- Course problems
+- Upload problems
+- Video issues
+- Assignment problems
+- Notification issues
+
+
+---
+
+# Section 9
+
+# Best Practices
+
+
+Create role-based recommendations.
+
+
+## Manager
+
+- Maintain updated users
+- Review reports
+- Monitor learning quality
+
+
+## Tutor
+
+- Update content
+- Respond to students
+- Provide feedback
+
+
+## Student
+
+- Complete lessons
+- Submit work on time
+
+
+## Guardian
+
+- Review progress regularly
+
+
+---
+
+# Section 10
+
+# Glossary
+
+
+Explain:
+
+
+- LMS
+- Course
+- Lesson
+- Module
+- Enrollment
+- Assessment
+- Assignment
+- Quiz
+- Progress
+- Completion Rate
+- Tutor
+- Student
+- Guardian
+
+
+---
+
+# HTML Output Requirements
+
+
+Create a complete offline documentation website.
+
+
+Technology:
+
+- HTML5
+- CSS3
+- JavaScript
+
+
+Required features:
+
+
+- Responsive design
+- Sidebar navigation
+- Search box
+- Table of contents
+- Expand/collapse sections
+- Screenshot gallery
+- Breadcrumb navigation
+
+
+Include callout components:
+
+
+Information
+
+Tip
+
+Warning
+
+Best Practice
+
+
+---
+
+# File Structure
+
+
+Create:
+
+
+Enterprise_LMS_User_Guide/
+

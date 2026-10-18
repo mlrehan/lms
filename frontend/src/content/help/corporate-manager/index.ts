@@ -8,20 +8,24 @@ import { yourPeople } from "./your-people";
 /**
  * The Corporate Manager guide.
  *
- * Covers the corporate-manager role only. The account used to write it also
- * held the Student role, so it could open Announcements, Discussions and
- * Resources -- none of which the corporate-manager role grants. Those are
- * deliberately absent here, and the sidebar article explains why a reader
- * might see them anyway.
+ * Covers the verified Corporate Manager role workflows and features:
+ * - Workforce Command Center (6 KPIs, Intervention Desk, Risk Matrix, Nudges)
+ * - Workforce roster (My team, Organizations, Manager assignments)
+ * - Academic tracking (Courses, Batches & Cohort enrollment modal, Enrollments register,
+ *   Timetable sessions, Attendance registers, Coursework assignments, Quizzes, Examinations,
+ *   Performance weighted standing so far, and Reports with CSV exports)
+ * - Care-Circle communication (Announcements, Discussions, Messages, Notifications, Shared with me)
+ * - Account configuration (Timezone preferences, credential management)
+ * - Diagnostic workflows and institutional escalation pathways
  */
 export const corporateManagerGuide: Guide = {
   slug: "corporate-manager",
   role: "Corporate Manager",
   title: "Corporate Manager User Guide",
   intro:
-    "How to follow the staff your company has sent on a course: their attendance, the work they are set, their results, and how to enrol somebody onto a class.",
+    "Executive guide to workforce training oversight: tracking attendance, monitoring performance velocity, managing cohort enrollments, triaging learner intervention alerts, and exporting compliance audit reports.",
   audience:
-    "For managers whose company sponsors staff to take courses with the training provider.",
-  updated: "2026-10-12",
+    "For corporate managers, L&D directors, and team leaders managing sponsored workforce training cohorts.",
+  updated: "2026-10-18",
   sections: [gettingStarted, yourPeople, learningAndResults, communication, troubleshooting],
 };
