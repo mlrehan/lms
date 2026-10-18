@@ -50,9 +50,31 @@ SERVER_HOST=0.0.0.0
 SERVER_PORT=8000
 SERVER_FORWARDED_ALLOW_IPS=127.0.0.1,172.16.0.0/12,10.0.0.0/8
 
+# Derive secondary non-www or www origin
+ALT_DOMAIN="${DOMAIN#www.}"
+if [[ "$DOMAIN" == "$ALT_DOMAIN" ]]; then
+    CORS_ORIGINS="https://${DOMAIN}"
+    TRUSTED_HOSTS="${DOMAIN},backend,127.0.0.1"
+else
+    CORS_ORIGINS="https://${DOMAIN},https://${ALT_DOMAIN}"
+    TRUSTED_HOSTS="${DOMAIN},${ALT_DOMAIN},backend,127.0.0.1"
+fi
+
+cat > "$TARGET_ENV" <<EOF
+# Generated automatically by scripts/generate-keys.sh on $(date -u +"%Y-%m-%d %H:%M:%SZ")
+
+APP_ENVIRONMENT=production
+APP_NAME=LMS
+APP_VERSION=1.0.0
+APP_DEBUG=false
+
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+SERVER_FORWARDED_ALLOW_IPS=127.0.0.1,172.16.0.0/12,10.0.0.0/8
+
 API_PREFIX=/api/v1
-API_CORS_ORIGINS=https://${DOMAIN}
-API_TRUSTED_HOSTS=${DOMAIN},backend
+API_CORS_ORIGINS=${CORS_ORIGINS}
+API_TRUSTED_HOSTS=${TRUSTED_HOSTS}
 
 DATABASE_HOST=postgres
 DATABASE_PORT=5432
@@ -88,12 +110,17 @@ EOF
 
 chmod 600 "$TARGET_ENV"
 
+# Automatically create .env so Docker Compose loads all variables natively
+cp "$TARGET_ENV" .env
+chmod 600 .env
+
 echo "============================================================================="
-echo " SUCCESS! Created hardened production configuration: $TARGET_ENV"
+echo " SUCCESS! Created hardened production configuration: $TARGET_ENV & .env"
 echo " Permissions set to 600 (owner read/write only)."
 echo "============================================================================="
 echo " Initial Super Admin Password: ${ADMIN_PW}"
 echo " Domain Configured:            ${DOMAIN}"
+echo " CORS Origins:                 ${CORS_ORIGINS}"
 echo "============================================================================="
 echo "Save the Initial Super Admin Password in your secure password manager now."
 echo "You can now run: docker compose up -d"
