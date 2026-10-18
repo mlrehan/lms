@@ -38,18 +38,6 @@ RUNTIME_PW=$(openssl rand -hex 24)
 REDIS_PW=$(openssl rand -hex 24)
 ADMIN_PW=$(openssl rand -hex 16)
 
-cat > "$TARGET_ENV" <<EOF
-# Generated automatically by scripts/generate-keys.sh on $(date -u +"%Y-%m-%d %H:%M:%SZ")
-
-APP_ENVIRONMENT=production
-APP_NAME=LMS
-APP_VERSION=1.0.0
-APP_DEBUG=false
-
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8000
-SERVER_FORWARDED_ALLOW_IPS=127.0.0.1,172.16.0.0/12,10.0.0.0/8
-
 # Derive secondary non-www or www origin
 ALT_DOMAIN="${DOMAIN#www.}"
 if [[ "$DOMAIN" == "$ALT_DOMAIN" ]]; then
