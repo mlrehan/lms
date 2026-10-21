@@ -23,6 +23,64 @@ from backend.utils.enums import Roles
 logger = get_logger(__name__)
 
 
+def create_role_agent(
+    *,
+    user: User,
+    session: Any,
+    client: OpenAIClient | None = None,
+    client_ip: str | None = None,
+    request_id: str | None = None,
+) -> Any:
+    """Instantiate the appropriate specialized role agent for the authenticated caller."""
+    from backend.ai.agents.corporate import CorporateManagerAgent
+    from backend.ai.agents.guardian import GuardianAgent
+    from backend.ai.agents.student import StudentAgent
+    from backend.ai.agents.superadmin import SuperAdminAgent
+    from backend.ai.agents.tutor import TutorAgent
+
+    held_roles = SecurityPolicyEngine.caller_roles(user)
+
+    if Roles.SUPER_ADMIN.value in held_roles or Roles.ADMIN.value in held_roles:
+        return SuperAdminAgent(
+            user=user,
+            session=session,
+            client=client,
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+    if Roles.TUTOR.value in held_roles:
+        return TutorAgent(
+            user=user,
+            session=session,
+            client=client,
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+    if Roles.CORPORATE_MANAGER.value in held_roles:
+        return CorporateManagerAgent(
+            user=user,
+            session=session,
+            client=client,
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+    if Roles.GUARDIAN.value in held_roles:
+        return GuardianAgent(
+            user=user,
+            session=session,
+            client=client,
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+    return StudentAgent(
+        user=user,
+        session=session,
+        client=client,
+        client_ip=client_ip,
+        request_id=request_id,
+    )
+
+
 class UserIntent(str, Enum):
     """Broad categories for multi-agent routing."""
 
@@ -176,3 +234,4 @@ class AIOrchestrator:
             target_role=primary_role,
             summary="General educational dialogue",
         )
+

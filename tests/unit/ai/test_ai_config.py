@@ -22,3 +22,4 @@ def test_ai_settings_key_cleaner():
         OPENAI_API_KEY=raw_with_spaces,
     )
     assert settings.get_api_key_str() == "sk-proj-test-1234567890"
+

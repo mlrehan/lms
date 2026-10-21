@@ -78,3 +78,4 @@ def test_chat_completion_maps_auth_error():
             )
 
     asyncio.run(run_test())
+

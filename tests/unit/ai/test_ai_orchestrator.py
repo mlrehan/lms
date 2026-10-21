@@ -76,3 +76,4 @@ def test_classify_intent():
         assert res_concept.intent == UserIntent.STUDY_CONCEPT
 
     asyncio.run(run_test())
+

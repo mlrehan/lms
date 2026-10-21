@@ -86,3 +86,4 @@ class AISettings(BaseSettings):
 def get_ai_settings() -> AISettings:
     """Return cached instance of AI configuration."""
     return AISettings()
+

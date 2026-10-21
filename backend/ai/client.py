@@ -174,3 +174,4 @@ def get_openai_client() -> OpenAIClient:
     if _openai_client_instance is None:
         _openai_client_instance = OpenAIClient()
     return _openai_client_instance
+
