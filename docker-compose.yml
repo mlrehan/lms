@@ -98,6 +98,8 @@ services:
     volumes:
       - storage_data:/app/var/storage
     command: ["python", "-m", "backend.cli.dispatch_webhooks", "--interval", "30"]
+    healthcheck:
+      disable: true
     networks:
       - lms-network
 

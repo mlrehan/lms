@@ -152,7 +152,11 @@ async def chat_with_agent(
 
     # 2. Scoped Conversation History
     state_mgr = ConversationStateManager(session)
-    recent_history = await state_mgr.get_recent_history(user_id=current_user.id, limit=10)
+    try:
+        recent_history = await state_mgr.get_recent_history(user_id=current_user.id, limit=10)
+    except Exception as exc:
+        logger.warning("Recent conversation history retrieval failed: %s", exc)
+        recent_history = []
 
     # Fast-path for conversational confirmation (e.g. SuperAdmin answering "Yes" or "No" to confirmation prompt)
     lowered_cmd = sanitized_prompt.lower().strip()

@@ -83,6 +83,13 @@ class OpenAIClient:
 
         try:
             return await self.client.chat.completions.create(**params)
+        except openai.NotFoundError as exc:
+            if target_model != "gpt-4o-mini":
+                logger.warning("Model '%s' not found or accessible; falling back to 'gpt-4o-mini': %s", target_model, exc)
+                params["model"] = "gpt-4o-mini"
+                return await self.client.chat.completions.create(**params)
+            logger.error("OpenAI model not found: %s", exc)
+            raise AIClientError(f"AI platform model error: {exc.message}") from exc
         except openai.BadRequestError as exc:
             # If rejected due to temperature parameter on unknown model, retry once without temperature
             if "temperature" in str(exc).lower() and "temperature" in params:
@@ -133,6 +140,17 @@ class OpenAIClient:
             async for chunk in stream:  # type: ignore[union-attr]
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+        except openai.NotFoundError as exc:
+            if target_model != "gpt-4o-mini":
+                logger.warning("Stream model '%s' not found or accessible; falling back to 'gpt-4o-mini': %s", target_model, exc)
+                params["model"] = "gpt-4o-mini"
+                stream = await self.client.chat.completions.create(**params)
+                async for chunk in stream:  # type: ignore[union-attr]
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                return
+            logger.error("OpenAI model not found: %s", exc)
+            raise AIClientError(f"AI platform model error: {exc.message}") from exc
         except openai.BadRequestError as exc:
             if "temperature" in str(exc).lower() and "temperature" in params:
                 logger.info("Retrying stream completion without temperature parameter for model %s", target_model)

@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.core.errors import ServiceUnavailableError
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
 
@@ -26,27 +28,27 @@ class AISettings(BaseSettings):
     )
 
     openai_api_key: SecretStr = Field(
-        ...,
+        default=SecretStr(""),
         alias="OPENAI_API_KEY",
         description="Master API key for OpenAI platform services",
     )
     openai_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-4o",
         alias="OPENAI_MODEL",
         description="Default reasoning and conversational agent model",
     )
     openai_intent_model: str = Field(
-        default="gpt-5-mini",
+        default="gpt-4o-mini",
         alias="OPENAI_INTENT_MODEL",
         description="Fast router model for user intent resolution and guardrail checks",
     )
     openai_transcription_model: str = Field(
-        default="gpt-4o-transcribe",
+        default="whisper-1",
         alias="OPENAI_TRANSCRIPTION_MODEL",
         description="Voice and audio transcription model",
     )
     openai_embedding_model: str = Field(
-        default="text-embedding-3-large",
+        default="text-embedding-3-small",
         alias="OPENAI_EMBEDDING_MODEL",
         description="High-dimensional text embedding model for semantic RAG search",
     )
@@ -79,7 +81,12 @@ class AISettings(BaseSettings):
         return value
 
     def get_api_key_str(self) -> str:
-        return self.openai_api_key.get_secret_value()
+        key = self.openai_api_key.get_secret_value()
+        if not key or key.strip().lower() in ("your_openai_api_key_here", "sk-...", ""):
+            raise ServiceUnavailableError(
+                "OPENAI_API_KEY is not configured or invalid in .env. Please configure a valid OpenAI API key."
+            )
+        return key
 
 
 @lru_cache(maxsize=1)
