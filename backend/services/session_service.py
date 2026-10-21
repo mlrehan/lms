@@ -133,13 +133,45 @@ class SessionService:
         )
 
     async def calendar(
-        self, *, actor: User, start: datetime, end: datetime, batch_public_id: uuid.UUID | None, limit: int
+        self,
+        *,
+        actor: User,
+        start: datetime,
+        end: datetime,
+        batch_public_id: uuid.UUID | None = None,
+        is_active: bool | None = None,
+        tutor_public_id: uuid.UUID | None = None,
+        student_public_id: uuid.UUID | None = None,
+        query: str | None = None,
+        limit: int,
     ) -> Sequence[BatchSession]:
         batch_id = None
         if batch_public_id is not None:
             batch_id = (await self.batches.get(batch_public_id, actor=actor)).id
+
+        async def person(public_id: uuid.UUID | None) -> int | None:
+            if public_id is None:
+                return None
+            found = (
+                await self.session.execute(select(User.id).where(User.public_id == public_id))
+            ).scalar_one_or_none()
+            return found if found is not None else -1
+
+        tutor_id = await person(tutor_public_id)
+        student_id = await person(student_public_id)
+
         scope = await self.scopes.visible_session_ids(actor)
-        return await self.sessions.window(scope=scope, start=start, end=end, batch_id=batch_id, limit=limit)
+        return await self.sessions.window(
+            scope=scope,
+            start=start,
+            end=end,
+            batch_id=batch_id,
+            is_active=is_active,
+            tutor_id=tutor_id,
+            student_id=student_id,
+            query=query,
+            limit=limit,
+        )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> BatchSession:
         row = await self.sessions.get_by_public_id_full(public_id)

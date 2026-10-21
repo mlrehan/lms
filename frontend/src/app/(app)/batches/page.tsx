@@ -212,6 +212,7 @@ export default function BatchesPage() {
           search={search}
           onSearch={(value) => {
             setSearch(value);
+            setSelected(null);
           }}
           searchPlaceholder="Search code, course, days or method"
           filters={
@@ -223,6 +224,7 @@ export default function BatchesPage() {
                 onValueChange={(next) => {
                   setActive((next ?? ""));
                   setPage({ limit, offset: 0 });
+                  setSelected(null);
                 }}
                placeholder="Any state" clearable options={[{ value: "true", label: "Active only" }, { value: "false", label: "Closed only" }]} />
               {/* A tutor filtering by tutor would be filtering a list that is
@@ -236,6 +238,7 @@ export default function BatchesPage() {
                   onChange={(next) => {
                     setTutorId(next);
                     setPage({ limit, offset: 0 });
+                    setSelected(null);
                   }}
                 />
               ) : null}
@@ -251,6 +254,7 @@ export default function BatchesPage() {
                   onChange={(next) => {
                     setStudentId(next);
                     setPage({ limit, offset: 0 });
+                    setSelected(null);
                   }}
                 />
               ) : null}
@@ -301,7 +305,17 @@ export default function BatchesPage() {
         )}
       </Card>
 
-      <BatchCalendar batches={data?.items ?? []} selected={selected} onClearSelection={() => setSelected(null)} />
+      <BatchCalendar
+        batches={data?.items ?? []}
+        selected={selected}
+        onClearSelection={() => setSelected(null)}
+        filters={{
+          search: debouncedSearch,
+          isActive: active,
+          tutorId,
+          studentId,
+        }}
+      />
 
       {recreate ? <RecreateSessionsDialog batchId={recreate.public_id} batchCode={recreate.batch_code} onClose={() => setRecreate(null)} /> : null}
     </div>

@@ -6,11 +6,12 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Sequence
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.models.attendance import Attendance
 from backend.models.batch import Batch, BatchSession
+from backend.models.course import Course
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
@@ -70,7 +71,17 @@ class SessionRepository(BaseRepository[BatchSession]):
         return await self.paginate(stmt, params)  # type: ignore[return-value]
 
     async def window(
-        self, *, scope: "Scope", start: datetime, end: datetime, batch_id: int | None, limit: int
+        self,
+        *,
+        scope: "Scope",
+        start: datetime,
+        end: datetime,
+        batch_id: int | None = None,
+        is_active: bool | None = None,
+        tutor_id: int | None = None,
+        student_id: int | None = None,
+        query: str | None = None,
+        limit: int,
     ) -> Sequence[BatchSession]:
         """Sessions overlapping [start, end), scoped to what the caller may see. Cancelled ones are not drawn."""
         stmt = scope.apply(self._base(), BatchSession.id).where(
@@ -80,6 +91,41 @@ class SessionRepository(BaseRepository[BatchSession]):
         )
         if batch_id is not None:
             stmt = stmt.where(BatchSession.batch_id == batch_id)
+        if is_active is not None:
+            stmt = stmt.where(
+                BatchSession.batch_id.in_(
+                    select(Batch.id).where(Batch.is_active.is_(is_active))
+                )
+            )
+        if tutor_id is not None:
+            stmt = stmt.where(BatchSession.tutor_id == tutor_id)
+        if student_id is not None:
+            stmt = stmt.where(
+                BatchSession.batch_id.in_(
+                    select(Enrollments.batch_id).where(Enrollments.student_id == student_id)
+                )
+            )
+        if query:
+            needle = f"%{query.strip().lower()}%"
+            batch_subq = (
+                select(Batch.id)
+                .join(Course, Course.id == Batch.course_id)
+                .where(
+                    or_(
+                        func.lower(Batch.batch_code).like(needle),
+                        func.lower(Course.title).like(needle),
+                        func.lower(func.coalesce(Batch.training_method, "")).like(needle),
+                        func.lower(func.coalesce(Batch.training_days, "")).like(needle),
+                        func.lower(func.coalesce(Batch.notes, "")).like(needle),
+                    )
+                )
+            )
+            stmt = stmt.where(
+                or_(
+                    BatchSession.batch_id.in_(batch_subq),
+                    func.lower(func.coalesce(BatchSession.classroom, "")).like(needle),
+                )
+            )
         stmt = stmt.order_by(BatchSession.session_start_time, BatchSession.id).limit(limit)
         return (await self.session.execute(stmt)).scalars().all()
 

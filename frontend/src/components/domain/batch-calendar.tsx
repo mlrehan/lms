@@ -72,14 +72,23 @@ function wall(value: string, timeZone: string): string {
  * of it goes through the ordinary session API, so clash checks and audit apply, and afterwards the batch
  * is pushed to Google when the caller may sync.
  */
+export interface BatchCalendarFilters {
+  search?: string;
+  isActive?: string;
+  tutorId?: string | null;
+  studentId?: string | null;
+}
+
 export default function BatchCalendar({
   batches,
   selected,
   onClearSelection,
+  filters,
 }: {
   batches: readonly BatchSummary[];
   selected: BatchSummary | null;
   onClearSelection: () => void;
+  filters?: BatchCalendarFilters;
 }) {
   const { permissions } = useSession();
   const timeZone = useDisplayTimeZone();
@@ -93,10 +102,41 @@ export default function BatchCalendar({
   const [open, setOpen] = useState<CalendarSession | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const batchId = selected?.public_id;
+  const searchFilter = filters?.search?.trim() || "";
+  const isActiveFilter = filters?.isActive ?? "";
+  const tutorIdFilter = filters?.tutorId || "";
+  const studentIdFilter = filters?.studentId || "";
+
+  const hasFilters = Boolean(
+    searchFilter ||
+    isActiveFilter ||
+    tutorIdFilter ||
+    studentIdFilter
+  );
 
   const { data, isFetching, error, refetch } = useQuery({
-    queryKey: [...CALENDAR_KEY, range?.from, range?.to, batchId ?? "all"],
-    queryFn: () => api.get<CalendarResponse>("/sessions/calendar", { query: { from: range?.from, to: range?.to, batch_id: batchId } }),
+    queryKey: [
+      ...CALENDAR_KEY,
+      range?.from,
+      range?.to,
+      batchId ?? "all",
+      isActiveFilter,
+      tutorIdFilter,
+      studentIdFilter,
+      searchFilter,
+    ],
+    queryFn: () =>
+      api.get<CalendarResponse>("/sessions/calendar", {
+        query: {
+          from: range?.from,
+          to: range?.to,
+          batch_id: batchId || undefined,
+          is_active: isActiveFilter === "" ? undefined : isActiveFilter === "true",
+          tutor_id: tutorIdFilter || undefined,
+          student_id: studentIdFilter || undefined,
+          q: searchFilter || undefined,
+        },
+      }),
     enabled: range !== null,
     placeholderData: (previous) => previous, // keep what is drawn while the next window loads
   });
@@ -199,6 +239,8 @@ export default function BatchCalendar({
         description={
           selected
             ? `Showing ${selected.batch_code} only. Times are in ${timeZone}.`
+            : hasFilters
+            ? `Showing classes matching current filters. Choose a batch above to narrow. Times are in ${timeZone}.`
             : `Every class you can see. Choose a batch above to filter. Times are in ${timeZone}.`
         }
         actions={
@@ -209,6 +251,10 @@ export default function BatchCalendar({
                 <button type="button" aria-label="Show every batch" className="ml-1 rounded hover:text-foreground" onClick={onClearSelection}>
                   <X className="size-3" aria-hidden />
                 </button>
+              </Badge>
+            ) : hasFilters ? (
+              <Badge tone="neutral">
+                Filtered
               </Badge>
             ) : null}
             {canSync && googleConnected ? (

@@ -111,6 +111,10 @@ async def session_calendar(
     start: Annotated[datetime, Query(alias="from")],
     end: Annotated[datetime, Query(alias="to")],
     batch_id: Annotated[uuid.UUID | None, Query()] = None,
+    is_active: Annotated[bool | None, Query(description="Filter by batch state (active/closed)")] = None,
+    tutor_id: Annotated[uuid.UUID | None, Query(description="Sessions for this tutor.")] = None,
+    student_id: Annotated[uuid.UUID | None, Query(description="Sessions for cohorts this student is enrolled in.")] = None,
+    q: Annotated[str | None, Query(max_length=100, description="Batch code, course title, method, days or classroom.")] = None,
 ) -> CalendarResponse:
     """Everything the caller may see between `from` and `to`, in one request and without paging.
 
@@ -121,7 +125,17 @@ async def session_calendar(
     if end <= start or end - start > timedelta(days=400):
         raise ValidationError("The window must be positive and at most 400 days.")
     service = SessionService(session)
-    rows = await service.calendar(actor=actor, start=start, end=end, batch_public_id=batch_id, limit=_CALENDAR_CAP + 1)
+    rows = await service.calendar(
+        actor=actor,
+        start=start,
+        end=end,
+        batch_public_id=batch_id,
+        is_active=is_active,
+        tutor_public_id=tutor_id,
+        student_public_id=student_id,
+        query=q,
+        limit=_CALENDAR_CAP + 1,
+    )
     manage = service.can_manage(actor)
     items = []
     for s in rows[:_CALENDAR_CAP]:
