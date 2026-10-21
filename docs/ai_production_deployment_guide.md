@@ -65,8 +65,8 @@ docker compose ps
 ### Backend Health & AI Endpoints
 ```bash
 # Check backend health
-curl -f http://127.0.0.1:8000/health/live
-curl -f http://127.0.0.1:8000/health/ready
+curl -f http://127.0.0.1:8000/livez
+curl -f http://127.0.0.1:8000/readyz
 
 # Check recent backend logs
 docker compose logs --tail=50 backend
