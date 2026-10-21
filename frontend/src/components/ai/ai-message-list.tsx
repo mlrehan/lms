@@ -238,6 +238,8 @@ export function AIMessageList({
         return (
           <div
             key={msg.id}
+            data-role={msg.role}
+            data-testid={`ai-message-${msg.role}`}
             className={cn("flex gap-2.5", isUser ? "justify-end" : "justify-start")}
           >
             {!isUser && (

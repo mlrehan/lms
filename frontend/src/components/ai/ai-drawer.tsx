@@ -62,7 +62,8 @@ export function AIDrawer() {
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const primaryRole = roles[0] || "STUDENT";
+  const ROLE_HIERARCHY = ["SUPER_ADMIN", "ADMIN", "CORPORATE_MANAGER", "TUTOR", "GUARDIAN", "STUDENT"];
+  const primaryRole = ROLE_HIERARCHY.find((r) => roles.includes(r)) || roles[0] || "STUDENT";
 
   // Load history when drawer opens
   useEffect(() => {

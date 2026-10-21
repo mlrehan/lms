@@ -70,8 +70,9 @@ class OpenAIClient:
             "model": target_model,
             "messages": messages,
         }
-        # Some models (like newer reasoning models) do not accept custom temperature
-        if "o1" not in target_model and "o3" not in target_model:
+        # Some models (like newer reasoning or gpt-5 models) do not accept custom temperature
+        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5"))
+        if not is_fixed_temp_model and temperature is not None:
             params["temperature"] = temperature
         if max_tokens:
             params["max_completion_tokens"] = max_tokens
@@ -82,6 +83,14 @@ class OpenAIClient:
 
         try:
             return await self.client.chat.completions.create(**params)
+        except openai.BadRequestError as exc:
+            # If rejected due to temperature parameter on unknown model, retry once without temperature
+            if "temperature" in str(exc).lower() and "temperature" in params:
+                logger.info("Retrying chat completion without temperature parameter for model %s", target_model)
+                params.pop("temperature", None)
+                return await self.client.chat.completions.create(**params)
+            logger.error("OpenAI bad request error: %s", exc)
+            raise AIClientError(f"AI platform error: {exc.message}") from exc
         except openai.RateLimitError as exc:
             logger.warning("OpenAI rate limit encountered: %s", exc)
             raise AIRateLimitError("AI service is currently busy. Please retry shortly.") from exc
@@ -113,7 +122,8 @@ class OpenAIClient:
             "messages": messages,
             "stream": True,
         }
-        if "o1" not in target_model and "o3" not in target_model:
+        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5"))
+        if not is_fixed_temp_model and temperature is not None:
             params["temperature"] = temperature
         if max_tokens:
             params["max_completion_tokens"] = max_tokens
@@ -123,6 +133,17 @@ class OpenAIClient:
             async for chunk in stream:  # type: ignore[union-attr]
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+        except openai.BadRequestError as exc:
+            if "temperature" in str(exc).lower() and "temperature" in params:
+                logger.info("Retrying stream completion without temperature parameter for model %s", target_model)
+                params.pop("temperature", None)
+                stream = await self.client.chat.completions.create(**params)
+                async for chunk in stream:  # type: ignore[union-attr]
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+            else:
+                logger.error("OpenAI streaming bad request error: %s", exc)
+                raise AIClientError(f"AI stream bad request: {exc.message}") from exc
         except openai.APIError as exc:
             logger.error("OpenAI streaming error: %s", exc)
             raise AIClientError(f"AI stream interrupted: {exc.message}") from exc

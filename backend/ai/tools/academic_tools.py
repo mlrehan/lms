@@ -60,9 +60,17 @@ async def handle_create_assessment_draft(
     # 3. Resolve Batch if specified
     batch: Batch | None = None
     if batch_id_str:
-        stmt = select(Batch).where(
-            (Batch.public_id == batch_id_str) | (Batch.batch_code == batch_id_str)
-        )
+        batch_uuid = None
+        try:
+            batch_uuid = uuid.UUID(str(batch_id_str).strip())
+        except (ValueError, TypeError):
+            pass
+        if batch_uuid:
+            stmt = select(Batch).where(
+                (Batch.public_id == batch_uuid) | (Batch.batch_code == str(batch_id_str))
+            )
+        else:
+            stmt = select(Batch).where(Batch.batch_code == str(batch_id_str))
         batch = (await session.execute(stmt)).scalar_one_or_none()
         if not batch:
             raise NotFoundError(f"Batch '{batch_id_str}' was not found.")

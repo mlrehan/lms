@@ -35,9 +35,17 @@ async def handle_get_student_academic_summary(
 
     if target_student_id:
         visible = await resolver.visible_student_ids(user)
-        stmt = select(UserModel).where(
-            (UserModel.public_id == target_student_id) | (UserModel.username == target_student_id)
-        )
+        user_uuid = None
+        try:
+            user_uuid = uuid.UUID(str(target_student_id).strip())
+        except (ValueError, TypeError):
+            pass
+        if user_uuid:
+            stmt = select(UserModel).where(
+                (UserModel.public_id == user_uuid) | (UserModel.username == str(target_student_id))
+            )
+        else:
+            stmt = select(UserModel.id).where(UserModel.username == str(target_student_id))
         found_student = (await session.execute(stmt)).scalars().first()
         if not found_student:
             raise NotFoundError(f"Student '{target_student_id}' was not found.")
@@ -113,7 +121,7 @@ async def handle_get_corporate_training_progress(
     enr_stmt = (
         select(
             Enrollments.student_id,
-            func.count(Enrollments.id).label("cohorts"),
+            func.count(Enrollments.enrollment_id).label("cohorts"),
         )
         .where(
             (Enrollments.student_id.in_(employee_ids))

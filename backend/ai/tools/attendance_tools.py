@@ -40,9 +40,18 @@ async def handle_get_my_schedule(
     batch_id_str = arguments.get("batch_identifier")
     batch_public_id = None
     if batch_id_str:
-        stmt = select(Batch.public_id).where(
-            (Batch.public_id == batch_id_str) | (Batch.batch_code == batch_id_str)
-        )
+        batch_uuid = None
+        try:
+            batch_uuid = uuid.UUID(str(batch_id_str).strip())
+        except (ValueError, TypeError):
+            pass
+
+        if batch_uuid:
+            stmt = select(Batch.public_id).where(
+                (Batch.public_id == batch_uuid) | (Batch.batch_code == str(batch_id_str))
+            )
+        else:
+            stmt = select(Batch.public_id).where(Batch.batch_code == str(batch_id_str))
         batch_public_id = (await session.execute(stmt)).scalar_one_or_none()
 
     session_svc = SessionService(session)
@@ -56,15 +65,20 @@ async def handle_get_my_schedule(
 
     formatted_sessions = []
     for s in sessions:
+        course_name = "Unknown"
+        if s.batch and hasattr(s.batch, "course") and s.batch.course:
+            course_name = getattr(s.batch.course, "title", "Unknown")
+        batch_name = s.batch.batch_code if s.batch else "Unknown"
+
         formatted_sessions.append({
             "session_id": str(s.public_id),
-            "batch_code": s.batch.batch_code if s.batch else "Unknown",
-            "course_title": s.batch.course.title if (s.batch and s.batch.course) else "Unknown",
-            "title": s.title or f"Class {s.session_number or ''}",
-            "start_time": s.session_start_time.isoformat(),
-            "end_time": s.session_end_time.isoformat(),
+            "batch_code": batch_name,
+            "course_title": course_name,
+            "title": getattr(s, "title", None) or f"{course_name} Session",
+            "start_time": s.session_start_time.isoformat() if s.session_start_time else "",
+            "end_time": s.session_end_time.isoformat() if s.session_end_time else "",
             "classroom": s.classroom or s.meeting_link or "Standard Classroom",
-            "is_cancelled": s.is_cancelled,
+            "is_cancelled": s.cancelled_at is not None,
         })
 
     return {
@@ -111,9 +125,17 @@ async def handle_get_attendance_summary(
         visible_students = await resolver.visible_student_ids(user)
         # Find student
         from backend.models.identity.user import User as UserModel
-        stmt = select(UserModel.id).where(
-            (UserModel.public_id == target_student_id) | (UserModel.username == target_student_id)
-        )
+        user_uuid = None
+        try:
+            user_uuid = uuid.UUID(str(target_student_id).strip())
+        except (ValueError, TypeError):
+            pass
+        if user_uuid:
+            stmt = select(UserModel.id).where(
+                (UserModel.public_id == user_uuid) | (UserModel.username == str(target_student_id))
+            )
+        else:
+            stmt = select(UserModel.id).where(UserModel.username == str(target_student_id))
         found_id = (await session.execute(stmt)).scalar_one_or_none()
         if not found_id:
             raise NotFoundError(f"Student '{target_student_id}' was not found.")
