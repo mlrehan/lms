@@ -105,48 +105,156 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
 }
 
 function FormattedParagraph({ text }: { text: string }) {
-  const lines = text.split("\n");
+  const rawLines = text.split("\n");
+  const blocks: Array<{
+    type: "heading" | "list" | "table" | "p" | "spacer";
+    level?: number;
+    content?: string;
+    headers?: string[];
+    rows?: string[][];
+  }> = [];
+
+  let i = 0;
+  while (i < rawLines.length) {
+    const line = rawLines[i].trim();
+    if (!line) {
+      blocks.push({ type: "spacer" });
+      i++;
+      continue;
+    }
+
+    // Markdown Table check: consecutive lines starting and ending with |
+    if (line.startsWith("|") && line.endsWith("|")) {
+      const tableLines: string[] = [];
+      while (
+        i < rawLines.length &&
+        rawLines[i].trim().startsWith("|") &&
+        rawLines[i].trim().endsWith("|")
+      ) {
+        tableLines.push(rawLines[i].trim());
+        i++;
+      }
+
+      if (tableLines.length >= 2) {
+        const rawHeaders = tableLines[0]
+          .split("|")
+          .slice(1, -1)
+          .map((h) => h.trim());
+        const rawRows = tableLines
+          .slice(2)
+          .map((r) =>
+            r
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim()),
+          );
+        blocks.push({
+          type: "table",
+          headers: rawHeaders,
+          rows: rawRows,
+        });
+        continue;
+      } else {
+        blocks.push({ type: "p", content: tableLines[0] });
+        continue;
+      }
+    }
+
+    if (line.startsWith("### ")) {
+      blocks.push({ type: "heading", level: 3, content: line.slice(4) });
+    } else if (line.startsWith("## ")) {
+      blocks.push({ type: "heading", level: 2, content: line.slice(3) });
+    } else if (line.startsWith("# ")) {
+      blocks.push({ type: "heading", level: 1, content: line.slice(2) });
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      blocks.push({ type: "list", content: line.slice(2) });
+    } else {
+      blocks.push({ type: "p", content: line });
+    }
+    i++;
+  }
 
   return (
     <>
-      {lines.map((line, idx) => {
-        const trimmed = line.trim();
-        if (!trimmed) return <div key={idx} className="h-1.5" />;
-
-        // Headings
-        if (trimmed.startsWith("### ")) {
+      {blocks.map((b, idx) => {
+        if (b.type === "spacer") return <div key={idx} className="h-1.5" />;
+        if (b.type === "heading") {
+          if (b.level === 1)
+            return (
+              <h3
+                key={idx}
+                className="font-bold text-sm text-foreground mt-3 mb-1.5"
+              >
+                {b.content}
+              </h3>
+            );
+          if (b.level === 2)
+            return (
+              <h4
+                key={idx}
+                className="font-bold text-sm text-foreground mt-2 mb-1"
+              >
+                {b.content}
+              </h4>
+            );
           return (
-            <h5 key={idx} className="font-semibold text-xs text-foreground mt-2 mb-1">
-              {trimmed.slice(4)}
+            <h5
+              key={idx}
+              className="font-semibold text-xs text-foreground mt-2 mb-1"
+            >
+              {b.content}
             </h5>
           );
         }
-        if (trimmed.startsWith("## ")) {
-          return (
-            <h4 key={idx} className="font-bold text-sm text-foreground mt-2 mb-1">
-              {trimmed.slice(3)}
-            </h4>
-          );
-        }
-        if (trimmed.startsWith("# ")) {
-          return (
-            <h3 key={idx} className="font-bold text-sm text-foreground mt-3 mb-1.5">
-              {trimmed.slice(2)}
-            </h3>
-          );
-        }
-
-        // Lists
-        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        if (b.type === "list") {
           return (
             <div key={idx} className="flex items-start gap-1.5 ml-2 my-0.5">
               <span className="text-primary font-bold">•</span>
-              <span>{renderInlineFormatting(trimmed.slice(2))}</span>
+              <span>{renderInlineFormatting(b.content || "")}</span>
             </div>
           );
         }
-
-        return <p key={idx}>{renderInlineFormatting(trimmed)}</p>;
+        if (b.type === "table" && b.headers && b.rows) {
+          return (
+            <div
+              key={idx}
+              className="my-2 overflow-x-auto rounded-lg border border-border-subtle bg-muted/20"
+            >
+              <table className="w-full border-collapse text-left text-2xs">
+                <thead className="bg-muted/80 border-b border-border-subtle text-foreground font-semibold">
+                  <tr>
+                    {b.headers.map((h, hIdx) => (
+                      <th
+                        key={hIdx}
+                        className="px-2.5 py-1.5 whitespace-nowrap"
+                      >
+                        {renderInlineFormatting(h)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-subtle/40">
+                  {b.rows.map((r, rIdx) => (
+                    <tr
+                      key={rIdx}
+                      className="hover:bg-muted/30 transition-colors"
+                    >
+                      {r.map((c, cIdx) => (
+                        <td
+                          key={cIdx}
+                          className="px-2.5 py-1.5 text-foreground whitespace-nowrap"
+                        >
+                          {renderInlineFormatting(c)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        return <p key={idx}>{renderInlineFormatting(b.content || "")}</p>;
       })}
     </>
   );
@@ -285,20 +393,6 @@ export function AIMessageList({
                 </div>
               )}
 
-              {/* Render executed tool tags */}
-              {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5 pt-1 border-t border-border-subtle/40">
-                  {msg.toolCalls.map((tc, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-3xs font-mono text-muted-foreground"
-                    >
-                      <span className="size-1.5 rounded-full bg-emerald-500 inline-block" />
-                      {tc.tool}
-                    </span>
-                  ))}
-                </div>
-              )}
 
               {/* Render Assessment Drafts if present */}
               {msg.draftAssessments?.map((draft, idx) => (

@@ -7,6 +7,7 @@ caller authorization binding.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import re
 from dataclasses import dataclass, field
@@ -78,6 +79,9 @@ class BaseAgent:
             or self.user.username
         )
         held_roles = ", ".join(SecurityPolicyEngine.caller_roles(self.user))
+        now_utc = datetime.now(timezone.utc)
+        today_iso = now_utc.strftime("%Y-%m-%d")
+        now_iso = now_utc.isoformat()
         return (
             f"{self.system_prompt}\n\n"
             f"[CALLER CONTEXT]\n"
@@ -85,17 +89,22 @@ class BaseAgent:
             f"Database User ID: {self.user.id}\n"
             f"Public ID: {self.user.public_id}\n"
             f"Roles: {held_roles}\n"
-            f"Timezone: {self.user.timezone or 'UTC'}\n"
+            f"Platform Timezone: {self.user.timezone or 'UTC'}\n"
+            f"Server Timestamp (UTC): {now_iso}\n"
+            f"Current Date (UTC): {today_iso}\n"
+            f"Today Boundary (UTC): '{today_iso} 00:00:00' to '{today_iso} 23:59:59'\n"
             f"Self-Query Invariant: When filtering for your own records in SQL queries, always use users.id = {self.user.id} or users.public_id = '{self.user.public_id}'. Do NOT filter by or select email/phone columns.\n"
             f"Strict Invariant: All facts must come from tool queries. Never invent or hallucinate course, batch, or student IDs.\n\n"
             f"[DIRECT DATABASE QUERY & REAL-TIME GROUNDING]\n"
             f"You possess direct, real-time database query capabilities via 'execute_database_query' and 'inspect_database_schema'.\n"
-            f"1. Direct Database Access: For any question about LMS data (e.g., tutor counts, student counts, courses, batches, "
+            f"1. Zero Internal Exposure: Never mention internal tool names (e.g. execute_database_query), schema queries, SQL syntax, or execution traces in your text responses. Output must be executive-level business communication.\n"
+            f"2. Direct Database Access: For any question about LMS data (e.g., tutor counts, student counts, courses, batches, "
             f"schedules, attendance, quiz scores, or platform stats), automatically execute a safe read-only SQL query via 'execute_database_query'.\n"
-            f"2. Automatic Execution: Do NOT ask permission, suggest reports, or tell the user to check dashboard pages. Execute the query immediately in the background.\n"
-            f"3. Common Schema Queries & Critical Facts:\n"
+            f"3. Automatic Execution: Do NOT ask permission, suggest reports, or tell the user to check dashboard pages. Execute the query immediately in the background.\n"
+            f"4. Common Schema Queries & Critical Facts:\n"
             f"   - Tutors count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'TUTOR' AND u.status != 'DELETED';\n"
             f"   - Students count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'STUDENT' AND u.status != 'DELETED';\n"
+            f"   - Students enrolled today: SELECT u.id AS student_id, u.first_name, u.last_name, u.email, b.batch_code, e.enrollment_date FROM enrollments e JOIN users u ON u.id = e.student_id JOIN batches b ON b.id = e.batch_id WHERE DATE(e.enrollment_date) = CURRENT_DATE ORDER BY e.enrollment_date DESC;\n"
             f"   - Enrolled students in a batch: SELECT b.batch_code, u.id AS student_id, u.first_name, u.last_name, e.status FROM enrollments e JOIN batches b ON b.id = e.batch_id JOIN users u ON u.id = e.student_id WHERE b.batch_code = '11568';\n"
             f"   - Batches taught by current tutor: SELECT DISTINCT b.id, b.batch_code, c.title AS course_title FROM batches b JOIN courses c ON c.id = b.course_id JOIN tutor_courses tc ON tc.course_id = c.id WHERE tc.tutor_id = {self.user.id};\n"
             f"   - Quizzes count: SELECT count(*) FROM quizzes; (Note: quizzes does NOT have an is_deleted column)\n"
@@ -103,15 +112,23 @@ class BaseAgent:
             f"   - Assignments count: SELECT count(*) FROM assignments; (Note: assignments does NOT have is_deleted column)\n"
             f"   - Active courses: SELECT count(*) FROM courses WHERE NOT is_deleted;\n"
             f"   - Batches: SELECT count(*) FROM batches;\n"
-            f"   - KEY SCHEMA FACTS: In 'enrollments', the student foreign key is 'student_id' (NOT user_id) and primary key is 'enrollment_id'. In 'batches', the cohort code is 'batch_code' (NOT code). Tutors teach courses via 'tutor_courses (tutor_id, course_id)' and sessions via 'batch_sessions (tutor_id, batch_id)'. There is NO 'batch_tutors' table.\n"
-            f"4. Sidebar Badges vs Catalog Inventory:\n"
+            f"   - KEY SCHEMA FACTS: In 'enrollments', the student foreign key is 'student_id' (NOT user_id), primary key is 'enrollment_id', and enrollment timestamp is 'enrollment_date' (NOT created_at). Note: 'users.created_at' is user account registration date, whereas 'enrollments.enrollment_date' is course/batch enrollment date.\n"
+            f"5. Sidebar Badges vs Catalog Inventory:\n"
             f"   - In the LMS sidebar, badges beside assessment items (Quizzes, Assignments, Exams) do NOT show the total catalog count. They represent actionable items waiting for the user ('What is waiting for you?').\n"
             f"   - For SuperAdmin and Tutors (who hold grading permissions): the Quizzes badge shows completed student quiz attempts awaiting marking/scoring (SELECT count(qa.id) FROM quiz_attempts qa JOIN quizzes q ON q.id = qa.quiz_id WHERE qa.finished_at IS NOT NULL AND qa.score IS NULL;). The Assignments badge shows submissions awaiting review/grading.\n"
             f"   - For Students: assessment badges show assigned items they have not yet submitted.\n"
             f"   - If asked why the sidebar shows a different count than total quizzes/assignments, concisely explain that the total count is created catalog items, while the sidebar badge indicates pending student submissions waiting to be marked.\n"
-            f"5. Self-Healing & Failure Handling: If a query returns an error, use 'inspect_database_schema' to verify table/column names and retry safely.\n"
-            f"6. Mandatory Tool Calling Rule: NEVER output conversational filler like 'I will check', 'I will look that up', or 'Checking your schedule now' without invoking a tool. Always execute the database tool immediately on the first turn and return the final complete answer.\n"
-            f"7. Response Style — Strictly Concise: Return direct, natural, factual answers grounded in the database results (e.g. 'We currently have 29 tutors in our system.')."
+            f"6. Multi-Turn Continuity & Session Memory:\n"
+            f"   - Maintain strict continuity across turns. Never contradict previously confirmed data points within the same session. If you confirmed N students exist, never state 'There are 0 students' in subsequent turns.\n"
+            f"   - For drill-down inquiries (e.g. 'who are they?', 'which batches?'), scope your query directly to the exact entity IDs confirmed in the immediate prior step (e.g. WHERE u.id IN (...)), or map directly from the confirmed entities.\n"
+            f"   - Discrepancy Clarification: Distinguish between total enrollments (course assignments) and unique students. For example: 'Today ({today_iso}), there are **4 new student enrollments** (2 unique students):'\n"
+            f"   - Standard Enrollment Format: Whenever asked about enrollments, always provide the executive table upfront:\n"
+            f"     | Student Name | Email | Enrolled Batches | Time |\n"
+            f"     | :--- | :--- | :--- | :--- |\n"
+            f"     | [Full Name] | [Email] | [Batch Codes] | [HH:MM] |\n"
+            f"7. Self-Healing & Failure Handling: If a query returns an error, use 'inspect_database_schema' to verify table/column names and retry safely.\n"
+            f"8. Mandatory Tool Calling Rule: NEVER output conversational filler like 'I will check', 'I will look that up', or 'Checking your schedule now' without invoking a tool. Always execute the database tool immediately on the first turn and return the final complete answer.\n"
+            f"9. Response Style — Strictly Concise: Return direct, natural, factual answers grounded in the database results."
         )
 
     def check_unauthorized_pii_request(self, prompt: str) -> str | None:
@@ -164,6 +181,13 @@ class BaseAgent:
         # Remove parenthetical status prefixes like (Executing database query...) or (Inspecting...)
         cleaned = re.sub(
             r"^\s*\([^\)]*(?:executing|inspecting|querying|checking|searching|analyzing)[^\)]*\)\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        # Remove any internal tool name tokens that might accidentally leak
+        cleaned = re.sub(
+            r"\b(?:execute_database_query|inspect_database_schema|execute_tool|tool_call)\b",
             "",
             cleaned,
             flags=re.IGNORECASE,
@@ -426,9 +450,17 @@ class BaseAgent:
                 "role": "user",
                 "content": (
                     "[SYSTEM INSTRUCTION: All background tool executions are complete. "
-                    "You must now provide the definitive, factual final response to the user's inquiry based strictly on the tool results above. "
-                    "Present the records, counts, or details clearly and concisely. If records or batches were not found, state that factually. "
-                    "CRITICAL: Never output promises like 'I will check' or 'I will run the query', and never output internal traces like '(Executing...)'. Deliver the final answer now.]"
+                    "You must now provide the definitive, factual final response to the user's inquiry based strictly on the tool results above.\n\n"
+                    "CORE ARCHITECTURAL DIRECTIVES:\n"
+                    "1. Zero Internal Exposure (Clean UI): Never mention internal tool names (e.g. execute_database_query), schema queries, or SQL in your text responses. Output must be 100% polished, executive-level business communication.\n"
+                    "2. Multi-Turn Context Consistency: Maintain strict continuity with earlier statements in this conversation. NEVER contradict earlier confirmed data points. If students or records were confirmed earlier in the session, do NOT state there are 0 students or 0 records now. Present the requested attributes mapped to the confirmed entities.\n"
+                    "3. Count Distinction: Explicitly distinguish between total enrollments (course assignments) and unique students (e.g. 'There are 2 unique students holding a total of 4 course enrollments today.').\n"
+                    "4. Standard Output Format: When presenting student enrollments, format as an executive Markdown table:\n"
+                    "   Today ([Date]), there are **[X] new student enrollments** ([Y] unique students):\n\n"
+                    "   | Student Name | Email | Enrolled Batches | Time |\n"
+                    "   | :--- | :--- | :--- | :--- |\n"
+                    "   | [Full Name] | [Email] | [Batch Codes] | [HH:MM] |\n\n"
+                    "Deliver the final executive answer now.]"
                 ),
             })
 
