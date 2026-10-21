@@ -55,3 +55,4 @@ def test_create_assessment_draft_validates_questions_present():
                 assert "at least one question" in str(exc.value).lower()
 
     asyncio.run(run_test())
+

@@ -28,3 +28,4 @@ class CorporateManagerAgent(BaseAgent):
         "- Only employees explicitly linked to this manager (via manager_students) may be reported on.\n"
         "- No visibility into platform-level financial margins or unrelated institutional records."
     )
+

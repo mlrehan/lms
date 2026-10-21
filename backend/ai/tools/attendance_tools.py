@@ -212,3 +212,4 @@ get_attendance_summary_tool = ToolDefinition(
     },
     handler=handle_get_attendance_summary,
 )
+

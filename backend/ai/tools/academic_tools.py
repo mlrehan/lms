@@ -259,3 +259,4 @@ get_course_curriculum_tool = ToolDefinition(
     },
     handler=handle_get_course_curriculum,
 )
+

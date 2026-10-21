@@ -177,3 +177,4 @@ get_corporate_training_progress_tool = ToolDefinition(
     },
     handler=handle_get_corporate_training_progress,
 )
+
