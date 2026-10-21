@@ -8,6 +8,7 @@ import {
   Sparkles,
   Terminal,
   User as UserIcon,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ interface AIMessageListProps {
   loading?: boolean;
   onPublishClick?: (draft: AssessmentDraftData) => void;
   onConfirmTicketClick?: (ticket: TicketDetails) => void;
+  onConfirmDirect?: (ticket: TicketDetails, confirmed: boolean) => void;
   onSuggestionClick?: (prompt: string) => void;
   userRole?: string;
 }
@@ -183,6 +185,7 @@ export function AIMessageList({
   loading,
   onPublishClick,
   onConfirmTicketClick,
+  onConfirmDirect,
   onSuggestionClick,
   userRole,
 }: AIMessageListProps) {
@@ -279,22 +282,40 @@ export function AIMessageList({
                 />
               ))}
 
-              {/* Render Confirmation Ticket Banner if required */}
-              {msg.confirmationTicket && onConfirmTicketClick && (
-                <div className="mt-2.5 rounded-xl border border-warning/40 bg-warning/10 p-2.5 text-xs">
-                  <p className="font-semibold text-warning mb-1">
-                    Approval Required: {msg.confirmationTicket.action_name}
+              {/* Render Confirmation Ticket Banner with direct Yes | No execution */}
+              {msg.confirmationTicket && (
+                <div className="mt-2.5 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs">
+                  <p className="font-semibold text-warning mb-1 text-xs">
+                    {msg.confirmationTicket.preview_summary || `Approval Required: ${msg.confirmationTicket.action_name}`}
                   </p>
-                  <p className="text-muted-foreground text-2xs mb-2">
-                    {msg.confirmationTicket.preview_summary}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onConfirmTicketClick(msg.confirmationTicket!)}
-                    className="rounded bg-warning px-2.5 py-1 text-2xs font-semibold text-warning-foreground hover:bg-warning/90 transition-colors"
-                  >
-                    Review & Confirm Action
-                  </button>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="ai-confirm-yes"
+                      onClick={() => onConfirmDirect ? onConfirmDirect(msg.confirmationTicket!, true) : onConfirmTicketClick?.(msg.confirmationTicket!)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-xs"
+                    >
+                      <Check className="size-3.5" />
+                      Yes
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="ai-confirm-no"
+                      onClick={() => onConfirmDirect ? onConfirmDirect(msg.confirmationTicket!, false) : null}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border-subtle bg-muted/80 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
+                      No
+                    </button>
+                    {onConfirmTicketClick && (
+                      <button
+                        type="button"
+                        onClick={() => onConfirmTicketClick(msg.confirmationTicket!)}
+                        className="ml-auto text-3xs text-muted-foreground hover:text-foreground hover:underline"
+                      >
+                        Inspect Details
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

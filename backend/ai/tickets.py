@@ -115,6 +115,26 @@ class ConfirmationTicketManager:
             ticket.status = TicketStatus.EXPIRED
         return ticket
 
+    def get_latest_pending_for_user(self, actor_user_id: int) -> ConfirmationTicket | None:
+        """Find the most recent non-expired pending ticket for this user."""
+        candidates = [
+            t for t in self._tickets.values()
+            if t.actor_user_id == actor_user_id and t.status == TicketStatus.PENDING and not t.is_expired
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda t: t.created_at, reverse=True)
+        return candidates[0]
+
+    def cancel_pending_for_user(self, actor_user_id: int) -> ConfirmationTicket | None:
+        """Cancel the latest pending ticket for this user."""
+        ticket = self.get_latest_pending_for_user(actor_user_id)
+        if ticket:
+            ticket.status = TicketStatus.CANCELLED
+            logger.info("Cancelled pending confirmation ticket %s for user %d", ticket.ticket_id, actor_user_id)
+            return ticket
+        return None
+
     def validate_and_consume(
         self,
         *,

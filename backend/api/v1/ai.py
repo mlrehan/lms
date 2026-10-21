@@ -154,6 +154,51 @@ async def chat_with_agent(
     state_mgr = ConversationStateManager(session)
     recent_history = await state_mgr.get_recent_history(user_id=current_user.id, limit=10)
 
+    # Fast-path for conversational confirmation (e.g. SuperAdmin answering "Yes" or "No" to confirmation prompt)
+    lowered_cmd = sanitized_prompt.lower().strip()
+    ticket_mgr = get_ticket_manager()
+
+    if lowered_cmd in ("yes", "y", "confirm", "proceed", "yes, please", "do it"):
+        pending_ticket = ticket_mgr.get_latest_pending_for_user(current_user.id)
+        if pending_ticket:
+            exec_svc = ConfirmationExecutionService(session)
+            client_ip = request.client.host if request.client else None
+            try:
+                res = await exec_svc.execute_ticket(
+                    ticket_id=pending_ticket.ticket_id,
+                    actor=current_user,
+                    client_ip=client_ip,
+                )
+                msg = res.get("message", "Action completed successfully.")
+                await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
+                await state_mgr.append_message(user_id=current_user.id, role="assistant", content=msg)
+                return AIChatResponse(
+                    message=msg,
+                    role=Roles.SUPER_ADMIN.value,
+                    tool_calls=[{"tool": pending_ticket.action_name, "result": res}],
+                    success=True,
+                )
+            except Exception as exc:
+                err_msg = f"Operation failed: {str(exc)}"
+                return AIChatResponse(
+                    message=err_msg,
+                    role=Roles.SUPER_ADMIN.value,
+                    success=False,
+                )
+
+    if lowered_cmd in ("no", "n", "cancel", "abort", "stop", "nevermind", "no, cancel"):
+        cancelled_ticket = ticket_mgr.cancel_pending_for_user(current_user.id)
+        if cancelled_ticket:
+            action_name = cancelled_ticket.action_name
+            cancel_msg = "Synchronization cancelled." if "sync" in action_name else "Operation cancelled."
+            await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
+            await state_mgr.append_message(user_id=current_user.id, role="assistant", content=cancel_msg)
+            return AIChatResponse(
+                message=cancel_msg,
+                role=Roles.SUPER_ADMIN.value,
+                success=True,
+            )
+
     # Convert to standard role/content list for agent
     formatted_history = [
         {"role": item["role"], "content": item["content"]}

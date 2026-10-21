@@ -117,7 +117,7 @@ export function ActionConfirmationDialog({
                 Parameter SHA-256:
               </span>
               <span className="font-mono text-2xs text-muted-foreground">
-                {ticket.parameters_hash.slice(0, 16)}...
+                {ticket.parameters_hash ? `${ticket.parameters_hash.slice(0, 16)}...` : "N/A"}
               </span>
             </div>
 

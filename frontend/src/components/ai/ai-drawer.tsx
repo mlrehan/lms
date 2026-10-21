@@ -171,10 +171,9 @@ export function AIDrawer() {
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // If response generated an immediate confirmation ticket, open the dialog
+      // If response generated an immediate confirmation ticket, save active ticket
       if (resp?.confirmation_ticket) {
         setActiveTicket(resp.confirmation_ticket);
-        setConfirmDialogOpen(true);
       }
     } catch (err) {
       const message =
@@ -234,6 +233,81 @@ export function AIDrawer() {
       const message =
         err instanceof ApiError ? err.message : "Could not stage assessment publishing.";
       toast.error("Staging Error", { description: message });
+    }
+  };
+
+  const handleDirectConfirm = async (ticket: TicketDetails, confirmed: boolean) => {
+    if (!confirmed) {
+      const isSync = ticket.action_name.includes("sync");
+      const cancelText = isSync ? "Synchronization cancelled." : "Operation cancelled.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-no-${Date.now()}`,
+          role: "user",
+          content: "No",
+        },
+        {
+          id: `assistant-cancel-${Date.now()}`,
+          role: "assistant",
+          agentRole: primaryRole,
+          content: cancelText,
+        },
+      ]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const resp = await api.post<{ success: boolean; result: Record<string, unknown> }>(
+        "/ai/confirm",
+        {
+          body: {
+            ticket_id: ticket.ticket_id,
+            parameters: ticket.parameters,
+          },
+        },
+      );
+      const isSync = ticket.action_name.includes("sync");
+      const successMsg =
+        (resp?.result?.message as string) ||
+        (isSync ? "All data synchronized successfully." : "Action executed successfully.");
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-yes-${Date.now()}`,
+          role: "user",
+          content: "Yes",
+        },
+        {
+          id: `assistant-result-${Date.now()}`,
+          role: "assistant",
+          agentRole: primaryRole,
+          content: successMsg,
+        },
+      ]);
+      toast.success("Action Executed", { description: successMsg });
+    } catch (err) {
+      const errorMsg =
+        err instanceof ApiError ? err.message : "Failed to execute confirmed action.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-yes-${Date.now()}`,
+          role: "user",
+          content: "Yes",
+        },
+        {
+          id: `assistant-err-${Date.now()}`,
+          role: "assistant",
+          agentRole: primaryRole,
+          content: `Operation failed: ${errorMsg}`,
+        },
+      ]);
+      toast.error("Execution Failed", { description: errorMsg });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -317,6 +391,7 @@ export function AIDrawer() {
               setActiveTicket(ticket);
               setConfirmDialogOpen(true);
             }}
+            onConfirmDirect={handleDirectConfirm}
             onSuggestionClick={(suggestion) => void handleSend(suggestion)}
             userRole={primaryRole}
           />

@@ -124,7 +124,10 @@ class ToolRegistry:
             )
             return {
                 "status": "REQUIRES_CONFIRMATION",
+                "ticket_id": ticket.ticket_id,
                 "confirmation_ticket_id": ticket.ticket_id,
+                "action_name": ticket.action_name,
+                "parameters_hash": ticket.parameters_hash,
                 "preview_summary": ticket.preview_summary,
                 "expires_at": ticket.expires_at.isoformat(),
                 "affected_records_count": ticket.affected_records_count,
@@ -177,6 +180,12 @@ def get_tool_registry() -> ToolRegistry:
             get_corporate_training_progress_tool,
             get_student_academic_summary_tool,
         )
+        from backend.ai.tools.admin_tools import (
+            delete_inactive_users_tool,
+            get_system_overview_tool,
+            manage_user_tool,
+            sync_all_data_tool,
+        )
         from backend.ai.tools.rag_tools import search_course_knowledge_tool
 
         _global_tool_registry.register(create_assessment_draft_tool)
@@ -186,6 +195,10 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(get_student_academic_summary_tool)
         _global_tool_registry.register(get_corporate_training_progress_tool)
         _global_tool_registry.register(search_course_knowledge_tool)
+        _global_tool_registry.register(sync_all_data_tool)
+        _global_tool_registry.register(delete_inactive_users_tool)
+        _global_tool_registry.register(get_system_overview_tool)
+        _global_tool_registry.register(manage_user_tool)
 
         _tools_initialized = True
 

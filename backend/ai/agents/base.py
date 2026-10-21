@@ -167,7 +167,14 @@ class BaseAgent:
 
                 # Check if this tool produced a confirmation requirement
                 if tool_result.get("status") == "REQUIRES_CONFIRMATION":
-                    confirmation_needed = tool_result
+                    confirmation_needed = {
+                        "ticket_id": tool_result.get("ticket_id") or tool_result.get("confirmation_ticket_id"),
+                        "action_name": tool_result.get("action_name", fn_name),
+                        "preview_summary": tool_result.get("preview_summary", "Approval Required"),
+                        "expires_at": tool_result.get("expires_at"),
+                        "affected_records_count": tool_result.get("affected_records_count", 1),
+                        "parameters_hash": tool_result.get("parameters_hash", "0" * 32),
+                    }
 
                 messages.append({
                     "role": "tool",
