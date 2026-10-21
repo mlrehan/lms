@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, ApiError } from "@/lib/api/client";
+import { api, apiPath, ApiError } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/session";
 import { useAIStore } from "@/lib/ai-store";
 import { Badge } from "@/components/ui/primitives";
@@ -148,45 +148,247 @@ export function AIDrawer() {
       content: prompt,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const assistantMessageId = `ai-${Date.now()}`;
+    const initialAssistantMsg: ChatMessage = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+      agentRole: primaryRole,
+      isStreaming: true,
+      statusText: "Analyzing intent and consulting LMS records...",
+      toolCalls: [],
+    };
+
+    setMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
     setLoading(true);
 
     try {
-      const resp = await api.post<AIChatResponsePayload>("/ai/chat", {
-        body: {
-          prompt,
-          stream: false,
+      const response = await fetch(apiPath("/ai/chat"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
         },
+        body: JSON.stringify({
+          prompt,
+          stream: true,
+        }),
+        credentials: "same-origin",
       });
 
-      const assistantMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        role: "assistant",
-        content: resp?.message || "Task processed.",
-        agentRole: resp?.role,
-        draftAssessments: resp?.draft_assessments,
-        confirmationTicket: resp?.confirmation_ticket,
-        toolCalls: resp?.tool_calls,
-      };
-
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      // If response generated an immediate confirmation ticket, save active ticket
-      if (resp?.confirmation_ticket) {
-        setActiveTicket(resp.confirmation_ticket);
+      if (!response.ok) {
+        let errPayload: any = {};
+        try {
+          errPayload = await response.json();
+        } catch {
+          // ignore non-json error responses
+        }
+        throw new Error(errPayload.message || `Server error: ${response.status}`);
       }
-    } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to obtain response from AI assistant.";
+
+      const contentType = response.headers.get("content-type") || "";
+
+      // Handle non-streaming JSON fallback
+      if (contentType.includes("application/json")) {
+        const resp: AIChatResponsePayload = await response.json();
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  content: resp?.message || "Task processed.",
+                  agentRole: resp?.role || msg.agentRole,
+                  draftAssessments: resp?.draft_assessments,
+                  confirmationTicket: resp?.confirmation_ticket,
+                  toolCalls: resp?.tool_calls,
+                  isStreaming: false,
+                  statusText: undefined,
+                }
+              : msg,
+          ),
+        );
+        if (resp?.confirmation_ticket) {
+          setActiveTicket(resp.confirmation_ticket);
+        }
+        return;
+      }
+
+      if (!response.body) {
+        throw new Error("No response stream received from server.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let accumulatedContent = "";
+      let activeToolCalls: Array<{ tool: string; result?: unknown }> = [];
+      let receivedDone = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(":")) {
+            // keep-alive or comment marker
+            continue;
+          }
+
+          if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6);
+            try {
+              const event = JSON.parse(jsonStr);
+
+              if (event.type === "status") {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, statusText: event.content || msg.statusText }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "tool_start") {
+                const tc = { tool: event.tool, result: undefined };
+                activeToolCalls = [...activeToolCalls, tc];
+                const desc = event.content || `Executing ${event.tool}...`;
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          statusText: desc,
+                          toolCalls: [...activeToolCalls],
+                        }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "tool_end") {
+                activeToolCalls = activeToolCalls.map((tc) =>
+                  tc.tool === event.tool ? { ...tc, result: event.result } : tc,
+                );
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          statusText: "Processing result...",
+                          toolCalls: [...activeToolCalls],
+                        }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "confirmation_required") {
+                if (event.ticket) {
+                  setActiveTicket(event.ticket);
+                }
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          confirmationTicket: event.ticket,
+                          statusText: undefined,
+                          isStreaming: false,
+                        }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "delta") {
+                accumulatedContent += event.delta || "";
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          content: accumulatedContent,
+                          statusText: undefined,
+                        }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "done") {
+                receivedDone = true;
+                const finalMessage = event.message || accumulatedContent || "Task completed.";
+                if (event.confirmation_ticket) {
+                  setActiveTicket(event.confirmation_ticket);
+                }
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          content: finalMessage,
+                          agentRole: event.role || msg.agentRole,
+                          toolCalls: event.tool_calls || activeToolCalls,
+                          draftAssessments: event.draft_assessments,
+                          confirmationTicket: event.confirmation_ticket,
+                          isStreaming: false,
+                          statusText: undefined,
+                        }
+                      : msg,
+                  ),
+                );
+              } else if (event.type === "error") {
+                const errMsg = event.message || "An error occurred.";
+                toast.error("AI Error", { description: errMsg });
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? {
+                          ...msg,
+                          content: accumulatedContent
+                            ? `${accumulatedContent}\n\nError: ${errMsg}`
+                            : `Error: ${errMsg}`,
+                          isStreaming: false,
+                          statusText: undefined,
+                        }
+                      : msg,
+                  ),
+                );
+              }
+            } catch (parseErr) {
+              console.error("Failed to parse SSE event:", jsonStr, parseErr);
+            }
+          }
+        }
+      }
+
+      if (!receivedDone) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  content: accumulatedContent || "Task finished.",
+                  isStreaming: false,
+                  statusText: undefined,
+                }
+              : msg,
+          ),
+        );
+      }
+    } catch (err: any) {
+      const message = err?.message || "Failed to obtain response from AI assistant.";
       toast.error("AI Error", { description: message });
 
-      const errorMsg: ChatMessage = {
-        id: `err-${Date.now()}`,
-        role: "assistant",
-        content: `Error: ${message}`,
-        agentRole: "SYSTEM",
-      };
-      setMessages((prev) => [...prev, errorMsg]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Error: ${message}`,
+                agentRole: "SYSTEM",
+                isStreaming: false,
+                statusText: undefined,
+              }
+            : msg,
+        ),
+      );
     } finally {
       setLoading(false);
     }
@@ -403,10 +605,11 @@ export function AIDrawer() {
             <textarea
               ref={textareaRef}
               value={input}
+              disabled={loading}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Ask anything as ${primaryRole.toLowerCase()}... (Enter to send)`}
-              className="w-full resize-none bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none max-h-28 min-h-[38px] scrollbar-thin"
+              placeholder={loading ? "AI Assistant is responding..." : `Ask anything as ${primaryRole.toLowerCase()}... (Enter to send)`}
+              className="w-full resize-none bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none max-h-28 min-h-[38px] scrollbar-thin disabled:opacity-60"
               rows={1}
             />
 

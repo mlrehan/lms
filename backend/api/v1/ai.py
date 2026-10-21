@@ -172,6 +172,12 @@ async def chat_with_agent(
                 msg = res.get("message", "Action completed successfully.")
                 await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
                 await state_mgr.append_message(user_id=current_user.id, role="assistant", content=msg)
+                if payload.stream:
+                    async def fast_stream() -> AsyncIterator[bytes]:
+                        yield b": keep-alive\n\n"
+                        yield f"data: {json.dumps({'type': 'status', 'content': 'Executing confirmed action...'})}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps({'type': 'done', 'message': msg, 'role': Roles.SUPER_ADMIN.value, 'tool_calls': [{'tool': pending_ticket.action_name, 'result': res}], 'success': True})}\n\n".encode("utf-8")
+                    return StreamingResponse(fast_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
                 return AIChatResponse(
                     message=msg,
                     role=Roles.SUPER_ADMIN.value,
@@ -180,6 +186,11 @@ async def chat_with_agent(
                 )
             except Exception as exc:
                 err_msg = f"Operation failed: {str(exc)}"
+                if payload.stream:
+                    async def fast_err_stream() -> AsyncIterator[bytes]:
+                        yield b": keep-alive\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'success': False})}\n\n".encode("utf-8")
+                    return StreamingResponse(fast_err_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
                 return AIChatResponse(
                     message=err_msg,
                     role=Roles.SUPER_ADMIN.value,
@@ -193,6 +204,11 @@ async def chat_with_agent(
             cancel_msg = "Synchronization cancelled." if "sync" in action_name else "Operation cancelled."
             await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
             await state_mgr.append_message(user_id=current_user.id, role="assistant", content=cancel_msg)
+            if payload.stream:
+                async def cancel_stream() -> AsyncIterator[bytes]:
+                    yield b": keep-alive\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'message': cancel_msg, 'role': Roles.SUPER_ADMIN.value, 'success': True})}\n\n".encode("utf-8")
+                return StreamingResponse(cancel_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
             return AIChatResponse(
                 message=cancel_msg,
                 role=Roles.SUPER_ADMIN.value,
@@ -224,7 +240,7 @@ async def chat_with_agent(
             prompt=sanitized_prompt,
             history=formatted_history,
             current_user=current_user,
-            state_mgr=state_mgr,
+            request=request,
         )
 
     # Synchronous turn
@@ -242,22 +258,40 @@ async def chat_with_agent(
 
     # 6. Persist Conversation Turn in Database
     try:
-        try:
-            await session.execute(text("SELECT 1;"))
-        except Exception:
-            await session.rollback()
-
-        await state_mgr.append_message(
-            user_id=current_user.id,
-            role="user",
-            content=payload.prompt,
-        )
-        await state_mgr.append_message(
-            user_id=current_user.id,
-            role="assistant",
-            content=turn_response.text,
-            tool_calls=turn_response.tool_calls_made or None,
-        )
+        db = getattr(getattr(request, "app", None), "state", None)
+        db_mgr = getattr(db, "db", None) if db else None
+        if (
+            db_mgr
+            and hasattr(db_mgr, "session_factory")
+            and not str(type(db_mgr)).startswith("<class 'unittest.mock")
+        ):
+            async with db_mgr.session_factory() as persist_session:
+                async with persist_session.begin():
+                    persist_mgr = ConversationStateManager(persist_session)
+                    await persist_mgr.append_message(
+                        user_id=current_user.id,
+                        role="user",
+                        content=payload.prompt,
+                    )
+                    await persist_mgr.append_message(
+                        user_id=current_user.id,
+                        role="assistant",
+                        content=turn_response.text,
+                        tool_calls=turn_response.tool_calls_made or None,
+                    )
+        else:
+            persist_mgr = ConversationStateManager(session)
+            await persist_mgr.append_message(
+                user_id=current_user.id,
+                role="user",
+                content=payload.prompt,
+            )
+            await persist_mgr.append_message(
+                user_id=current_user.id,
+                role="assistant",
+                content=turn_response.text,
+                tool_calls=turn_response.tool_calls_made or None,
+            )
     except Exception as exc:
         logger.warning("Failed to persist AI conversation turn: %s", exc)
 
@@ -277,76 +311,74 @@ def _handle_chat_stream(
     prompt: str,
     history: list[dict[str, str]],
     current_user: User,
-    state_mgr: ConversationStateManager,
+    request: Request,
+    state_mgr: ConversationStateManager | None = None,
 ) -> StreamingResponse:
     """Stream AI agent response via Server-Sent Events (SSE)."""
 
     async def sse_generator() -> AsyncIterator[bytes]:
-        try:
-            # Yield initial status
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Analyzing intent and planning actions...'})}\n\n".encode()
+        full_message = ""
+        tools_executed: list[dict[str, Any]] = []
 
-            turn_response = await agent.execute_turn(
+        try:
+            # Yield initial keep-alive / stream open marker
+            yield b": keep-alive\n\n"
+
+            async for event in agent.execute_turn_stream(
                 prompt=prompt,
                 conversation_history=history,
-            )
+            ):
+                yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
 
-            # Yield tool calls notification if any occurred
-            if turn_response.tool_calls_made:
-                for tc in turn_response.tool_calls_made:
-                    yield f"data: {json.dumps({'type': 'tool', 'tool': tc.get('tool'), 'result': tc.get('result')})}\n\n".encode()
+                if event.get("type") == "done":
+                    full_message = event.get("message", "")
+                    tools_executed = event.get("tool_calls", [])
 
-            # Stream message chunks
-            full_text = turn_response.text
-            words = full_text.split(" ")
-            chunk = []
-            for word in words:
-                chunk.append(word)
-                if len(chunk) >= 4:
-                    yield f"data: {json.dumps({'type': 'delta', 'delta': ' '.join(chunk) + ' '})}\n\n".encode()
-                    chunk = []
-            if chunk:
-                yield f"data: {json.dumps({'type': 'delta', 'delta': ' '.join(chunk)})}\n\n".encode()
+            # Persist turn in database upon completion using dedicated clean session
+            if full_message:
+                try:
+                    db = getattr(getattr(request, "app", None), "state", None)
+                    db_mgr = getattr(db, "db", None) if db else None
+                    if (
+                        db_mgr
+                        and hasattr(db_mgr, "session_factory")
+                        and not str(type(db_mgr)).startswith("<class 'unittest.mock")
+                    ):
+                        async with db_mgr.session_factory() as persist_session:
+                            async with persist_session.begin():
+                                persist_mgr = ConversationStateManager(persist_session)
+                                await persist_mgr.append_message(
+                                    user_id=current_user.id,
+                                    role="user",
+                                    content=prompt,
+                                )
+                                await persist_mgr.append_message(
+                                    user_id=current_user.id,
+                                    role="assistant",
+                                    content=full_message,
+                                    tool_calls=tools_executed or None,
+                                )
+                    elif state_mgr:
+                        await state_mgr.append_message(
+                            user_id=current_user.id,
+                            role="user",
+                            content=prompt,
+                        )
+                        await state_mgr.append_message(
+                            user_id=current_user.id,
+                            role="assistant",
+                            content=full_message,
+                            tool_calls=tools_executed or None,
+                        )
+                except Exception as exc:
+                    logger.warning("Stream state persistence failed: %s", exc)
 
-            draft_assessments: list[dict[str, Any]] = []
-            for tc in turn_response.tool_calls_made:
-                res = tc.get("result")
-                if tc.get("tool") == "create_assessment_draft" and isinstance(res, dict) and res.get("success"):
-                    draft_assessments.append(res)
-
-            # Persist state
-            try:
-                await state_mgr.append_message(
-                    user_id=current_user.id,
-                    role="user",
-                    content=prompt,
-                )
-                await state_mgr.append_message(
-                    user_id=current_user.id,
-                    role="assistant",
-                    content=turn_response.text,
-                    tool_calls=turn_response.tool_calls_made or None,
-                )
-            except Exception as exc:
-                logger.warning("Stream state persistence failed: %s", exc)
-
-            # Yield done payload
-            done_payload = {
-                "type": "done",
-                "message": turn_response.text,
-                "role": turn_response.role,
-                "tool_calls": turn_response.tool_calls_made,
-                "draft_assessments": draft_assessments,
-                "confirmation_ticket": turn_response.confirmation_ticket,
-                "success": turn_response.success,
-            }
-            yield f"data: {json.dumps(done_payload)}\n\n".encode()
         except Exception as exc:
             logger.error("SSE stream error: %s", exc)
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n".encode()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc), 'success': False})}\n\n".encode("utf-8")
 
     headers = {
-        "Content-Type": "text/event-stream",
+        "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",

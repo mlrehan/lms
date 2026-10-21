@@ -44,6 +44,12 @@ _SENSITIVE_COLUMNS = re.compile(
     re.IGNORECASE,
 )
 
+# Private personal contact PII columns prohibited from non-Administrator queries
+_PII_COLUMNS = re.compile(
+    r"\b(email|phone_number|phone|emergency_contact|parent_email)\b",
+    re.IGNORECASE,
+)
+
 # Tables restricted to Administrators
 _ADMIN_ONLY_TABLES = {
     "system_settings",
@@ -66,6 +72,11 @@ _RESTRICTED_FROM_STUDENTS = {
     "sync_pipeline_jobs",
     "sync_pipeline_runs",
     "user_sync_runs",
+    "exam_results",
+    "role_permissions",
+    "permissions",
+    "roles",
+    "organizations",
 }
 
 # Primary LMS tables metadata summary for schema discovery
@@ -98,40 +109,41 @@ PRIMARY_SCHEMA_METADATA: dict[str, dict[str, Any]] = {
         "example": "SELECT id, code, title FROM courses WHERE NOT is_deleted",
     },
     "batches": {
-        "description": "Course cohorts / batches of enrolled students.",
+        "description": "Course cohorts / batches of enrolled students. (NOTE: uses batch_code, NOT name; uses is_active boolean, NOT status).",
         "key_columns": [
-            "id", "public_id", "name", "course_id (FK -> courses.id)",
-            "status ('SCHEDULED','IN_PROGRESS','COMPLETED','CANCELLED')",
-            "start_date", "end_date"
+            "id", "public_id", "batch_code", "course_id (FK -> courses.id)",
+            "start_date", "end_date", "is_active", "total_enrollments",
+            "training_days", "training_start_time", "training_end_time", "training_method"
         ],
-        "example": "SELECT id, name, course_id, status FROM batches",
+        "example": "SELECT id, batch_code, course_id, is_active, start_date FROM batches WHERE is_active",
     },
     "batch_sessions": {
-        "description": "Individual scheduled class sessions for a batch.",
+        "description": "Individual scheduled class sessions for a batch. (NOTE: uses session_start_time and session_end_time, NOT date/title/start_time; cancelled check is cancelled_at IS NULL).",
         "key_columns": [
-            "id", "batch_id (FK -> batches.id)", "title", "date",
-            "start_time", "end_time", "status ('SCHEDULED','CONDUCTED','CANCELLED')"
+            "id", "public_id", "batch_id (FK -> batches.id)", "tutor_id (FK -> users.id)",
+            "session_start_time (timestamptz)", "session_end_time (timestamptz)", "duration_minutes",
+            "classroom", "meeting_link", "platform", "cancelled_at (timestamptz)"
         ],
-        "example": "SELECT id, title, date FROM batch_sessions ORDER BY date DESC LIMIT 10",
+        "example": "SELECT s.id, b.batch_code, c.title as course_title, s.session_start_time, s.session_end_time FROM batch_sessions s JOIN batches b ON b.id = s.batch_id JOIN courses c ON c.id = b.course_id WHERE s.cancelled_at IS NULL ORDER BY s.session_start_time ASC LIMIT 10",
     },
     "enrollments": {
-        "description": "Student enrollments in batches.",
+        "description": "Student enrollments in batches. (NOTE: uses student_id FK -> users.id, NOT user_id; uses enrollment_id PK, NOT id; status is 'CONFIRMED','PENDING','CANCELLED').",
         "key_columns": [
-            "id", "user_id (FK -> users.id)", "batch_id (FK -> batches.id)",
-            "status ('ACTIVE','PENDING','CANCELLED','COMPLETED','DROPPED')", "created_at"
+            "enrollment_id (PK)", "student_id (FK -> users.id)", "batch_id (FK -> batches.id)",
+            "status ('CONFIRMED','PENDING','CANCELLED','COMPLETED','DROPPED')", "enrollment_date"
         ],
-        "example": "SELECT count(*) FROM enrollments WHERE status = 'ACTIVE'",
+        "example": "SELECT b.batch_code, u.id AS student_id, u.first_name, u.last_name, e.status FROM enrollments e JOIN batches b ON b.id = e.batch_id JOIN users u ON u.id = e.student_id WHERE b.batch_code = '11568'",
     },
     "tutor_courses": {
-        "description": "Tutor assignments to courses.",
+        "description": "Tutor assignments to courses. (NOTE: There is NO batch_tutors table. Tutors teach courses via tutor_courses and sessions via batch_sessions).",
         "key_columns": ["tutor_id (FK -> users.id)", "course_id (FK -> courses.id)"],
         "example": "SELECT tutor_id, course_id FROM tutor_courses",
     },
     "attendances": {
-        "description": "Student attendance records per session.",
+        "description": "Student attendance records per session. (NOTE: uses session_id FK -> batch_sessions.id).",
         "key_columns": [
-            "id", "batch_session_id (FK -> batch_sessions.id)", "student_id (FK -> users.id)",
-            "status ('PRESENT','ABSENT','LATE','EXCUSED')", "date"
+            "id", "public_id", "session_id (FK -> batch_sessions.id)", "student_id (FK -> users.id)",
+            "recorded_by (FK -> users.id)", "status ('PRESENT','ABSENT','LATE','EXCUSED')", "recorded_at"
         ],
         "example": "SELECT status, count(*) FROM attendances GROUP BY status",
     },
@@ -144,42 +156,80 @@ PRIMARY_SCHEMA_METADATA: dict[str, dict[str, Any]] = {
         ],
         "example": "SELECT count(*) FROM quizzes",
     },
+    "questions": {
+        "description": "Individual questions inside a quiz.",
+        "key_columns": [
+            "id", "public_id", "quiz_id (FK -> quizzes.id)", "question_text",
+            "question_type ('MULTIPLE_CHOICE','TRUE_FALSE','SHORT_ANSWER','ESSAY')", "points", "order", "explanation"
+        ],
+        "example": "SELECT id, question_text, points FROM questions WHERE quiz_id = :quiz_id",
+    },
+    "question_options": {
+        "description": "Answer options for multiple-choice quiz questions.",
+        "key_columns": [
+            "id", "question_id (FK -> questions.id)", "option_text", "is_correct", "order"
+        ],
+        "example": "SELECT option_text, is_correct FROM question_options WHERE question_id = :q_id",
+    },
     "quiz_attempts": {
         "description": "Student attempts and scores on quizzes.",
         "key_columns": [
-            "id", "quiz_id (FK -> quizzes.id)", "student_id (FK -> users.id)",
-            "score", "status ('IN_PROGRESS','SUBMITTED','GRADED')", "submitted_at"
+            "id", "public_id", "quiz_id (FK -> quizzes.id)", "student_id (FK -> users.id)",
+            "started_at", "finished_at", "score", "is_passed", "feedback"
         ],
-        "example": "SELECT quiz_id, avg(score) FROM quiz_attempts WHERE status = 'GRADED' GROUP BY quiz_id",
+        "example": "SELECT quiz_id, avg(score) FROM quiz_attempts WHERE finished_at IS NOT NULL GROUP BY quiz_id",
     },
     "assignments": {
         "description": "Course assignments and homework projects (NOTE: does NOT have is_deleted column).",
         "key_columns": [
             "id", "public_id", "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)",
-            "session_id (FK -> batch_sessions.id)", "title", "max_score", "due_date", "state"
+            "session_id (FK -> batch_sessions.id)", "title", "description", "max_score",
+            "passing_score", "weight", "due_date", "state ('DRAFT','PUBLISHED','CLOSED')", "rubric"
         ],
         "example": "SELECT count(*) FROM assignments",
     },
     "assignment_submissions": {
         "description": "Student submissions for assignments.",
         "key_columns": [
-            "id", "assignment_id (FK -> assignments.id)", "student_id (FK -> users.id)",
-            "grade", "status ('SUBMITTED','GRADED','LATE')", "submitted_at"
+            "id", "public_id", "assignment_id (FK -> assignments.id)", "student_id (FK -> users.id)",
+            "submitted_at", "grade", "raw_grade", "feedback", "graded_by_id (FK -> users.id)",
+            "state ('SUBMITTED','LATE','UNDER_REVIEW','GRADED','PUBLISHED','RESUBMISSION_REQUIRED')"
         ],
-        "example": "SELECT count(*) FROM assignment_submissions WHERE status = 'SUBMITTED'",
+        "example": "SELECT count(*) FROM assignment_submissions WHERE state IN ('SUBMITTED','LATE','UNDER_REVIEW')",
     },
     "exams": {
-        "description": "Formal exams and tests.",
-        "key_columns": ["id", "public_id", "batch_id (FK -> batches.id)", "title", "total_marks"],
-        "example": "SELECT id, title, total_marks FROM exams",
+        "description": "Formal exams and scheduled tests.",
+        "key_columns": [
+            "id", "public_id", "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)",
+            "session_id (FK -> batch_sessions.id)", "title", "scheduled_at", "duration_minutes",
+            "total_marks", "passing_marks", "is_published", "is_online"
+        ],
+        "example": "SELECT id, title, scheduled_at, total_marks FROM exams",
     },
     "exam_results": {
         "description": "Student results on formal exams.",
         "key_columns": [
-            "id", "exam_id (FK -> exams.id)", "student_id (FK -> users.id)",
-            "marks_obtained", "is_passed"
+            "id", "public_id", "exam_id (FK -> exams.id)", "student_id (FK -> users.id)",
+            "marks_obtained", "grade", "remarks", "is_published"
         ],
-        "example": "SELECT student_id, marks_obtained FROM exam_results",
+        "example": "SELECT student_id, marks_obtained, grade FROM exam_results",
+    },
+    "resources": {
+        "description": "Course learning materials, files, and resources.",
+        "key_columns": [
+            "id", "public_id", "name", "resource_type ('DOCUMENT','VIDEO','AUDIO','ARCHIVE','LINK','OTHER')",
+            "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)", "folder_id (FK -> resource_folders.id)",
+            "path", "mime_type", "size", "uploaded_by (FK -> users.id)", "is_deleted"
+        ],
+        "example": "SELECT id, name, resource_type, size FROM resources WHERE NOT is_deleted",
+    },
+    "resource_folders": {
+        "description": "Folder hierarchy for organizing course materials.",
+        "key_columns": [
+            "id", "public_id", "name", "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)",
+            "parent_folder_id (FK -> resource_folders.id)", "created_by (FK -> users.id)"
+        ],
+        "example": "SELECT id, name FROM resource_folders WHERE course_id = :c_id",
     },
     "organizations": {
         "description": "Corporate client organizations / enterprise tenants.",
@@ -255,6 +305,8 @@ def validate_sql_safety(
 
     # 4. Sensitive columns check (hashed_password, token_hash, secrets)
     is_superadmin = Roles.SUPER_ADMIN.value in caller_roles
+    is_admin = is_superadmin or Roles.ADMIN.value in caller_roles
+
     if not is_superadmin:
         sens_match = _SENSITIVE_COLUMNS.search(stripped_end)
         if sens_match:
@@ -264,8 +316,17 @@ def validate_sql_safety(
                 "",
             )
 
+    # 4b. Personal data protection: restrict contact PII (email, phone) for non-administrators
+    if not is_admin:
+        pii_match = _PII_COLUMNS.search(stripped_end)
+        if pii_match:
+            return (
+                False,
+                f"Access to private personal contact information ('{pii_match.group()}') is restricted. You do not have permission to access personal contact details.",
+                "",
+            )
+
     # 5. Table-level RBAC restrictions
-    is_admin = is_superadmin or Roles.ADMIN.value in caller_roles
     is_student_or_guardian = (
         Roles.STUDENT.value in caller_roles or Roles.GUARDIAN.value in caller_roles
     )
@@ -287,6 +348,16 @@ def validate_sql_safety(
                     f"Access to operational table '{tbl}' is restricted.",
                     "",
                 )
+
+        # Enforce that queries touching personal assessment/attendance tables must filter by student
+        for tbl in ("assignment_submissions", "quiz_attempts", "attendances"):
+            if re.search(rf"\b{tbl}\b", stripped_end, re.IGNORECASE):
+                if not re.search(r"\bWHERE\b.*\b(student_id|user_id)\b", stripped_end, re.IGNORECASE | re.DOTALL):
+                    return (
+                        False,
+                        f"Unfiltered queries on '{tbl}' are restricted. Please use your dedicated assessment tools or include an authorized student filter.",
+                        "",
+                    )
 
     # 6. Row limit bounding: ensure large table scans do not exhaust memory
     final_query = stripped_end
@@ -404,12 +475,6 @@ async def handle_execute_database_query(
     except SQLAlchemyError as exc:
         err_msg = str(exc.orig if hasattr(exc, "orig") else exc)
         logger.warning("Database query execution failed: %s (SQL: %s)", err_msg, safe_query)
-        # Ensure session is not left aborted
-        try:
-            if not session.is_active or "aborted" in err_msg.lower():
-                await session.rollback()
-        except Exception:
-            pass
         return {
             "success": False,
             "error": err_msg,
@@ -523,12 +588,15 @@ async def handle_inspect_database_schema(
             fk_res = await session.execute(fk_query, {"table_name": table_name})
             fks = fk_res.mappings().all()
 
-        # Mask sensitive columns if not SuperAdmin
+        # Mask sensitive credentials and personal contact PII columns if not administrator
         is_superadmin = Roles.SUPER_ADMIN.value in held_roles
+        is_admin = is_superadmin or Roles.ADMIN.value in held_roles
         columns_info = []
         for c in cols:
             c_name = c["column_name"]
             if not is_superadmin and _SENSITIVE_COLUMNS.search(c_name):
+                continue
+            if not is_admin and _PII_COLUMNS.search(c_name):
                 continue
             columns_info.append({
                 "column_name": c_name,

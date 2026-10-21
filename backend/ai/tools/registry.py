@@ -170,15 +170,31 @@ def get_tool_registry() -> ToolRegistry:
         # Register standard academic, attendance, and reporting tools
         from backend.ai.tools.academic_tools import (
             create_assessment_draft_tool,
+            create_assignment_draft_tool,
+            create_examination_draft_tool,
             get_course_curriculum_tool,
+            get_pending_submissions_tool,
+            get_quiz_evaluation_summary_tool,
+            manage_course_resources_tool,
+            publish_assessment_tool,
+            submit_assignment_solution_tool,
+            suggest_submission_grade_tool,
         )
         from backend.ai.tools.attendance_tools import (
             get_attendance_summary_tool,
             get_my_schedule_tool,
+            manage_batch_session_tool,
+            mark_session_attendance_tool,
         )
         from backend.ai.tools.reporting_tools import (
+            enroll_corporate_employee_tool,
+            generate_institution_report_tool,
+            get_batch_student_performance_and_gaps_tool,
             get_corporate_training_progress_tool,
+            get_guardian_dependents_tool,
             get_student_academic_summary_tool,
+            get_student_assessments_and_deadlines_tool,
+            get_student_enrolled_courses_tool,
         )
         from backend.ai.tools.admin_tools import (
             delete_inactive_users_tool,
@@ -193,11 +209,27 @@ def get_tool_registry() -> ToolRegistry:
         from backend.ai.tools.rag_tools import search_course_knowledge_tool
 
         _global_tool_registry.register(create_assessment_draft_tool)
+        _global_tool_registry.register(create_assignment_draft_tool)
+        _global_tool_registry.register(create_examination_draft_tool)
+        _global_tool_registry.register(publish_assessment_tool)
+        _global_tool_registry.register(get_pending_submissions_tool)
+        _global_tool_registry.register(suggest_submission_grade_tool)
+        _global_tool_registry.register(get_quiz_evaluation_summary_tool)
+        _global_tool_registry.register(manage_course_resources_tool)
         _global_tool_registry.register(get_course_curriculum_tool)
         _global_tool_registry.register(get_my_schedule_tool)
         _global_tool_registry.register(get_attendance_summary_tool)
+        _global_tool_registry.register(mark_session_attendance_tool)
+        _global_tool_registry.register(manage_batch_session_tool)
         _global_tool_registry.register(get_student_academic_summary_tool)
         _global_tool_registry.register(get_corporate_training_progress_tool)
+        _global_tool_registry.register(get_batch_student_performance_and_gaps_tool)
+        _global_tool_registry.register(generate_institution_report_tool)
+        _global_tool_registry.register(get_guardian_dependents_tool)
+        _global_tool_registry.register(get_student_assessments_and_deadlines_tool)
+        _global_tool_registry.register(get_student_enrolled_courses_tool)
+        _global_tool_registry.register(enroll_corporate_employee_tool)
+        _global_tool_registry.register(submit_assignment_solution_tool)
         _global_tool_registry.register(search_course_knowledge_tool)
         _global_tool_registry.register(sync_all_data_tool)
         _global_tool_registry.register(delete_inactive_users_tool)

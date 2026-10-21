@@ -24,6 +24,8 @@ export interface ChatMessage {
   confirmationTicket?: TicketDetails | null;
   toolCalls?: Array<{ tool: string; result?: unknown }>;
   createdAt?: string;
+  isStreaming?: boolean;
+  statusText?: string;
 }
 
 interface AIMessageListProps {
@@ -269,8 +271,33 @@ export function AIMessageList({
 
               {isUser ? (
                 <p className="whitespace-pre-wrap">{msg.content}</p>
+              ) : msg.content ? (
+                <div>
+                  <MarkdownRenderer content={msg.content} />
+                  {msg.isStreaming && (
+                    <span className="inline-block w-1.5 h-3 bg-primary ml-1 animate-pulse align-middle" />
+                  )}
+                </div>
               ) : (
-                <MarkdownRenderer content={msg.content} />
+                <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse my-1">
+                  <Sparkles className="size-3.5 text-primary animate-spin" />
+                  <span>{msg.statusText || "Analyzing intent and consulting LMS records..."}</span>
+                </div>
+              )}
+
+              {/* Render executed tool tags */}
+              {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5 pt-1 border-t border-border-subtle/40">
+                  {msg.toolCalls.map((tc, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-3xs font-mono text-muted-foreground"
+                    >
+                      <span className="size-1.5 rounded-full bg-emerald-500 inline-block" />
+                      {tc.tool}
+                    </span>
+                  ))}
+                </div>
               )}
 
               {/* Render Assessment Drafts if present */}
@@ -329,7 +356,7 @@ export function AIMessageList({
         );
       })}
 
-      {loading && (
+      {loading && !messages.some((m) => m.isStreaming) && (
         <div className="flex gap-2.5 justify-start">
           <div className="size-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5">
             <Bot className="size-4" />
