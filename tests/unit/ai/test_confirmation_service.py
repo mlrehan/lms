@@ -126,3 +126,4 @@ def test_execute_ticket_detects_parameter_tampering():
         assert "altered" in str(exc.value).lower()
 
     asyncio.run(run_test())
+

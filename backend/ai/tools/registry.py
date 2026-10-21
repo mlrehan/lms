@@ -177,6 +177,7 @@ def get_tool_registry() -> ToolRegistry:
             get_corporate_training_progress_tool,
             get_student_academic_summary_tool,
         )
+        from backend.ai.tools.rag_tools import search_course_knowledge_tool
 
         _global_tool_registry.register(create_assessment_draft_tool)
         _global_tool_registry.register(get_course_curriculum_tool)
@@ -184,6 +185,7 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(get_attendance_summary_tool)
         _global_tool_registry.register(get_student_academic_summary_tool)
         _global_tool_registry.register(get_corporate_training_progress_tool)
+        _global_tool_registry.register(search_course_knowledge_tool)
 
         _tools_initialized = True
 

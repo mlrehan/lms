@@ -115,3 +115,4 @@ class ConfirmationExecutionService:
             "is_published": quiz.is_published,
             "message": f"Assessment '{quiz.title}' has been successfully published to enrolled students.",
         }
+

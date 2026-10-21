@@ -45,8 +45,11 @@ from .google_connection import GoogleChangeRequest, GoogleConnection
 from .notification import Notification, Announcement, AnnouncementRead
 from .push import PushSubscription
 from .shared_links import SharedLink, SharedLinkTarget
+from .ai_embedding import ResourceEmbedding, AIConversationMessage
 
 __all__ = [
+    # AI & Embeddings
+    "ResourceEmbedding", "AIConversationMessage",
     # Identity
     "User", "CurrentUser", "Role", "Permission", "Token", "UserRole", "RolePermission",
     # Geo

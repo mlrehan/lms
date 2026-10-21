@@ -133,3 +133,4 @@ def test_workflow_timeout_triggers_rollback():
         assert rollback_called == ["step1_rolled_back"]
 
     asyncio.run(run_test())
+
