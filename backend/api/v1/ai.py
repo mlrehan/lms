@@ -242,6 +242,11 @@ async def chat_with_agent(
 
     # 6. Persist Conversation Turn in Database
     try:
+        try:
+            await session.execute(text("SELECT 1;"))
+        except Exception:
+            await session.rollback()
+
         await state_mgr.append_message(
             user_id=current_user.id,
             role="user",

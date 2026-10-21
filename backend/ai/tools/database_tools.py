@@ -136,12 +136,13 @@ PRIMARY_SCHEMA_METADATA: dict[str, dict[str, Any]] = {
         "example": "SELECT status, count(*) FROM attendances GROUP BY status",
     },
     "quizzes": {
-        "description": "Course quizzes and online assessments.",
+        "description": "Course quizzes and online assessments (NOTE: does NOT have created_at or is_deleted columns).",
         "key_columns": [
             "id", "public_id", "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)",
-            "title", "is_published", "created_at"
+            "session_id (FK -> batch_sessions.id)", "title", "instructions", "is_published",
+            "total_marks", "passing_score", "duration_minutes", "available_from", "available_until"
         ],
-        "example": "SELECT id, title, is_published FROM quizzes",
+        "example": "SELECT count(*) FROM quizzes",
     },
     "quiz_attempts": {
         "description": "Student attempts and scores on quizzes.",
@@ -152,11 +153,12 @@ PRIMARY_SCHEMA_METADATA: dict[str, dict[str, Any]] = {
         "example": "SELECT quiz_id, avg(score) FROM quiz_attempts WHERE status = 'GRADED' GROUP BY quiz_id",
     },
     "assignments": {
-        "description": "Course assignments and homework projects.",
+        "description": "Course assignments and homework projects (NOTE: does NOT have is_deleted column).",
         "key_columns": [
-            "id", "public_id", "batch_id (FK -> batches.id)", "title", "max_score", "due_date"
+            "id", "public_id", "course_id (FK -> courses.id)", "batch_id (FK -> batches.id)",
+            "session_id (FK -> batch_sessions.id)", "title", "max_score", "due_date", "state"
         ],
-        "example": "SELECT id, title, due_date FROM assignments",
+        "example": "SELECT count(*) FROM assignments",
     },
     "assignment_submissions": {
         "description": "Student submissions for assignments.",
@@ -369,17 +371,21 @@ async def handle_execute_database_query(
             "hint": "Ensure your query is a read-only SELECT statement with valid table and column names.",
         }
 
-    # 2. Execute query in safe read-only context with statement timeout
+    # 2. Execute query in safe read-only context with statement timeout and savepoint isolation
     session = context.session
     try:
-        # Enforce read-only transaction and statement timeout
-        await session.execute(text("SET LOCAL TRANSACTION READ ONLY"))
-        await session.execute(text("SET LOCAL statement_timeout = '5000ms'"))
+        # Recover if transaction was left in an aborted state by prior failures
+        try:
+            await session.execute(text("SELECT 1;"))
+        except Exception:
+            await session.rollback()
 
-        stmt = text(safe_query)
-        result = await session.execute(stmt)
-        raw_rows = result.mappings().all()
-        serialized_rows = [serialize_mapping(dict(r)) for r in raw_rows]
+        async with session.begin_nested():
+            await session.execute(text("SET LOCAL statement_timeout = '5000ms'"))
+            stmt = text(safe_query)
+            result = await session.execute(stmt)
+            raw_rows = result.mappings().all()
+            serialized_rows = [serialize_mapping(dict(r)) for r in raw_rows]
 
         row_count = len(serialized_rows)
         logger.info(
@@ -398,6 +404,12 @@ async def handle_execute_database_query(
     except SQLAlchemyError as exc:
         err_msg = str(exc.orig if hasattr(exc, "orig") else exc)
         logger.warning("Database query execution failed: %s (SQL: %s)", err_msg, safe_query)
+        # Ensure session is not left aborted
+        try:
+            if not session.is_active or "aborted" in err_msg.lower():
+                await session.rollback()
+        except Exception:
+            pass
         return {
             "success": False,
             "error": err_msg,
@@ -405,6 +417,10 @@ async def handle_execute_database_query(
         }
     except Exception as exc:
         logger.warning("Unexpected error during query execution: %s", exc)
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         return {
             "success": False,
             "error": str(exc),
@@ -460,45 +476,52 @@ async def handle_inspect_database_schema(
     # 4. Query information_schema for columns
     session = context.session
     try:
-        col_query = text("""
-            SELECT 
-                column_name, 
-                data_type, 
-                is_nullable, 
-                column_default
-            FROM information_schema.columns 
-            WHERE table_schema = 'public' AND table_name = :table_name 
-            ORDER BY ordinal_position;
-        """)
-        cols_res = await session.execute(col_query, {"table_name": table_name})
-        cols = cols_res.mappings().all()
+        # Recover if transaction was left in an aborted state
+        try:
+            await session.execute(text("SELECT 1;"))
+        except Exception:
+            await session.rollback()
 
-        if not cols:
-            return {
-                "success": False,
-                "error": f"Table '{table_name}' does not exist in the public schema.",
-                "available_tables": sorted(list(PRIMARY_SCHEMA_METADATA.keys())),
-            }
+        async with session.begin_nested():
+            col_query = text("""
+                SELECT 
+                    column_name, 
+                    data_type, 
+                    is_nullable, 
+                    column_default
+                FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = :table_name 
+                ORDER BY ordinal_position;
+            """)
+            cols_res = await session.execute(col_query, {"table_name": table_name})
+            cols = cols_res.mappings().all()
 
-        # 5. Query foreign key constraints
-        fk_query = text("""
-            SELECT
-                kcu.column_name,
-                ccu.table_name AS foreign_table_name,
-                ccu.column_name AS foreign_column_name
-            FROM information_schema.table_constraints AS tc
-            JOIN information_schema.key_column_usage AS kcu
-                ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage AS ccu
-                ON ccu.constraint_name = tc.constraint_name
-                AND ccu.table_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-                AND tc.table_schema = 'public'
-                AND tc.table_name = :table_name;
-        """)
-        fk_res = await session.execute(fk_query, {"table_name": table_name})
-        fks = fk_res.mappings().all()
+            if not cols:
+                return {
+                    "success": False,
+                    "error": f"Table '{table_name}' does not exist in the public schema.",
+                    "available_tables": sorted(list(PRIMARY_SCHEMA_METADATA.keys())),
+                }
+
+            # 5. Query foreign key constraints
+            fk_query = text("""
+                SELECT
+                    kcu.column_name,
+                    ccu.table_name AS foreign_table_name,
+                    ccu.column_name AS foreign_column_name
+                FROM information_schema.table_constraints AS tc
+                JOIN information_schema.key_column_usage AS kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage AS ccu
+                    ON ccu.constraint_name = tc.constraint_name
+                    AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_schema = 'public'
+                    AND tc.table_name = :table_name;
+            """)
+            fk_res = await session.execute(fk_query, {"table_name": table_name})
+            fks = fk_res.mappings().all()
 
         # Mask sensitive columns if not SuperAdmin
         is_superadmin = Roles.SUPER_ADMIN.value in held_roles

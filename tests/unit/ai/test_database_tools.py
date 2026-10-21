@@ -133,11 +133,23 @@ def test_validate_sql_blocks_admin_tables_for_students():
 # =============================================================================
 
 
+def make_mock_session():
+    """Create a mock AsyncSession that properly supports `async with session.begin_nested()`."""
+    session = AsyncMock()
+    nested_cm = MagicMock()
+    nested_cm.__aenter__ = AsyncMock(return_value=None)
+    nested_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin_nested = MagicMock(return_value=nested_cm)
+    session.is_active = True
+    session.in_transaction = MagicMock(return_value=False)
+    return session
+
+
 def test_handle_inspect_database_schema_all_tables():
     """Calling schema inspection with empty table name returns primary tables list."""
     async def run():
         user = make_test_user(role_name=Roles.SUPER_ADMIN.value)
-        session = AsyncMock()
+        session = make_mock_session()
         ctx = ToolExecutionContext(user=user, session=session)
 
         res = await handle_inspect_database_schema({}, ctx)
@@ -154,7 +166,7 @@ def test_handle_inspect_database_schema_specific_table():
     """Inspecting a specific table queries information_schema and returns columns."""
     async def run():
         user = make_test_user(role_name=Roles.SUPER_ADMIN.value)
-        session = AsyncMock()
+        session = make_mock_session()
 
         # Mock column inspection result
         mock_columns_result = MagicMock()
@@ -167,7 +179,7 @@ def test_handle_inspect_database_schema_specific_table():
         mock_fks_result = MagicMock()
         mock_fks_result.mappings.return_value.all.return_value = []
 
-        session.execute.side_effect = [mock_columns_result, mock_fks_result]
+        session.execute.side_effect = [None, mock_columns_result, mock_fks_result]
         ctx = ToolExecutionContext(user=user, session=session)
 
         res = await handle_inspect_database_schema({"table_name": "courses"}, ctx)
@@ -183,7 +195,7 @@ def test_handle_inspect_database_schema_invalid_table_name():
     """Invalid table names containing punctuation or spaces must be rejected."""
     async def run():
         user = make_test_user()
-        session = AsyncMock()
+        session = make_mock_session()
         ctx = ToolExecutionContext(user=user, session=session)
 
         res = await handle_inspect_database_schema({"table_name": "users; DROP TABLE"}, ctx)
@@ -202,13 +214,13 @@ def test_handle_execute_database_query_success():
     """Executing a valid read-only query returns formatted rows and row_count."""
     async def run():
         user = make_test_user(role_name=Roles.SUPER_ADMIN.value)
-        session = AsyncMock()
+        session = make_mock_session()
 
         mock_exec_result = MagicMock()
         mock_exec_result.mappings.return_value.all.return_value = [
             {"tutor_count": 29},
         ]
-        session.execute.side_effect = [None, None, mock_exec_result]  # SET READ ONLY, SET timeout, SELECT
+        session.execute.side_effect = [None, None, mock_exec_result]  # SELECT 1, SET timeout, SELECT
         ctx = ToolExecutionContext(user=user, session=session)
 
         query = (
@@ -230,7 +242,7 @@ def test_handle_execute_database_query_catches_sql_error():
 
     async def run():
         user = make_test_user()
-        session = AsyncMock()
+        session = make_mock_session()
         session.execute.side_effect = ProgrammingError("SELECT unknown_col FROM users", {}, orig=Exception('column "unknown_col" does not exist'))
         ctx = ToolExecutionContext(user=user, session=session)
 

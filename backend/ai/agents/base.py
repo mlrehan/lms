@@ -81,6 +81,9 @@ class BaseAgent:
             f"3. Common Schema Queries:\n"
             f"   - Tutors count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'TUTOR' AND u.status != 'DELETED';\n"
             f"   - Students count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'STUDENT' AND u.status != 'DELETED';\n"
+            f"   - Quizzes count: SELECT count(*) FROM quizzes; (Note: quizzes does NOT have an is_deleted column)\n"
+            f"   - Published quizzes: SELECT count(*) FROM quizzes WHERE is_published = true;\n"
+            f"   - Assignments count: SELECT count(*) FROM assignments; (Note: assignments does NOT have is_deleted column)\n"
             f"   - Active courses: SELECT count(*) FROM courses WHERE NOT is_deleted;\n"
             f"   - Batches: SELECT count(*) FROM batches;\n"
             f"4. Self-Healing & Failure Handling: If a query returns an error, use 'inspect_database_schema' to verify table/column names and retry safely.\n"
@@ -170,6 +173,10 @@ class BaseAgent:
                 except Exception as exc:
                     logger.warning("Tool %s execution raised: %s", fn_name, exc)
                     tool_result = {"error": str(exc), "success": False}
+                    try:
+                        await self.session.rollback()
+                    except Exception:
+                        pass
 
                 tools_executed.append({
                     "tool": fn_name,

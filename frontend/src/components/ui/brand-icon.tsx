@@ -21,7 +21,7 @@ export function BrandIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
       <path d="M 0 152 H 396 V 394 C 396 480 300 548 198 548 C 96 548 0 480 0 394 Z" fill="#FF0000" />
 
       {/* Stylized White Outline Hand Cursor */}
-      <g fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+      <g fill="none" stroke="#FFFFFF" strokeWidth="22" strokeLinecap="round" strokeLinejoin="round">
         {/* Extended Index Finger */}
         <path d="M 116 350 V 200 A 27.5 27.5 0 0 1 171 200 V 350" />
 
