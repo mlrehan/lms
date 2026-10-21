@@ -116,7 +116,12 @@ function FormattedParagraph({ text }: { text: string }) {
 
   let i = 0;
   while (i < rawLines.length) {
-    const line = rawLines[i].trim();
+    const rawLine = rawLines[i];
+    if (rawLine === undefined) {
+      i++;
+      continue;
+    }
+    const line = rawLine.trim();
     if (!line) {
       blocks.push({ type: "spacer" });
       i++;
@@ -126,17 +131,20 @@ function FormattedParagraph({ text }: { text: string }) {
     // Markdown Table check: consecutive lines starting and ending with |
     if (line.startsWith("|") && line.endsWith("|")) {
       const tableLines: string[] = [];
-      while (
-        i < rawLines.length &&
-        rawLines[i].trim().startsWith("|") &&
-        rawLines[i].trim().endsWith("|")
-      ) {
-        tableLines.push(rawLines[i].trim());
+      while (i < rawLines.length) {
+        const nextRaw = rawLines[i];
+        if (nextRaw === undefined) break;
+        const nextTrimmed = nextRaw.trim();
+        if (!nextTrimmed.startsWith("|") || !nextTrimmed.endsWith("|")) {
+          break;
+        }
+        tableLines.push(nextTrimmed);
         i++;
       }
 
-      if (tableLines.length >= 2) {
-        const rawHeaders = tableLines[0]
+      const headerLine = tableLines[0];
+      if (tableLines.length >= 2 && headerLine) {
+        const rawHeaders = headerLine
           .split("|")
           .slice(1, -1)
           .map((h) => h.trim());
@@ -154,7 +162,7 @@ function FormattedParagraph({ text }: { text: string }) {
           rows: rawRows,
         });
         continue;
-      } else {
+      } else if (tableLines.length > 0 && tableLines[0]) {
         blocks.push({ type: "p", content: tableLines[0] });
         continue;
       }
