@@ -17,9 +17,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Enable pgvector if available
+    # 1. Enable pgvector if available on the host/container
     conn = op.get_bind()
-    conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+    try:
+        is_available = conn.execute(
+            sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector';")
+        ).scalar()
+        if is_available:
+            conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
+    except Exception:
+        # Graceful fallback if pgvector extension is not installed; embeddings stored as JSON
+        pass
 
     # 2. Resource Embeddings table
     op.create_table(
