@@ -59,7 +59,7 @@ class BaseAgent:
         self.request_id = request_id
 
     def get_effective_system_prompt(self) -> str:
-        """Return system prompt enhanced with caller context."""
+        """Return system prompt enhanced with caller context and database query rules."""
         caller_name = (
             f"{self.user.first_name or ''} {self.user.last_name or ''}".strip()
             or self.user.username
@@ -72,7 +72,19 @@ class BaseAgent:
             f"Public ID: {self.user.public_id}\n"
             f"Roles: {held_roles}\n"
             f"Timezone: {self.user.timezone or 'UTC'}\n"
-            f"Strict Invariant: All facts must come from tool queries. Never invent or hallucinate course, batch, or student IDs."
+            f"Strict Invariant: All facts must come from tool queries. Never invent or hallucinate course, batch, or student IDs.\n\n"
+            f"[DIRECT DATABASE QUERY & REAL-TIME GROUNDING]\n"
+            f"You possess direct, real-time database query capabilities via 'execute_database_query' and 'inspect_database_schema'.\n"
+            f"1. Direct Database Access: For any question about LMS data (e.g., tutor counts, student counts, courses, batches, "
+            f"schedules, attendance, quiz scores, or platform stats), automatically execute a safe read-only SQL query via 'execute_database_query'.\n"
+            f"2. Automatic Execution: Do NOT ask permission, suggest reports, or tell the user to check dashboard pages. Execute the query immediately in the background.\n"
+            f"3. Common Schema Queries:\n"
+            f"   - Tutors count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'TUTOR' AND u.status != 'DELETED';\n"
+            f"   - Students count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'STUDENT' AND u.status != 'DELETED';\n"
+            f"   - Active courses: SELECT count(*) FROM courses WHERE NOT is_deleted;\n"
+            f"   - Batches: SELECT count(*) FROM batches;\n"
+            f"4. Self-Healing & Failure Handling: If a query returns an error, use 'inspect_database_schema' to verify table/column names and retry safely.\n"
+            f"5. Response Style — Strictly Concise: Return direct, natural, factual answers grounded in the database results (e.g. 'We currently have 29 tutors in our system.')."
         )
 
     async def execute_turn(

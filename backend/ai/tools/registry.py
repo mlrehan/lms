@@ -186,6 +186,10 @@ def get_tool_registry() -> ToolRegistry:
             manage_user_tool,
             sync_all_data_tool,
         )
+        from backend.ai.tools.database_tools import (
+            execute_database_query_tool,
+            inspect_database_schema_tool,
+        )
         from backend.ai.tools.rag_tools import search_course_knowledge_tool
 
         _global_tool_registry.register(create_assessment_draft_tool)
@@ -199,6 +203,8 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(delete_inactive_users_tool)
         _global_tool_registry.register(get_system_overview_tool)
         _global_tool_registry.register(manage_user_tool)
+        _global_tool_registry.register(execute_database_query_tool)
+        _global_tool_registry.register(inspect_database_schema_tool)
 
         _tools_initialized = True
 
