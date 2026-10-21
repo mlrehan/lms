@@ -69,7 +69,7 @@ class ConfirmationExecutionService:
     ) -> dict[str, Any]:
         """Transition an assessment from DRAFT to PUBLISHED state."""
         params = ticket.parameters
-        assessment_id_str = params.get("assessment_id")
+        assessment_id_str = params.get("assessment_id") or params.get("quiz_id")
         if not assessment_id_str:
             raise ValidationError("Assessment ID is missing from confirmation parameters.")
 

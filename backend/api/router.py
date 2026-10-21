@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from backend.api.v1 import (
     academic,
+    ai,
     announcements,
     assignments,
     audit,
@@ -117,3 +118,4 @@ router.include_router(search.router)
 router.include_router(google_calendar.router)
 router.include_router(integrations.router)
 router.include_router(ops.router)
+router.include_router(ai.router)

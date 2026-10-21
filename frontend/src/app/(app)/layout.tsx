@@ -6,6 +6,8 @@ import { Loader2, Lock } from "lucide-react";
 import Link from "next/link";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
+import { AIDrawer } from "@/components/ai/ai-drawer";
+import { useAIStore } from "@/lib/ai-store";
 import { EmptyState } from "@/components/ui/states";
 import { Card, TooltipProvider } from "@/components/ui/primitives";
 import { buttonVariants } from "@/components/ui/button";
@@ -26,6 +28,18 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { isLoading, isSignedOut, permissions, error } = useSession();
   const [navOpen, setNavOpen] = useState(false);
+  const toggleAi = useAIStore((state) => state.toggleDrawer);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        toggleAi();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleAi]);
 
   useEffect(() => {
     if (isSignedOut) {
@@ -117,6 +131,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             )}
           </main>
         </div>
+        <AIDrawer />
       </div>
     </TooltipProvider>
   );

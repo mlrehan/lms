@@ -15,6 +15,7 @@ import {
   PanelLeft,
   Sun,
   SunMoon,
+  Sparkles,
   User as UserIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -23,6 +24,7 @@ import type { UnreadCountResponse } from "@/lib/api/types";
 import { useSession, useSignOut } from "@/lib/auth/session";
 import { useRealtime } from "@/lib/realtime";
 import { useSidebarState } from "@/lib/sidebar-state";
+import { useAIStore } from "@/lib/ai-store";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -157,6 +159,7 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
   );
 
   const { collapsed, toggle } = useSidebarState();
+  const openAiDrawer = useAIStore((state) => state.openDrawer);
 
   return (
     // `glass` rather than a near-opaque fill: at 95% the bar is effectively
@@ -208,6 +211,16 @@ export function Topbar({ onOpenNav }: { onOpenNav: () => void }): ReactNode {
           </Link>
         ) : null}
 
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-primary hover:text-primary hover:bg-primary/10 relative"
+          aria-label="Open AI Assistant"
+          title="AI Assistant (Ctrl+J)"
+          onClick={() => openAiDrawer()}
+        >
+          <Sparkles className="size-4" />
+        </Button>
         <TimeZoneMenu />
         <ThemeMenu />
 
