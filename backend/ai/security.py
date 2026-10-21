@@ -56,13 +56,15 @@ class ToolPolicy(BaseModel):
 
 # Patterns that signal adversarial jailbreaks, prompt extractions, or privilege overrides
 _PROMPT_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?i)\bignore\s+(all\s+)?(previous|prior|above)\s+instructions\b"),
-    re.compile(r"(?i)\b(system\s+prompt|developer\s+mode|jailbreak|unrestricted\s+mode)\b"),
-    re.compile(r"(?i)\b(output|print|reveal|repeat|leak)\s+(your\s+)?(instructions|system\s+prompt|rules)\b"),
-    re.compile(r"(?i)\b(you\s+are\s+now\s+in\s+developer\s+mode|dan\s+mode)\b"),
-    re.compile(r"(?i)\b(act\s+as\s+root|sudo\s+mode|bypass\s+security|override\s+permissions)\b"),
-    re.compile(r"(?i)<\s*(system|instruction|developer|override)\s*>"),
+    re.compile(r"(?i)\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|directives|rules|prompts)\b"),
+    re.compile(r"(?i)\b(output|print|reveal|repeat|leak|display|dump)\s+(all\s+)?(your\s+|the\s+)?(instructions|system\s+prompt|developer\s+(mode\s+)?prompt|rules|hidden\s+prompt)\b"),
+    re.compile(r"(?i)\b(developer\s+mode|dan\s+mode|jailbreak|unrestricted\s+mode)\b"),
+    re.compile(r"(?i)\b(act\s+as\s+root|(enable|enter|switch\s+to|activate|grant)\s+sudo(\s+mode)?|bypass\s+security|override\s+permissions|escalate\s+privileges)\b"),
+    re.compile(r"(?i)(<\|im_start\|>|<\|im_end\|>|\[/?INST\]|<<SYS>>|<</SYS>>|<\s*/?\s*(system|instruction|developer|override)\s*>)"),
     re.compile(r"(?i)\[\s*(system|developer|admin_override)\s*\]"),
+    re.compile(r"(?i)(===+|---+)\s*(INSTRUCTION|SYSTEM|OVERRIDE|DIRECTIVE)"),
+    re.compile(r"(?i)\b(pretend\s+(to\s+be|you\s+are)\s+(an?\s+)?unrestricted|simulate\s+(being\s+an?\s+)?evil|unfiltered\s+assistant)\b"),
+    re.compile(r"(?i)\b(reveal|show|give\s+me|dump)\s+(all\s+)?(passwords|api\s*keys|secret\s*keys|jwt\s*secret|encryption\s*keys)\b"),
     re.compile(r"(?i)\bdrop\s+table\b|\bdelete\s+from\s+users\b|\bselect\s+.*\s+from\s+audit_logs\b"),
 )
 

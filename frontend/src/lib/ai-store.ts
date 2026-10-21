@@ -15,3 +15,4 @@ export const useAIStore = create<AIState>((set) => ({
   closeDrawer: () => set({ isOpen: false, initialPrompt: null }),
   toggleDrawer: () => set((state) => ({ isOpen: !state.isOpen, initialPrompt: null })),
 }));
+

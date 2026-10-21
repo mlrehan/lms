@@ -147,3 +147,4 @@ export function VoiceInputButton({ onTranscript, disabled }: VoiceInputButtonPro
     </Button>
   );
 }
+

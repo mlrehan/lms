@@ -138,3 +138,4 @@ describe("useAIStore", () => {
     expect(useAIStore.getState().isOpen).toBe(true);
   });
 });
+

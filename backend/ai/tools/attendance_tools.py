@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from sqlalchemy import func, select
+import uuid
+from sqlalchemy import func, or_, select
 
 from backend.ai.orchestrator import AIOrchestrator
 from backend.ai.security import RiskLevel, ToolPolicy
@@ -85,7 +86,24 @@ async def handle_get_attendance_summary(
     resolver = ScopeResolver(session)
 
     target_student_id = arguments.get("student_id")
-    batch_code = arguments.get("batch_code")
+    batch_identifier = arguments.get("batch_identifier") or arguments.get("batch_code") or arguments.get("batch_id")
+    target_batch_id: int | None = None
+
+    if batch_identifier:
+        batch_conditions = [Batch.batch_code == str(batch_identifier)]
+        try:
+            val_uuid = uuid.UUID(str(batch_identifier))
+            batch_conditions.append(Batch.public_id == val_uuid)
+        except (ValueError, TypeError):
+            pass
+        batch_stmt = select(Batch).where(or_(*batch_conditions))
+        batch_row = (await session.execute(batch_stmt)).scalar_one_or_none()
+        if not batch_row:
+            raise NotFoundError(f"Batch '{batch_identifier}' was not found.")
+        visible_batches = await resolver.visible_batch_ids(user)
+        if not visible_batches.allows(batch_row.id):
+            raise AuthorizationError("You are not assigned to this batch.")
+        target_batch_id = batch_row.id
 
     # If student is specified, check visibility
     student_id_int: int | None = None
