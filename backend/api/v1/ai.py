@@ -33,6 +33,7 @@ from backend.db.dependencies import DBSession
 from backend.models.enrollment import Enrollments
 from backend.models.identity.user import User
 from backend.models.quiz import Quiz
+from backend.services import audit_service
 from backend.services.quiz_service import QuizService
 from backend.utils.enums import EnrollmentStatus
 
@@ -124,6 +125,22 @@ async def chat_with_agent(
         sanitized_prompt = SecurityPolicyEngine.sanitize_user_input(payload.prompt)
     except (SecurityError, AISecurityError) as exc:
         logger.warning("Prompt injection blocked for user %s: %s", current_user.public_id, exc)
+        try:
+            audit_service.record(
+                session,
+                action=audit_service.AuditAction.AI_SECURITY_ALERT,
+                actor_user_id=current_user.id,
+                actor_email=current_user.email,
+                entity_type="ai_prompt",
+                success=False,
+                details={
+                    "event": "PROMPT_INJECTION_BLOCKED",
+                    "reason": str(exc),
+                },
+            )
+        except Exception:
+            pass
+
         return AIChatResponse(
             message=(
                 "Request blocked by AI safety policy. Malicious prompt patterns or "

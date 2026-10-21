@@ -37,6 +37,7 @@ def make_user(*, role_name: str, perms: list[str] | None = None) -> User:
 def test_chat_prompt_injection_blocked():
     async def run():
         session = AsyncMock()
+        session.add = MagicMock()
         request = MagicMock()
         user = make_user(role_name=Roles.STUDENT.value)
 

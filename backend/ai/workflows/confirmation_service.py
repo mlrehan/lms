@@ -91,8 +91,9 @@ class ConfirmationExecutionService:
         try:
             audit_service.record(
                 self.session,
-                action=audit_service.AuditAction.UPDATE,
-                actor=actor,
+                action=audit_service.AuditAction.AI_CONFIRMED_ACTION,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
                 entity_type="quiz",
                 entity_id=quiz.id,
                 details={
@@ -102,7 +103,6 @@ class ConfirmationExecutionService:
                     "scope": quiz.scope.value,
                     "batch_id": quiz.batch_id,
                 },
-                client_ip=client_ip,
             )
         except Exception as exc:
             logger.warning("Audit logging for confirmed ticket %s failed: %s", ticket.ticket_id, exc)

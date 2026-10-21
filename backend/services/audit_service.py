@@ -62,6 +62,9 @@ class AuditAction:
     # permission check with no memory.
     CLASS_JOIN = "CLASS_JOIN"
     RECORDING_VIEW = "RECORDING_VIEW"
+    AI_INTERACTION = "AI_INTERACTION"
+    AI_CONFIRMED_ACTION = "AI_CONFIRMED_ACTION"
+    AI_SECURITY_ALERT = "AI_SECURITY_ALERT"
 
 
 def _build(
