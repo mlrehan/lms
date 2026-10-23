@@ -1,0 +1,19 @@
+ssh root@158.220.92.194
+Password: GreenRelation26
+
+cd /var/www/lait/LMS
+
+git status
+git log --oneline --graph --decorate -10
+git branch backup-before-pull-$(date +%Y%m%d-%H%M%S)
+git config pull.rebase false
+git pull --no-rebase origin master
+
+
+docker compose build backend frontend
+docker compose run --rm backend alembic upgrade head
+docker compose up -d --no-deps backend frontend webhooks-worker
+
+docker compose ps
+docker compose logs --tail=50 backend
+docker compose logs --tail=50 frontend

@@ -2,15 +2,25 @@
 
 Provides robust, rate-limited, retried interactions with OpenAI endpoints
 while mapping upstream errors into the LMS AppError hierarchy.
+
+Supports both the OpenAI Responses API (/v1/responses) and the Chat
+Completions API (/v1/chat/completions), selected via the
+``OPENAI_API_MODE`` setting (``"responses"`` or ``"chat"``).
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any, AsyncGenerator, Sequence
+
 import openai
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall,
+    Function,
+)
+from openai.types.chat.chat_completion import Choice
 
 from backend.ai.config import AISettings, get_ai_settings
 from backend.core.errors import (
@@ -21,6 +31,171 @@ from backend.core.errors import (
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Conversion helpers – Chat Completions format ⇄ Responses API format
+# ---------------------------------------------------------------------------
+
+
+def _convert_tools_for_responses(
+    tools: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Convert chat-format tools to responses-format tools.
+
+    Chat format:
+        ``{"type": "function", "function": {"name": …, "description": …, "parameters": …}}``
+
+    Responses format:
+        ``{"type": "function", "name": …, "description": …, "parameters": …}``
+
+    If a tool already has ``"name"`` at top level (already responses format),
+    it is passed through unchanged.
+    """
+    if not tools:
+        return None
+
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        # Already in responses format?
+        if "name" in tool:
+            converted.append(tool)
+            continue
+
+        fn = tool.get("function", {})
+        converted.append(
+            {
+                "type": "function",
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {}),
+            }
+        )
+    return converted
+
+
+def _convert_messages_for_responses(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert chat-format messages to Responses API input items.
+
+    Key mapping rules:
+    * ``system`` role → ``developer`` role (Responses API convention).
+    * ``assistant`` with ``tool_calls`` → content item + ``function_call`` items.
+    * ``tool`` role → ``function_call_output`` items.
+    """
+    items: list[dict[str, Any]] = []
+
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content") or ""
+
+        if role == "system":
+            items.append({"role": "developer", "content": content})
+
+        elif role == "user":
+            items.append({"role": "user", "content": content})
+
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                # Emit assistant content first (if non-empty).
+                if content:
+                    items.append({"role": "assistant", "content": content})
+                for tc in tool_calls:
+                    # Support both dict and object (e.g. Pydantic model) representations.
+                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "")
+                    if isinstance(tc, dict):
+                        fn = tc.get("function", {})
+                        fn_name = fn.get("name", "")
+                        fn_args = fn.get("arguments", "")
+                    else:
+                        fn = getattr(tc, "function", None)
+                        fn_name = getattr(fn, "name", "") if fn else ""
+                        fn_args = getattr(fn, "arguments", "") if fn else ""
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc_id,
+                            "name": fn_name,
+                            "arguments": fn_args,
+                        }
+                    )
+            else:
+                items.append({"role": "assistant", "content": content})
+
+        elif role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id", ""),
+                    "output": content,
+                }
+            )
+        else:
+            # Pass through any other roles unchanged.
+            items.append(msg)
+
+    return items
+
+
+def _response_to_chat_completion(response: Any, model: str) -> ChatCompletion:
+    """Convert an OpenAI Responses API ``Response`` object to a ``ChatCompletion``.
+
+    This shim allows existing agent code written against the Chat Completions
+    schema to work unchanged when the Responses API is in use.
+    """
+    text_content: str | None = None
+    tool_calls_list: list[ChatCompletionMessageToolCall] = []
+
+    for item in response.output:
+        item_type = getattr(item, "type", None)
+
+        if item_type == "function_call":
+            tool_calls_list.append(
+                ChatCompletionMessageToolCall(
+                    id=item.call_id,
+                    type="function",
+                    function=Function(
+                        name=item.name,
+                        arguments=item.arguments,
+                    ),
+                )
+            )
+        elif item_type == "message":
+            # Collect text from content parts.
+            parts = getattr(item, "content", []) or []
+            texts: list[str] = []
+            for part in parts:
+                if getattr(part, "type", "") == "output_text":
+                    texts.append(getattr(part, "text", ""))
+            if texts:
+                text_content = "".join(texts)
+
+    msg = ChatCompletionMessage(
+        role="assistant",
+        content=text_content or None,
+        tool_calls=tool_calls_list or None,
+    )
+    choice = Choice(
+        finish_reason="tool_calls" if tool_calls_list else "stop",
+        index=0,
+        message=msg,
+    )
+
+    created_at = getattr(response, "created_at", 0)
+    return ChatCompletion(
+        id=response.id,
+        choices=[choice],
+        created=int(created_at) if created_at else 0,
+        model=model,
+        object="chat.completion",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Error classes
+# ---------------------------------------------------------------------------
 
 
 class AIClientError(AppError):
@@ -35,6 +210,11 @@ class AIRateLimitError(AppError):
 
     status_code = 429
     code = "AI_RATE_LIMIT_EXCEEDED"
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
 
 
 class OpenAIClient:
@@ -54,6 +234,23 @@ class OpenAIClient:
             )
         return self._client
 
+    # ---- helpers -----------------------------------------------------------
+
+    @property
+    def _use_responses_api(self) -> bool:
+        """Return ``True`` when the configured API mode is ``responses``."""
+        return self.settings.openai_api_mode == "responses"
+
+    @property
+    def _reasoning_param(self) -> dict[str, Any] | None:
+        """Return a ``reasoning`` parameter dict if reasoning effort is configured."""
+        effort = self.settings.openai_reasoning_effort
+        if effort and effort.lower() != "none":
+            return {"effort": effort}
+        return None
+
+    # ---- Chat Completions --------------------------------------------------
+
     async def chat_completion(
         self,
         *,
@@ -65,13 +262,24 @@ class OpenAIClient:
         max_tokens: int | None = 2048,
     ) -> ChatCompletion:
         """Execute chat completion with retry and error mapping."""
+        # Delegate to Responses API when configured.
+        if self._use_responses_api:
+            return await self._responses_completion(
+                messages=messages,
+                model=model,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
         target_model = model or self.settings.openai_model
         params: dict[str, Any] = {
             "model": target_model,
             "messages": messages,
         }
         # Some models (like newer reasoning or gpt-5 models) do not accept custom temperature
-        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5"))
+        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5", "gpt-6"))
         if not is_fixed_temp_model and temperature is not None:
             params["temperature"] = temperature
         if max_tokens:
@@ -114,6 +322,102 @@ class OpenAIClient:
             logger.error("OpenAI general API error: %s", exc)
             raise AIClientError(f"AI platform error: {exc.message}") from exc
 
+    # ---- Responses API completion -----------------------------------------
+
+    async def _responses_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = 2048,
+    ) -> ChatCompletion:
+        """Execute a completion via the Responses API and return a ``ChatCompletion``."""
+        target_model = model or self.settings.openai_model
+        input_items = _convert_messages_for_responses(messages)
+        converted_tools = _convert_tools_for_responses(tools)
+
+        params: dict[str, Any] = {
+            "model": target_model,
+            "input": input_items,
+        }
+
+        if converted_tools:
+            params["tools"] = converted_tools
+
+        # Reasoning parameter
+        reasoning = self._reasoning_param
+        if reasoning:
+            params["reasoning"] = reasoning
+
+        if max_tokens:
+            params["max_output_tokens"] = max_tokens
+
+        # Some models do not accept a custom temperature value.
+        is_fixed_temp_model = any(
+            prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5", "gpt-6")
+        )
+        if not is_fixed_temp_model and temperature is not None:
+            params["temperature"] = temperature
+
+        if tool_choice is not None:
+            # String values ("auto", "required", "none") or dict values pass through.
+            params["tool_choice"] = tool_choice
+
+        try:
+            response = await self.client.responses.create(**params)
+            return _response_to_chat_completion(response, target_model)
+        except openai.NotFoundError as exc:
+            if target_model != "gpt-4o-mini":
+                logger.warning(
+                    "Responses model '%s' not found; falling back to 'gpt-4o-mini' via chat completions: %s",
+                    target_model,
+                    exc,
+                )
+                # Fallback uses chat completions with gpt-4o-mini.
+                fallback_params: dict[str, Any] = {
+                    "model": "gpt-4o-mini",
+                    "messages": messages,
+                }
+                if not is_fixed_temp_model and temperature is not None:
+                    fallback_params["temperature"] = temperature
+                if max_tokens:
+                    fallback_params["max_completion_tokens"] = max_tokens
+                if tools:
+                    fallback_params["tools"] = tools
+                if tool_choice:
+                    fallback_params["tool_choice"] = tool_choice
+                return await self.client.chat.completions.create(**fallback_params)
+            logger.error("OpenAI model not found: %s", exc)
+            raise AIClientError(f"AI platform model error: {exc.message}") from exc
+        except openai.BadRequestError as exc:
+            if "temperature" in str(exc).lower() and "temperature" in params:
+                logger.info("Retrying responses completion without temperature for model %s", target_model)
+                params.pop("temperature", None)
+                response = await self.client.responses.create(**params)
+                return _response_to_chat_completion(response, target_model)
+            logger.error("OpenAI bad request error: %s", exc)
+            raise AIClientError(f"AI platform error: {exc.message}") from exc
+        except openai.RateLimitError as exc:
+            logger.warning("OpenAI rate limit encountered: %s", exc)
+            raise AIRateLimitError("AI service is currently busy. Please retry shortly.") from exc
+        except openai.AuthenticationError as exc:
+            logger.error("OpenAI authentication failed: %s", exc)
+            raise AIClientError("AI platform authentication configuration is invalid.") from exc
+        except openai.APIConnectionError as exc:
+            logger.error("OpenAI connection failed: %s", exc)
+            raise ServiceUnavailableError("Cannot connect to AI service. Please verify network.") from exc
+        except openai.APITimeoutError as exc:
+            logger.warning("OpenAI request timed out: %s", exc)
+            raise ServiceUnavailableError("AI response timed out. Please try again.") from exc
+        except openai.APIError as exc:
+            logger.error("OpenAI general API error: %s", exc)
+            raise AIClientError(f"AI platform error: {exc.message}") from exc
+
+    # ---- Streaming ---------------------------------------------------------
+
     async def stream_chat_completion(
         self,
         *,
@@ -123,13 +427,24 @@ class OpenAIClient:
         max_tokens: int | None = 2048,
     ) -> AsyncGenerator[str, None]:
         """Stream response text chunks for live conversational UI feedback."""
+        # Delegate to Responses API when configured.
+        if self._use_responses_api:
+            async for chunk in self._stream_responses_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ):
+                yield chunk
+            return
+
         target_model = model or self.settings.openai_model
         params: dict[str, Any] = {
             "model": target_model,
             "messages": messages,
             "stream": True,
         }
-        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5"))
+        is_fixed_temp_model = any(prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5", "gpt-6"))
         if not is_fixed_temp_model and temperature is not None:
             params["temperature"] = temperature
         if max_tokens:
@@ -166,6 +481,84 @@ class OpenAIClient:
             logger.error("OpenAI streaming error: %s", exc)
             raise AIClientError(f"AI stream interrupted: {exc.message}") from exc
 
+    # ---- Responses API streaming -------------------------------------------
+
+    async def _stream_responses_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = 2048,
+    ) -> AsyncGenerator[str, None]:
+        """Stream text deltas via the Responses API."""
+        target_model = model or self.settings.openai_model
+        input_items = _convert_messages_for_responses(messages)
+
+        params: dict[str, Any] = {
+            "model": target_model,
+            "input": input_items,
+            "stream": True,
+        }
+
+        reasoning = self._reasoning_param
+        if reasoning:
+            params["reasoning"] = reasoning
+
+        if max_tokens:
+            params["max_output_tokens"] = max_tokens
+
+        is_fixed_temp_model = any(
+            prefix in target_model.lower() for prefix in ("o1", "o3", "gpt-5", "gpt-6")
+        )
+        if not is_fixed_temp_model and temperature is not None:
+            params["temperature"] = temperature
+
+        try:
+            stream = await self.client.responses.create(**params)
+            async for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta" and event.delta:
+                    yield event.delta
+        except openai.NotFoundError as exc:
+            if target_model != "gpt-4o-mini":
+                logger.warning(
+                    "Responses stream model '%s' not found; falling back to 'gpt-4o-mini': %s",
+                    target_model,
+                    exc,
+                )
+                fallback_params: dict[str, Any] = {
+                    "model": "gpt-4o-mini",
+                    "messages": messages,
+                    "stream": True,
+                }
+                if not is_fixed_temp_model and temperature is not None:
+                    fallback_params["temperature"] = temperature
+                if max_tokens:
+                    fallback_params["max_completion_tokens"] = max_tokens
+                stream = await self.client.chat.completions.create(**fallback_params)
+                async for chunk in stream:  # type: ignore[union-attr]
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                return
+            logger.error("OpenAI model not found: %s", exc)
+            raise AIClientError(f"AI platform model error: {exc.message}") from exc
+        except openai.BadRequestError as exc:
+            if "temperature" in str(exc).lower() and "temperature" in params:
+                logger.info("Retrying responses stream without temperature for model %s", target_model)
+                params.pop("temperature", None)
+                stream = await self.client.responses.create(**params)
+                async for event in stream:
+                    if getattr(event, "type", "") == "response.output_text.delta" and event.delta:
+                        yield event.delta
+            else:
+                logger.error("OpenAI responses streaming bad request error: %s", exc)
+                raise AIClientError(f"AI stream bad request: {exc.message}") from exc
+        except openai.APIError as exc:
+            logger.error("OpenAI responses streaming error: %s", exc)
+            raise AIClientError(f"AI stream interrupted: {exc.message}") from exc
+
+    # ---- Embeddings --------------------------------------------------------
+
     async def create_embeddings(
         self,
         texts: Sequence[str],
@@ -184,6 +577,8 @@ class OpenAIClient:
         except openai.APIError as exc:
             logger.error("OpenAI embedding error: %s", exc)
             raise AIClientError(f"Could not compute embeddings: {exc.message}") from exc
+
+    # ---- Audio transcription -----------------------------------------------
 
     async def transcribe_audio(
         self,
@@ -213,4 +608,3 @@ def get_openai_client() -> OpenAIClient:
     if _openai_client_instance is None:
         _openai_client_instance = OpenAIClient()
     return _openai_client_instance
-

@@ -33,3 +33,5 @@ coverage.xml
 # submissions, never committed. Switching to Cloudflare R2 (STORAGE_MODE=r2)
 # moves these bytes into the bucket instead.
 var/
+marketing/
+Video prompt/

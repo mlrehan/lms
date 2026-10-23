@@ -52,6 +52,16 @@ class AISettings(BaseSettings):
         alias="OPENAI_EMBEDDING_MODEL",
         description="High-dimensional text embedding model for semantic RAG search",
     )
+    openai_api_mode: str = Field(
+        default="responses",
+        alias="OPENAI_API_MODE",
+        description="OpenAI API interaction mode: 'responses' (/v1/responses) or 'chat' (/v1/chat/completions)",
+    )
+    openai_reasoning_effort: str | None = Field(
+        default="high",
+        alias="OPENAI_REASONING_EFFORT",
+        description="Reasoning effort level for models that support reasoning ('low', 'medium', 'high', 'none', or None)",
+    )
 
     # Operational safeguards
     confirmation_ticket_ttl_seconds: int = Field(

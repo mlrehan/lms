@@ -6,7 +6,9 @@ and response synthesis without ever bypassing caller RBAC or row scoping.
 
 from __future__ import annotations
 
+import calendar as _calendar_mod
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Sequence
@@ -133,9 +135,11 @@ class AIOrchestrator:
         phrase: str,
         user_timezone: str | None = None,
     ) -> tuple[datetime, datetime]:
-        """Resolve relative natural language date terms into an absolute UTC time window.
+        """Resolve natural language date terms into an absolute UTC time window.
 
-        Supports 'today', 'tomorrow', 'yesterday', 'this week', 'next week', 'this month'.
+        Supports: 'today', 'tomorrow', 'yesterday', 'this week', 'next week',
+        'this month', 'next month', 'last month', and specific month/year
+        references like 'December 2026', 'January 2027', 'jan 2027', etc.
         """
         tz_name = user_timezone or "UTC"
         try:
@@ -148,7 +152,53 @@ class AIOrchestrator:
 
         cleaned = phrase.strip().lower()
 
-        if "today" in cleaned:
+        # --- Specific month + year references (e.g. "December 2026", "jan 2027") ---
+        _MONTH_NAMES = {
+            "january": 1, "jan": 1, "february": 2, "feb": 2,
+            "march": 3, "mar": 3, "april": 4, "apr": 4,
+            "may": 5, "june": 6, "jun": 6,
+            "july": 7, "jul": 7, "august": 8, "aug": 8,
+            "september": 9, "sep": 9, "sept": 9,
+            "october": 10, "oct": 10, "november": 11, "nov": 11,
+            "december": 12, "dec": 12,
+        }
+        month_pattern = re.compile(
+            r"\b(" + "|".join(_MONTH_NAMES.keys()) + r")\b\s*(\d{4})\b",
+            re.IGNORECASE,
+        )
+        month_match = month_pattern.search(cleaned)
+
+        # Also try "YYYY-MM" or "MM/YYYY" patterns
+        iso_month_match = re.search(r"\b(\d{4})-(\d{1,2})\b", cleaned) if not month_match else None
+        slash_month_match = re.search(r"\b(\d{1,2})/(\d{4})\b", cleaned) if not month_match and not iso_month_match else None
+
+        if month_match:
+            month_num = _MONTH_NAMES[month_match.group(1).lower()]
+            year = int(month_match.group(2))
+            _, last_day = _calendar_mod.monthrange(year, month_num)
+            start = today_start_local.replace(year=year, month=month_num, day=1)
+            end = today_start_local.replace(year=year, month=month_num, day=last_day) + timedelta(days=1)
+        elif iso_month_match:
+            year = int(iso_month_match.group(1))
+            month_num = int(iso_month_match.group(2))
+            if 1 <= month_num <= 12:
+                _, last_day = _calendar_mod.monthrange(year, month_num)
+                start = today_start_local.replace(year=year, month=month_num, day=1)
+                end = today_start_local.replace(year=year, month=month_num, day=last_day) + timedelta(days=1)
+            else:
+                start = today_start_local
+                end = start + timedelta(days=30)
+        elif slash_month_match:
+            month_num = int(slash_month_match.group(1))
+            year = int(slash_month_match.group(2))
+            if 1 <= month_num <= 12:
+                _, last_day = _calendar_mod.monthrange(year, month_num)
+                start = today_start_local.replace(year=year, month=month_num, day=1)
+                end = today_start_local.replace(year=year, month=month_num, day=last_day) + timedelta(days=1)
+            else:
+                start = today_start_local
+                end = start + timedelta(days=30)
+        elif "today" in cleaned:
             start = today_start_local
             end = start + timedelta(days=1)
         elif "tomorrow" in cleaned:
@@ -164,15 +214,46 @@ class AIOrchestrator:
         elif "next week" in cleaned:
             start = today_start_local - timedelta(days=today_start_local.weekday()) + timedelta(days=7)
             end = start + timedelta(days=7)
+        elif "last week" in cleaned:
+            start = today_start_local - timedelta(days=today_start_local.weekday()) - timedelta(days=7)
+            end = start + timedelta(days=7)
+        elif "next month" in cleaned:
+            if now_local.month == 12:
+                start = today_start_local.replace(year=now_local.year + 1, month=1, day=1)
+            else:
+                start = today_start_local.replace(month=now_local.month + 1, day=1)
+            _, last_day = _calendar_mod.monthrange(start.year, start.month)
+            end = start.replace(day=last_day) + timedelta(days=1)
+        elif "last month" in cleaned:
+            if now_local.month == 1:
+                start = today_start_local.replace(year=now_local.year - 1, month=12, day=1)
+            else:
+                start = today_start_local.replace(month=now_local.month - 1, day=1)
+            _, last_day = _calendar_mod.monthrange(start.year, start.month)
+            end = start.replace(day=last_day) + timedelta(days=1)
         elif "this month" in cleaned:
             start = today_start_local.replace(day=1)
-            # Rough 31-day window
-            end = start + timedelta(days=32)
-            end = end.replace(day=1)
+            _, last_day = _calendar_mod.monthrange(start.year, start.month)
+            end = start.replace(day=last_day) + timedelta(days=1)
         else:
-            # Default to 30 days ahead from today
-            start = today_start_local
-            end = start + timedelta(days=30)
+            # Check for a standalone month name without year (assume current or next occurrence)
+            standalone_month = None
+            for name, num in _MONTH_NAMES.items():
+                if re.search(r"\b" + name + r"\b", cleaned):
+                    standalone_month = num
+                    break
+            if standalone_month is not None:
+                year = now_local.year
+                # If the month has already fully passed this year, use next year
+                if standalone_month < now_local.month:
+                    year += 1
+                _, last_day = _calendar_mod.monthrange(year, standalone_month)
+                start = today_start_local.replace(year=year, month=standalone_month, day=1)
+                end = today_start_local.replace(year=year, month=standalone_month, day=last_day) + timedelta(days=1)
+            else:
+                # Default to 60 days ahead from today for broader coverage
+                start = today_start_local
+                end = start + timedelta(days=60)
 
         return (
             start.astimezone(UTC),

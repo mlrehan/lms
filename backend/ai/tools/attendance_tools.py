@@ -38,7 +38,7 @@ async def handle_get_my_schedule(
 
     if is_next_or_first:
         start = now_utc
-        end = now_utc + timedelta(days=60)
+        end = now_utc + timedelta(days=90)
     else:
         start, end = AIOrchestrator.resolve_date_window(
             phrase=time_phrase,
@@ -97,12 +97,12 @@ async def handle_get_my_schedule(
     upcoming_classes.sort(key=lambda x: x["start_time"])
     next_session = upcoming_classes[0] if upcoming_classes else None
 
-    # If no upcoming session in the immediate window, run a forward lookup up to 60 days
+    # If no upcoming session in the immediate window, run a forward lookup up to 120 days
     if not next_session and not is_next_or_first:
         forward_sessions = await session_svc.calendar(
             actor=user,
             start=now_utc,
-            end=now_utc + timedelta(days=60),
+            end=now_utc + timedelta(days=120),
             batch_public_id=batch_public_id,
             limit=20,
         )
@@ -368,7 +368,8 @@ get_my_schedule_tool = ToolDefinition(
     name="get_my_schedule",
     description=(
         "Retrieve class schedule, dates, times, and classrooms for the caller. "
-        "Supports timeframes such as 'today', 'tomorrow', 'this week', or 'this month'."
+        "Supports timeframes such as 'today', 'tomorrow', 'this week', 'this month', "
+        "'next month', 'last month', or specific month-year like 'December 2026', 'January 2027'."
     ),
     policy=ToolPolicy(
         name="get_my_schedule",
@@ -381,7 +382,11 @@ get_my_schedule_tool = ToolDefinition(
         "properties": {
             "timeframe": {
                 "type": "string",
-                "description": "Natural language window: 'today', 'tomorrow', 'this week', 'next week', 'this month'",
+                "description": (
+                    "Natural language window: 'today', 'tomorrow', 'this week', 'next week', "
+                    "'this month', 'next month', 'last month', or specific month/year like "
+                    "'December 2026', 'January 2027'. Pass the user's exact time reference."
+                ),
                 "default": "this week",
             },
             "batch_identifier": {
