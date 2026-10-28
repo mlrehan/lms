@@ -22,7 +22,9 @@ That was fixed in three passes:
 2. **Models rewritten from scratch** to be internally consistent and match the spec: one import convention throughout, `PublicIdMixin` (internal integer PK + a UUID `public_id` for anything API-facing, since sequential integer PKs are trivially enumerable), `SoftDeleteMixin`, `native_enum=False` on every enum column, the frozen-timestamp `server_default` bug fixed everywhere it appeared, the `course_batch.py` grab-bag file split into one file per aggregate. Verified by `configure_mappers()` plus compiling every table's DDL against the Postgres dialect — not just read for correctness.
 3. **Roles expanded to six, plus a corporate/guardian schema, plus the session layer fixed** — see "Confirmed architectural decisions" and "Session/DB layer" below. Findings and the schema proposal preserved in a second published Artifact, *"Roles, Organizations & Architecture Review."*
 
-**`alembic upgrade head` has been run.** `lms_platform_db` currently has the full 57-table schema live (`alembic_version = ec8f0a2fc9dd`), verified directly against the database, not assumed from the migration file alone.
+**`alembic upgrade head` has been run.** As of 2026-10-28 the local `lms_platform_db` is at head `d4e8a17b3c52` (the AI assistant's ticket and index tables), verified with `alembic current` and a model-to-database drift check, not assumed from the migration files.
+
+**Two development phases, two tools.** Everything up to commit `19ed7a1` (2026-10-13) was built with Claude Code. The project then moved to Google Antigravity: commit `c260392` ("UPDATED FROM GOOGLE ANTIGRAVITY", 2026-10-18) bundles work this file documents (permanent deletion, system reset, live badges) with work it did not (course/category editors, notification sounds, announcement reads, the Docker/nginx deployment), and the commits after it added the OpenAI assistant (`backend/ai/`). Claude Code then audited and hardened that assistant in six phases (commits `5daa4ae`..`5c8c243`); see "The AI assistant" at the end of this file.
 
 ## Confirmed architectural decisions (do not re-litigate without new user input)
 
@@ -1768,8 +1770,6 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 > person checking. Anything left below was re-read, not assumed.
 
 
-- **Messaging and academic administration are unbuilt** (spec §16, §23) —
-  models and permissions exist for both, but no endpoints.
 - **No virus scanning** (spec §20). Uploads are checked for size and content
   type only. A real scan means handing bytes to an external scanner before
   they become downloadable, which is a background-job shape this codebase
@@ -1838,10 +1838,10 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 ## Re-running verification
 
 ```bash
-cd D:\LAIT\LMS_NEW
-uv sync                                     # installs psycopg, drops the unused asyncpg
+cd D:\LAIT\LMS_ANGIGRAVITY
+uv sync
 .venv\Scripts\python.exe -c "from backend.models import *; from sqlalchemy.orm import configure_mappers; configure_mappers(); print('OK')"
-.venv\Scripts\python.exe -m alembic current # should report 6612ea1b2250
+.venv\Scripts\python.exe -m alembic current # should report d4e8a17b3c52 (head)
 .venv\Scripts\python.exe -m backend.main    # NOT `uvicorn ...` -- see the event-loop note above
 # then: curl http://localhost:8000/readyz
 #       http://localhost:8000/docs for the interactive API browser
@@ -1850,7 +1850,7 @@ uv sync                                     # installs psycopg, drops the unused
 The console, in a second terminal (it needs the API already running):
 
 ```bash
-cd D:\LAIT\LMS_NEW\frontend
+cd D:\LAIT\LMS_ANGIGRAVITY\frontend
 npm install
 # frontend/.env.local must contain: LMS_API_URL=http://127.0.0.1:8000/api/v1
 npm run dev                                 # http://localhost:3000
@@ -4967,3 +4967,170 @@ session promotes it. The test now does that, and fails without the listeners.
 **Not changed:** writes made outside the application -- direct SQL, another
 service against the same database -- raise no event, because the hook is on the
 ORM session. Those still correct on the next poll or focus.
+
+## Course and category code editors (Python, SQL)
+
+Added during the Antigravity phase (`backend/services/editor_service.py`,
+`editor_admin_service.py`, `api/v1/editors.py`, migration `a7e4b2c91d35`). The
+sidebar offers links to the institution's own editors -- `https://py.lait.co/`
+and `https://sql.lait.co/` -- for the courses a person is actually doing or
+teaching. Guardians and corporate managers are offered none; unrestricted
+callers are offered every editor.
+
+The mapping is stored, not guessed: a rule on a **category**
+(`category_editors`) that every course in it inherits, with a per-**course**
+override (`course_editors`) for exceptions. The `editor` column's CHECK
+constraint names the two editors, so a new one is a migration.
+
+**Known inconsistency, left as found:** the service's docstring says the
+choice must never be guessed from a name, but migration `91a150439935` and the
+LAIT academic sync (commit `4290cdf`) both assign editors by keyword-matching
+category names ("sql", "database", "python", "programming", "data & ai"), and
+that migration's downgrade does nothing. Whether to keep the keyword seeding
+is a product decision that has not been made.
+
+## Docker deployment
+
+Added during the Antigravity phase: `docker-compose.yml` (production),
+`docker-compose.local.yml`, `backend/Dockerfile`, `frontend/Dockerfile`,
+`nginx/`, `postgres/init-db.sh`, `scripts/backup-db.sh` / `restore-db.sh`,
+`scripts/generate-keys.sh`, and `DEPLOYMENT.md` for the steps.
+
+Services: `postgres` (pgvector image, SSL on), `redis` (the realtime bus and
+presence), `backend` (`python -m backend.main`, a **single** uvicorn process),
+`webhooks-worker` (`dispatch_webhooks --interval 30`), `frontend`, `nginx`
+and `certbot`. Migrations are run explicitly
+(`docker compose run --rm backend alembic upgrade head`), never on start-up.
+
+* `postgres/init-db.sh` creates a separate least-privilege **runtime** role
+  (SELECT/INSERT/UPDATE/DELETE only) when `DATABASE_RUNTIME_USER` differs from
+  the migration user -- so in production the application is not a superuser.
+  Locally `.env` uses `postgres` for both.
+* There is no separate scheduler container, and none is needed: the automatic
+  LAIT sync and the AI course-material indexer both run inside the backend
+  process from `core/lifespan.py`.
+* Being one process matters: the AI request limiter keeps its window in
+  memory. Scaling to several workers would need it moved to Redis.
+
+## The AI assistant (`backend/ai/`)
+
+Built during the Antigravity phase (OpenAI, role-bound agents, a tool
+registry, confirmation tickets, RAG, voice input, a chat drawer in the
+console), then audited and hardened by Claude Code in six phases. The audit's
+central finding: the assistant could run SQL it wrote itself, for every role,
+with only pattern matching between it and the database -- so a student could
+read the quiz answer key and other students' grades -- and its
+"confirmations" could be given by the model to itself.
+
+### How a turn works
+
+`POST /api/v1/ai/chat` (any signed-in user, rate-limited per person) picks one
+agent by role -- SuperAdmin (also used for ADMIN), Tutor, Corporate Manager,
+Guardian, Student -- and runs an OpenAI tool-calling loop of at most four
+rounds (`agents/base.py`). The tools offered are exactly those the caller's
+permissions and role admit (`tools/registry.py::list_tools_for_caller`); the
+registry authorizes again on every call. Tools call the platform's own
+services with `actor=user`, so row-level scoping is the services' rule, not a
+second copy of it. `orchestrator.classify_intent` exists and is never called.
+
+### Rules worth not re-litigating
+
+1. **Risk decides confirmation, and the model cannot confirm.** A HIGH or
+   CRITICAL tool without `requires_confirmation` fails at registration
+   (startup). There is no `confirmed` argument anywhere. A staged call returns
+   a ticket whose summary is written by the **server** (`ConfirmationPreview`)
+   -- a model that wrote the confirmation text could describe a deletion as a
+   refresh -- and whose targets are **bound** into it (`_bound_*` parameters,
+   which the registry strips from anything the model sends). Confirming
+   re-runs the tool's own handler after re-authorizing the caller.
+2. **Tickets live in Postgres** (`ai_confirmation_tickets`, `tickets.py`):
+   they survive restarts, work across processes, and are consumed exactly once
+   under a row lock. A typed "yes" confirms only when exactly one action is
+   pending; "no", or the drawer's No button, cancels on the server.
+3. **The most consequential action needs a typed phrase**
+   (`typed_confirmation`), entered in the dialog and passed only by
+   `POST /ai/confirm` -- never by the model.
+4. **One privacy filter for every tool result** (`output_policy.py`), applied
+   in the registry before the model, the stream or history sees it: contact
+   fields and email-shaped text are removed unless the viewer holds
+   `user.view_contact`. Tools also use `visible_username`/`visible_email` at
+   source; the filter is the net under them.
+5. **Tool output is untrusted data**: it reaches the model wrapped as
+   `{"untrusted_data": ...}` with an instruction never to follow text inside it.
+6. **Writes that reach other people are drafts or confirmed.** `draft_message`
+   saves to Drafts and never sends; `post_announcement`, `record_exam_marks`,
+   `publish_assessment`, enrolment, session cancellation and every admin tool
+   are confirmed. `suggest_submission_grade` records nothing.
+   `submit_assignment_solution` is deliberately not registered (an assistant
+   that writes and hands in a student's work).
+
+### SQL
+
+* **Reads** (`execute_database_query`, Super Admin only) go through a
+  dedicated PostgreSQL role, `lms_ai_readonly` (`sql_access.py`), never the
+  request session: SELECT only, granted table by table and column by column
+  from the live catalogue, with credential tables and columns withheld. Proven
+  against the live role: it cannot read password hashes, write even after
+  leaving read-only mode, read server files, or end the application's
+  sessions. Create or refresh it with
+  `AI_SQL_READONLY_PASSWORD=... python -m backend.cli.create_ai_readonly_role`
+  -- and **re-run it after every migration that adds a table**, because new
+  tables are invisible to it until then (deny by default). Without the
+  password set the tool refuses to run.
+* **Writes** (`execute_sql_change`, Super Admin only, CRITICAL,
+  `tools/sql_change_tool.py`): one INSERT/UPDATE/DELETE, parsed by sqlglot (no
+  CTE, no RETURNING, WHERE required, allowlisted functions only); protected
+  tables never written; withheld tables and columns never referenced; an exact
+  dry run (executed and rolled back) sizes the change; refused at zero rows or
+  above `AI_SQL_MAX_WRITE_ROWS`; requires a recent backup by the same rule as
+  the system reset (`core/backups.py`); requires the typed phrase; and rolls
+  back at execution if the row count differs from the preview. Locally no
+  backup path is configured, so writes are refused -- by design.
+
+### Course-material search
+
+`search_course_knowledge` searches an index built by `rag/indexer.py`, which
+runs inside the API process every `AI_RAG_INDEX_INTERVAL_SECONDS` (first pass
+after one interval, so a short-lived test client never pays for embeddings).
+It extracts text from plain text, Markdown, CSV, PDF and .docx
+(`rag/extract.py`), records per resource which stored file and which embedding
+model it indexed (`resource_index_states`), re-indexes on a new version or a
+model change, and deletes chunks of any file that is no longer current.
+Retrieval reads the **live** resource row and admits each file through
+`ResourceService.get`, so shares count and a file made staff-only after
+indexing stops matching at once. Similarity is computed in Python over JSON
+vectors (pgvector is installed but unused), bounded per search.
+
+A defect the running dev server found and the suite did not: storage's
+`open_stream` is a coroutine that *returns* an iterator, and the test's fake
+storage was an async generator, so every real file failed to index while the
+tests passed. The fake now has the real shape.
+
+### Other limits
+
+* Chat 20/min and transcription 6/min per person; audio only, 25 MB.
+* AI history keeps tool names and outcomes, not the records tools returned
+  (assessment drafts excepted -- the drawer re-renders them), and is deleted
+  after `AI_CONVERSATION_RETENTION_DAYS` (30).
+* Tool-level audit rows are written for tools with an `audit_action`. Until
+  phase 3 none ever were: the call used arguments `audit_service.record()`
+  does not accept, and the TypeError was swallowed.
+
+### Known gaps and residual risks
+
+* **Five unit tests fail independently of this work** --
+  `tests/unit/ai/test_ai_client.py` (4) and `test_ai_config.py` (1) assert a
+  model name the local `.env` overrides and await a MagicMock. They failed
+  before the hardening began.
+* The model names in the local `.env` (`gpt-5.6`, `gpt-transcribe`) have not
+  been verified to exist.
+* Nothing in the assistant has been exercised against the real OpenAI model in
+  tests (a scripted fake drives the agent loop), and the typed-phrase dialog
+  has not been clicked through in a browser.
+* The request limiter is per process (see "Docker deployment").
+* The announcement tool calls `AnnouncementService`'s private targeting
+  helpers (`_assert_may_target`, `_resolve_*`) so a person is never asked to
+  confirm something they may not do.
+* The communication section earlier in this file says `announcement.create`
+  is held by nearly every role. In the current catalogue only Super Admin,
+  Admin and Tutor hold it.
