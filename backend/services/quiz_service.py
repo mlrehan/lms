@@ -208,6 +208,7 @@ class QuizService:
             duration_minutes=payload.duration_minutes,
             attempts_allowed=payload.attempts_allowed,
             passing_score=payload.passing_score,
+            total_marks=payload.total_marks,
             shuffle_questions=payload.shuffle_questions,
             is_auto_graded=payload.is_auto_graded,
             grading_policy=payload.grading_policy,

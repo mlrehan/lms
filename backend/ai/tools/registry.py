@@ -314,12 +314,17 @@ def get_tool_registry() -> ToolRegistry:
         )
         from backend.ai.tools.rag_tools import search_course_knowledge_tool
         from backend.ai.tools.communication_tools import draft_message_tool, post_announcement_tool
-        from backend.ai.tools.gradebook_tools import get_batch_gradebook_tool, record_exam_marks_tool
+        from backend.ai.tools.gradebook_tools import (
+            get_batch_gradebook_tool,
+            get_exam_mark_sheet_tool,
+            record_exam_marks_tool,
+        )
 
         _global_tool_registry.register(draft_message_tool)
         _global_tool_registry.register(post_announcement_tool)
         _global_tool_registry.register(get_batch_gradebook_tool)
         _global_tool_registry.register(record_exam_marks_tool)
+        _global_tool_registry.register(get_exam_mark_sheet_tool)
 
         from backend.ai.tools.sql_change_tool import sql_change_tool
 
@@ -334,6 +339,22 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(get_quiz_evaluation_summary_tool)
         _global_tool_registry.register(manage_course_resources_tool)
         _global_tool_registry.register(get_course_curriculum_tool)
+
+        from backend.ai.tools.teaching_tools import get_teaching_context_tool
+
+        _global_tool_registry.register(get_teaching_context_tool)
+
+        from backend.ai.tools.marking_tools import (
+            get_quiz_answers_to_mark_tool,
+            grade_quiz_answers_tool,
+            read_submission_tool,
+            record_submission_grade_tool,
+        )
+
+        _global_tool_registry.register(read_submission_tool)
+        _global_tool_registry.register(record_submission_grade_tool)
+        _global_tool_registry.register(get_quiz_answers_to_mark_tool)
+        _global_tool_registry.register(grade_quiz_answers_tool)
         _global_tool_registry.register(get_my_schedule_tool)
         _global_tool_registry.register(get_attendance_summary_tool)
         _global_tool_registry.register(mark_session_attendance_tool)

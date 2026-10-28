@@ -57,7 +57,7 @@ async def handle_get_student_academic_summary(
         if not found_student:
             raise NotFoundError(f"Student '{target_student_id}' was not found.")
         if not visible.allows(found_student.id):
-            raise AuthorizationError("You do not have permission to view grades for this student.")
+            raise NotFoundError("Student not found.")  # same answer as one that does not exist
         student_id_int = found_student.id
         student_obj = found_student
     elif any(r.name == Roles.STUDENT.value for r in (user.roles or [])):
@@ -277,7 +277,7 @@ async def handle_get_batch_student_performance_and_gaps(
 
     visible_batches = await resolver.visible_batch_ids(user)
     if not visible_batches.allows(batch.id):
-        raise AuthorizationError("You are not authorized to view student records for this batch.")
+        raise NotFoundError("Batch not found.")  # same answer as one that does not exist
 
     enrollment_stmt = (
         select(Enrollments, UserModel)
@@ -593,7 +593,7 @@ async def handle_get_student_assessments_and_deadlines(
         if not found:
             raise NotFoundError(f"Student '{target_student_id}' not found.")
         if not visible.allows(found.id):
-            raise AuthorizationError("You do not have permission to view assessments for this student.")
+            raise NotFoundError("Student not found.")  # same answer as one that does not exist
         student_id_int = found.id
         student_obj = found
     elif Roles.STUDENT.value in held_roles:
@@ -810,7 +810,7 @@ async def handle_get_student_enrolled_courses(
         if not found:
             raise NotFoundError(f"Student '{target_student_id}' not found.")
         if not visible.allows(found.id):
-            raise AuthorizationError("You do not have permission to view enrollments for this student.")
+            raise NotFoundError("Student not found.")  # same answer as one that does not exist
         student_id_int = found.id
         student_obj = found
     elif Roles.STUDENT.value in held_roles:

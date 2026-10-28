@@ -46,6 +46,12 @@ class Course(Base, PublicIdMixin, SoftDeleteMixin):
     course_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, comment="Full-size course image URL")
     small_course_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, comment="Thumbnail image URL")
     prerequisites: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The course's published content and overview, as the institution's own
+    # course page states them. The LMS has no lesson or module tables, so this
+    # is the authoritative "what this course covers" -- read by the teaching
+    # assistant -- and LAIT owns it: the academic sync refreshes it.
+    outline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    overview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = utc_datetime_column(nullable=False, default=True)
     updated_at: Mapped[Optional[datetime]] = utc_datetime_column(onupdate=True, default=False)

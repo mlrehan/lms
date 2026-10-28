@@ -122,10 +122,8 @@ get_batch_gradebook_tool = ToolDefinition(
 # =============================================================================
 
 
-async def _resolve_mark_sheet(
-    arguments: dict[str, Any], context: ToolExecutionContext
-) -> tuple[Exam, list[tuple[User, Decimal, str | None]]]:
-    """Resolve the exam and every named student against its eligible candidates."""
+async def _load_exam(arguments: dict[str, Any], context: ToolExecutionContext) -> tuple[Any, Exam]:
+    """The exam named by id or exact title, admitted by ExamService's own scope."""
     from backend.services.exam_service import ExamService
 
     session = context.session
@@ -142,10 +140,70 @@ async def _resolve_mark_sheet(
             raise ValidationError(f"More than one exam is titled '{ident}'. Give its id instead.") from None
         exam_row = rows[0] if rows else None
     if exam_row is None:
-        raise NotFoundError(f"Exam '{ident}' not found.")
-
+        raise NotFoundError("Exam not found.")
     service = ExamService(session)
-    exam = await service.get(exam_row.public_id, actor=context.user)  # scope: 404 if not visible
+    return service, await service.get(exam_row.public_id, actor=context.user)  # scope: 404 if not visible
+
+
+async def handle_get_exam_mark_sheet(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    """Every eligible candidate for one exam, with their mark or the fact it is missing."""
+    service, exam = await _load_exam(arguments, context)
+    eligible_ids = await service._eligible_student_ids(exam)
+    candidates = list(
+        (await context.session.execute(select(User).where(User.id.in_(eligible_ids or {-1})))).scalars().unique()
+    )
+    results = {r.student_id: r for r in exam.results}
+    rows = []
+    for person in sorted(candidates, key=_name):
+        result = results.get(person.id)
+        mark = result.marks_obtained if result else None
+        rows.append({
+            "student": _name(person),
+            "marks_obtained": float(mark) if mark is not None else None,
+            "status": "MARKED" if mark is not None else "NOT_MARKED",
+            "passed": (Decimal(str(mark)) >= Decimal(str(exam.passing_marks))) if mark is not None else None,
+            "published": bool(result.is_published) if result else False,
+            "remarks": result.remarks if result else None,
+        })
+    return {
+        "exam": exam.title,
+        "exam_id": str(exam.public_id),
+        "total_marks": float(exam.total_marks),
+        "passing_marks": float(exam.passing_marks),
+        "candidates": rows[:_MAX_ROWS],
+        "marked": sum(1 for r in rows if r["status"] == "MARKED"),
+        "not_marked": sum(1 for r in rows if r["status"] == "NOT_MARKED"),
+    }
+
+
+get_exam_mark_sheet_tool = ToolDefinition(
+    name="get_exam_mark_sheet",
+    description=(
+        "Read an exam's mark sheet by exam id or exact title: every eligible candidate with their mark, pass/fail, "
+        "whether it is published, and who is still not marked. Use before record_exam_marks."
+    ),
+    policy=ToolPolicy(
+        name="get_exam_mark_sheet",
+        description="Read an exam's mark sheet",
+        required_permissions=("exam.read",),
+        allowed_roles=(Roles.TUTOR.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
+        risk_level=RiskLevel.LOW,
+    ),
+    parameters_schema={
+        "type": "object",
+        "properties": {"exam_id": {"type": "string", "description": "Exam id or exact title"}},
+        "required": ["exam_id"],
+    },
+    handler=handle_get_exam_mark_sheet,
+)
+
+
+async def _resolve_mark_sheet(
+    arguments: dict[str, Any], context: ToolExecutionContext
+) -> tuple[Exam, list[tuple[User, Decimal, str | None]]]:
+    """Resolve the exam and every named student against its eligible candidates."""
+    session = context.session
+    service, exam = await _load_exam(arguments, context)
     eligible_ids = await service._eligible_student_ids(exam)
     candidates = list(
         (await session.execute(select(User).where(User.id.in_(eligible_ids or {-1})))).scalars().unique()

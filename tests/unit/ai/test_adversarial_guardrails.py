@@ -204,12 +204,13 @@ def test_tutor_cannot_query_attendance_for_unassigned_batch():
             mock_sr.visible_batch_ids = AsyncMock(return_value=mock_scope)
             mock_sr_cls.return_value = mock_sr
 
-            with pytest.raises(AuthorizationError) as exc:
+            with pytest.raises(NotFoundError) as exc:
                 await handle_get_attendance_summary(
                     {"batch_identifier": "batch-77-uuid"},
                     ctx,
                 )
-            assert "not assigned to this batch" in str(exc.value)
+            # Same answer as a batch that does not exist, so it cannot be probed.
+            assert "Batch not found" in str(exc.value)
 
     asyncio.run(run())
 

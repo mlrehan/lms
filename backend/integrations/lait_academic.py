@@ -327,6 +327,17 @@ class CoursePage:
     duration_hours: int | None = None
     prerequisites: str | None = None
     price: float | None = None  # the "Regular Price", not the cheaper batch/group prices
+    outline: str | None = None  # "Course Content": the topics the course covers, one per line
+    overview: str | None = None  # "Course Overview": what the course is and who it is for
+
+
+# A page is text somebody else wrote; keep what is stored bounded.
+_MAX_PAGE_TEXT = 20_000
+
+
+def _page_text(html: str, element_id: str) -> str | None:
+    text = "\n".join(line for line in _element_lines(html, element_id) if line.strip()).strip()
+    return text[:_MAX_PAGE_TEXT] or None
 
 
 _PREREQ_STOP = re.compile(r"^(software|hardware)\s+requirements?\b", re.I)
@@ -362,6 +373,8 @@ def parse_course_page(html: str) -> CoursePage:
         kept.append(line)
     text = "\n".join(kept).strip()
     page.prerequisites = text or None
+    page.outline = _page_text(html, "MainContent_lblCourseOutlineHTML")
+    page.overview = _page_text(html, "MainContent_lblCourseOverview")
     return page
 
 

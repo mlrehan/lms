@@ -27,7 +27,7 @@ from backend.models.enrollment import Enrollments
 from backend.services import audit_service
 from backend.services.scope import ScopeResolver
 from backend.services.session_service import SessionService
-from backend.utils.enums import AttendanceStatus, Roles
+from backend.utils.enums import AttendanceStatus, EnrollmentStatus, Roles
 
 
 async def handle_get_my_schedule(
@@ -175,7 +175,7 @@ async def handle_get_attendance_summary(
             raise NotFoundError(f"Batch '{batch_identifier}' was not found.")
         visible_batches = await resolver.visible_batch_ids(user)
         if not visible_batches.allows(batch_row.id):
-            raise AuthorizationError("You are not assigned to this batch.")
+            raise NotFoundError("Batch not found.")  # same answer as one that does not exist
         target_batch_id = batch_row.id
 
     # If student is specified, check visibility
@@ -204,7 +204,7 @@ async def handle_get_attendance_summary(
         if not found_student:
             raise NotFoundError(f"Student '{target_student_id}' was not found.")
         if not visible_students.allows(found_student.id):
-            raise AuthorizationError("You do not have permission to view attendance for this student.")
+            raise NotFoundError("Student not found.")  # same answer as one that does not exist
         student_id_int = found_student.id
         target_student_obj = found_student
     elif Roles.STUDENT.value.upper() in user_roles:
@@ -435,114 +435,166 @@ get_attendance_summary_tool = ToolDefinition(
 )
 
 
-async def handle_mark_session_attendance(
-    arguments: dict[str, Any],
-    context: ToolExecutionContext,
-) -> dict[str, Any]:
-    """Record or update attendance for students in an authorized class session."""
+async def _resolve_register(
+    arguments: dict[str, Any], context: ToolExecutionContext
+) -> tuple[BatchSession, list[tuple[Any, AttendanceStatus, str | None]]]:
+    """The session and the exact register to record, or a refusal naming why.
+
+    Students are matched by name or id **within the session's enrolled roster
+    only** -- a tutor cannot see email addresses, so matching on them (as this
+    tool used to) could never succeed, and matching across the whole user
+    table could pick a namesake in somebody else's class. A name that matches
+    nobody, or more than one person, refuses the whole register rather than
+    being skipped: a register that silently drops a name is worse than one
+    that fails visibly.
+    """
     user = context.user
     session = context.session
-
     session_ident = arguments.get("session_id")
     batch_code = arguments.get("batch_code")
-    entries_data = arguments.get("entries", [])
-    if not entries_data:
-        raise ValidationError("No attendance entries provided.")
 
     session_row: BatchSession | None = None
     if session_ident:
         try:
             suuid = uuid.UUID(str(session_ident).strip())
-            stmt = select(BatchSession).where(
-                (BatchSession.public_id == suuid) | (BatchSession.id == str(suuid))
-            )
-        except (ValueError, TypeError):
-            stmt = select(BatchSession).where(BatchSession.id == int(session_ident))
-        session_row = (await session.execute(stmt)).scalar_one_or_none()
-
+        except (ValueError, TypeError) as exc:
+            raise ValidationError("session_id must be a session's id as returned by get_my_schedule.") from exc
+        session_row = (
+            await session.execute(select(BatchSession).where(BatchSession.public_id == suuid))
+        ).scalar_one_or_none()
     if not session_row and batch_code:
-        stmt = (
-            select(BatchSession)
-            .join(Batch, Batch.id == BatchSession.batch_id)
-            .where(Batch.batch_code == str(batch_code).strip())
-            .order_by(BatchSession.session_start_time.desc())
-        )
-        session_row = (await session.execute(stmt)).scalars().first()
-
+        # The batch's most recent class that has started (or starts within the
+        # hour) -- never a future one. Ordering by start time alone picked the
+        # last session on the timetable, so "today's class" was recorded
+        # against a class weeks away.
+        session_row = (
+            await session.execute(
+                select(BatchSession)
+                .join(Batch, Batch.id == BatchSession.batch_id)
+                .where(
+                    Batch.batch_code == str(batch_code).strip(),
+                    BatchSession.cancelled_at.is_(None),
+                    BatchSession.session_start_time <= datetime.now(UTC) + timedelta(hours=1),
+                )
+                .order_by(BatchSession.session_start_time.desc())
+            )
+        ).scalars().first()
     if not session_row:
-        raise NotFoundError(f"Session could not be identified for {session_ident or batch_code}.")
+        raise NotFoundError("Session not found.")
 
-    is_admin = any(
-        r.name in (Roles.SUPER_ADMIN.value, Roles.ADMIN.value)
-        for r in (user.roles or [])
-    )
+    is_admin = any(r.name in (Roles.SUPER_ADMIN.value, Roles.ADMIN.value) for r in (user.roles or []))
     if not is_admin and session_row.tutor_id != user.id:
-        raise AuthorizationError("You may only record attendance for your own assigned sessions.")
+        raise NotFoundError("Session not found.")  # same answer as one that does not exist
 
     from backend.models.identity.user import User as UserModel
+
+    roster = (
+        await session.execute(
+            select(UserModel)
+            .join(Enrollments, Enrollments.student_id == UserModel.id)
+            .where(
+                Enrollments.batch_id == session_row.batch_id,
+                Enrollments.status == EnrollmentStatus.CONFIRMED,
+            )
+        )
+    ).scalars().all()
+
+    def full(u: Any) -> str:
+        return " ".join(f"{u.first_name or ''} {u.last_name or ''}".split()).lower()
+
+    def status_of(raw: Any) -> AttendanceStatus:
+        try:
+            return AttendanceStatus[str(raw or "").strip().upper()]
+        except KeyError as exc:
+            raise ValidationError(
+                f"'{raw}' is not an attendance status; use PRESENT, LATE, ABSENT or EXCUSED."
+            ) from exc
+
+    register: dict[int, tuple[Any, AttendanceStatus, str | None]] = {}
+    if arguments.get("everyone_else"):
+        default = status_of(arguments["everyone_else"])
+        register = {u.id: (u, default, None) for u in roster}
+
+    problems: list[str] = []
+    for item in arguments.get("entries") or []:
+        ident = str(item.get("student") or "").strip()
+        if not ident:
+            continue
+        try:
+            as_id = uuid.UUID(ident)
+            matches = [u for u in roster if u.public_id == as_id]
+        except ValueError:
+            wanted = " ".join(ident.split()).lower()
+            matches = [u for u in roster if full(u) == wanted]
+        if len(matches) != 1:
+            problems.append(
+                f"'{ident}' is not enrolled in this class" if not matches else f"'{ident}' matches more than one student"
+            )
+            continue
+        register[matches[0].id] = (matches[0], status_of(item.get("status")), item.get("remarks") or None)
+
+    if problems:
+        raise ValidationError("Nothing was recorded: " + "; ".join(problems) + ".")
+    if not register:
+        raise ValidationError("Name the students, or say what status everyone else should get.")
+    return session_row, sorted(register.values(), key=lambda e: full(e[0]))
+
+
+def _register_name(u: Any) -> str:
+    return " ".join(f"{u.first_name or ''} {u.last_name or ''}".split()) or "Unnamed student"
+
+
+async def preview_mark_session_attendance(
+    arguments: dict[str, Any], context: ToolExecutionContext
+) -> ConfirmationPreview:
+    session_row, register = await _resolve_register(arguments, context)
+    from zoneinfo import ZoneInfo
+
+    try:
+        zone = ZoneInfo(context.user.timezone or "UTC")
+    except Exception:  # noqa: BLE001 -- an unknown zone name shows UTC
+        zone = ZoneInfo("UTC")
+    start = session_row.session_start_time
+    when = start.astimezone(zone).strftime("%d %b %Y %H:%M %Z") if start else "?"
+    listing = ", ".join(f"{_register_name(u)}: {st.value}" for u, st, _ in register)
+    return ConfirmationPreview(
+        summary=f"Record attendance for {session_row.batch.course.title} ({session_row.batch.batch_code}), {when}: {listing}.",
+        affected_records_count=len(register),
+        bound_parameters={
+            "session_id": str(session_row.public_id),
+            "entries": [[str(u.public_id), st.value] for u, st, _ in register],
+        },
+    )
+
+
+async def handle_mark_session_attendance(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> dict[str, Any]:
+    """Record the confirmed register through AttendanceService."""
     from backend.schemas.attendance import AttendanceEntry
     from backend.services.attendance_service import AttendanceService
 
-    attendance_entries: list[AttendanceEntry] = []
-    marked_summary: list[dict[str, Any]] = []
+    session_row, register = await _resolve_register(arguments, context)
+    if (
+        str(session_row.public_id) != str(arguments.get(f"{BOUND_PREFIX}session_id"))
+        or [[str(u.public_id), st.value] for u, st, _ in register] != arguments.get(f"{BOUND_PREFIX}entries")
+    ):
+        raise ValidationError("The register no longer matches what was confirmed; ask again.")
 
-    for item in entries_data:
-        s_ident = item.get("student") or item.get("student_id") or item.get("student_identifier")
-        if not s_ident:
-            continue
-        stu_uuid = None
-        try:
-            stu_uuid = uuid.UUID(str(s_ident).strip())
-        except (ValueError, TypeError):
-            pass
-
-        if stu_uuid:
-            u_stmt = select(UserModel).where(UserModel.public_id == stu_uuid)
-        else:
-            u_stmt = select(UserModel).where(
-                (UserModel.email == str(s_ident).strip()) | (UserModel.username == str(s_ident).strip())
-            )
-        student_user = (await session.execute(u_stmt)).scalar_one_or_none()
-        if not student_user:
-            continue
-
-        status_str = (item.get("status") or "PRESENT").upper()
-        try:
-            status_enum = AttendanceStatus[status_str]
-        except KeyError:
-            status_enum = AttendanceStatus.PRESENT
-
-        remarks = item.get("remarks")
-        attendance_entries.append(
-            AttendanceEntry(
-                student_id=student_user.public_id,
-                status=status_enum,
-                remarks=remarks,
-            )
-        )
-        marked_summary.append({
-            "student": student_user.username or student_user.email,
-            "status": status_enum.value,
-            "remarks": remarks,
-        })
-
-    if not attendance_entries:
-        raise ValidationError("None of the specified students could be resolved in the system.")
-
-    att_svc = AttendanceService(session)
-    await att_svc.mark(
+    await AttendanceService(context.session).mark(
         session_public_id=session_row.public_id,
-        entries=attendance_entries,
-        actor=user,
+        entries=[AttendanceEntry(student_id=u.public_id, status=st, remarks=r) for u, st, r in register],
+        actor=context.user,
     )
-
     return {
         "success": True,
         "session_id": str(session_row.public_id),
-        "marked_count": len(attendance_entries),
-        "entries": marked_summary,
-        "message": f"Successfully recorded attendance for {len(attendance_entries)} student(s).",
+        "marked_count": len(register),
+        "entries": [{"student": _register_name(u), "status": st.value} for u, st, _ in register],
+        "message": f"Recorded attendance for {len(register)} student(s).",
     }
+
 
 
 # Each action needs the permission the console's own route needs for it.
@@ -724,44 +776,44 @@ async def handle_manage_batch_session(
 mark_session_attendance_tool = ToolDefinition(
     name="mark_session_attendance",
     description=(
-        "Record or update attendance for students in a class session. "
-        "Allows setting status to PRESENT, LATE, ABSENT, or EXCUSED with optional remarks."
+        "Record or correct the register for one class you teach. Name students exactly as enrolled (or by id); "
+        "use everyone_else for 'everyone present except ...'. The tutor confirms the full register before it is saved."
     ),
     policy=ToolPolicy(
         name="mark_session_attendance",
-        description="Record or update class attendance",
+        description="Record attendance",
         required_permissions=("attendance.update",),
         allowed_roles=(Roles.TUTOR.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
-        risk_level=RiskLevel.MODERATE,
+        risk_level=RiskLevel.HIGH,
+        requires_confirmation=True,
+        audit_action="UPDATE",
     ),
     parameters_schema={
         "type": "object",
         "properties": {
-            "session_id": {
+            "session_id": {"type": "string", "description": "Session id from get_my_schedule (preferred)"},
+            "batch_code": {"type": "string", "description": "Batch code: its most recent class that has started"},
+            "everyone_else": {
                 "type": "string",
-                "description": "UUID of the class session (optional if batch_code provided)",
-            },
-            "batch_code": {
-                "type": "string",
-                "description": "Batch code to locate the latest session (optional)",
+                "enum": ["PRESENT", "LATE", "ABSENT", "EXCUSED"],
+                "description": "Status for every enrolled student not listed in entries",
             },
             "entries": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "student": {"type": "string", "description": "Student email, username, or UUID"},
-                        "status": {"type": "string", "enum": ["PRESENT", "LATE", "ABSENT", "EXCUSED"], "default": "PRESENT"},
-                        "remarks": {"type": "string", "description": "Optional notes"},
+                        "student": {"type": "string", "description": "Student's full name as enrolled, or id"},
+                        "status": {"type": "string", "enum": ["PRESENT", "LATE", "ABSENT", "EXCUSED"]},
+                        "remarks": {"type": "string"},
                     },
                     "required": ["student", "status"],
                 },
-                "description": "List of student attendance entries to mark",
             },
         },
-        "required": ["entries"],
     },
     handler=handle_mark_session_attendance,
+    preview=preview_mark_session_attendance,
 )
 
 

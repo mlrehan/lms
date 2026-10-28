@@ -22,7 +22,7 @@ That was fixed in three passes:
 2. **Models rewritten from scratch** to be internally consistent and match the spec: one import convention throughout, `PublicIdMixin` (internal integer PK + a UUID `public_id` for anything API-facing, since sequential integer PKs are trivially enumerable), `SoftDeleteMixin`, `native_enum=False` on every enum column, the frozen-timestamp `server_default` bug fixed everywhere it appeared, the `course_batch.py` grab-bag file split into one file per aggregate. Verified by `configure_mappers()` plus compiling every table's DDL against the Postgres dialect — not just read for correctness.
 3. **Roles expanded to six, plus a corporate/guardian schema, plus the session layer fixed** — see "Confirmed architectural decisions" and "Session/DB layer" below. Findings and the schema proposal preserved in a second published Artifact, *"Roles, Organizations & Architecture Review."*
 
-**`alembic upgrade head` has been run.** As of 2026-10-28 the local `lms_platform_db` is at head `d4e8a17b3c52` (the AI assistant's ticket and index tables), verified with `alembic current` and a model-to-database drift check, not assumed from the migration files.
+**`alembic upgrade head` has been run.** As of 2026-10-28 the local `lms_platform_db` is at head `e8b3f52a6d71` (course outline and overview), verified with `alembic current` and a model-to-database drift check, not assumed from the migration files.
 
 **Two development phases, two tools.** Everything up to commit `19ed7a1` (2026-10-13) was built with Claude Code. The project then moved to Google Antigravity: commit `c260392` ("UPDATED FROM GOOGLE ANTIGRAVITY", 2026-10-18) bundles work this file documents (permanent deletion, system reset, live badges) with work it did not (course/category editors, notification sounds, announcement reads, the Docker/nginx deployment), and the commits after it added the OpenAI assistant (`backend/ai/`). Claude Code then audited and hardened that assistant in six phases (commits `5daa4ae`..`5c8c243`); see "The AI assistant" at the end of this file.
 
@@ -1841,7 +1841,7 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 cd D:\LAIT\LMS_ANGIGRAVITY
 uv sync
 .venv\Scripts\python.exe -c "from backend.models import *; from sqlalchemy.orm import configure_mappers; configure_mappers(); print('OK')"
-.venv\Scripts\python.exe -m alembic current # should report d4e8a17b3c52 (head)
+.venv\Scripts\python.exe -m alembic current # should report e8b3f52a6d71 (head)
 .venv\Scripts\python.exe -m backend.main    # NOT `uvicorn ...` -- see the event-loop note above
 # then: curl http://localhost:8000/readyz
 #       http://localhost:8000/docs for the interactive API browser
@@ -5115,6 +5115,46 @@ tests passed. The fake now has the real shape.
 * Tool-level audit rows are written for tools with an `audit_action`. Until
   phase 3 none ever were: the call used arguments `audit_service.record()`
   does not accept, and the TypeError was swallowed.
+
+### The tutor's assistant: teaching, marking, registers
+
+Driven in the browser as a real tutor, which is how most of it was found.
+
+* **"What should I teach?"** -> `get_teaching_context` (`backend/ai/teaching_context.py`):
+  the next class, its position (class n of N), the course's published
+  **outline** (`courses.outline`/`overview`, migration `e8b3f52a6d71`, filled
+  by the LAIT academic sync from the course page; read live through the
+  allowlisted `PageFetcher` until synced), earlier classes counted as taught
+  only where attendance or tutor notes exist, files, assessments and editor
+  links -- each labelled `verified_lms` / `verified_course_page` / `missing`.
+  `get_course_curriculum` read `course.summary`, which does not exist, and
+  crashed on every course; it is scoped through `CourseService.get` now.
+* **Marking** (`backend/ai/tools/marking_tools.py`): `read_submission` (brief,
+  rubric, the student's text and readable attachments, plus the marks already
+  given on that assignment, anonymised, so one standard is applied -- without
+  it two answers of the same quality were proposed 80 and 100),
+  `record_submission_grade`, `get_quiz_answers_to_mark`, `grade_quiz_answers`.
+  Writers are HIGH and confirmed with a server-written preview; marks land
+  GRADED, unreleased.
+* **`create_assignment_draft` published everything it "drafted"** --
+  `AssignmentCreateRequest.state` defaults to PUBLISHED and the tool never set
+  it, so students were notified while the reply said DRAFT. It sets DRAFT now.
+* **`QuizService.create` dropped `total_marks`** for every caller (console
+  included). Fixed.
+* **`mark_session_attendance` never worked**: it compared the integer PK with a
+  UUID as text (Postgres error), matched students by email/username (which a
+  tutor cannot see), skipped unknown names, defaulted unknown statuses to
+  PRESENT, and without a session id picked the batch's *last-scheduled* class.
+  Now: roster-only name matching, whole-register refusal, `everyone_else`,
+  only a class that has started, HIGH + confirmed.
+* `get_exam_mark_sheet` reads an exam's candidates and who is unmarked.
+* Batch/student refusals in the AI tools answer "not found", never "not
+  assigned to batch X" (which confirmed the batch existed).
+* The tutor prompt tells the model to call a confirmed tool directly rather
+  than ask "shall I record it?" first -- otherwise the tutor confirms twice.
+
+Tests: `tests/integration/test_ai_teaching_context.py`,
+`tests/integration/test_ai_marking_tools.py` (real Postgres, mutation-checked).
 
 ### Known gaps and residual risks
 

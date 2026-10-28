@@ -150,7 +150,7 @@ def test_tutor_create_assignment_draft():
             assert res["success"] is True
             assert res["title"] == "Data Structures Project"
             assert res["max_score"] == 100.0
-            assert "created in DRAFT state" in res["summary"]
+            assert "saved in DRAFT state" in res["summary"]
 
     asyncio.run(run())
 

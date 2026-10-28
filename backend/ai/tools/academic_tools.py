@@ -41,7 +41,7 @@ from backend.services.exam_service import ExamService
 from backend.services.quiz_service import QuizService
 from backend.services.resource_service import ResourceService
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import AssessmentScope, ExamType, QuestionType, ResourceType, Roles, SubmissionState
+from backend.utils.enums import AssessmentScope, AssessmentState, ExamType, QuestionType, ResourceType, Roles, SubmissionState, SubmissionType
 
 
 async def _resolve_course(session: AsyncSession, course_identifier: str) -> Course | None:
@@ -148,7 +148,7 @@ async def handle_create_assessment_draft(
             raise NotFoundError(f"Batch '{batch_id_str}' was not found.")
         visible_batches = await resolver.visible_batch_ids(user)
         if not visible_batches.allows(batch.id):
-            raise AuthorizationError("You are not assigned to this batch.")
+            raise NotFoundError("Batch not found.")  # same answer as one that does not exist
 
     questions_data = arguments.get("questions", [])
     if not questions_data:
@@ -173,29 +173,48 @@ async def handle_create_assessment_draft(
         total_points += points
 
         options_input: list[OptionInput] = []
+        settings: dict[str, Any] | None = None
 
-        if q_type in (QuestionType.MCQ_SINGLE, QuestionType.MCQ_MULTIPLE, QuestionType.TRUE_FALSE):
-            raw_options = q.get("options", [])
-            for opt_idx, opt in enumerate(raw_options):
-                opt_text = opt.get("option_text", f"Option {opt_idx + 1}")
-                is_corr = bool(opt.get("is_correct", False))
+        if q_type in (
+            QuestionType.MCQ_SINGLE, QuestionType.MCQ_MULTIPLE, QuestionType.TRUE_FALSE,
+            QuestionType.ORDERING, QuestionType.MATCHING,
+        ):
+            # For ORDERING the list is given in the correct order, so the
+            # position written here *is* the answer key.
+            for opt_idx, opt in enumerate(q.get("options", [])):
                 options_input.append(
                     OptionInput(
-                        option_text=opt_text,
-                        is_correct=is_corr,
+                        option_text=opt.get("option_text", f"Option {opt_idx + 1}"),
+                        is_correct=bool(opt.get("is_correct", False)),
                         order=opt_idx + 1,
+                        match_text=opt.get("match_text") if q_type is QuestionType.MATCHING else None,
                     )
                 )
+        elif q_type is QuestionType.FILL_BLANK:
+            settings = {"accepted": [str(a) for a in (q.get("accepted_answers") or []) if str(a).strip()]}
+            if q.get("case_sensitive"):
+                settings["case_sensitive"] = True
+        elif q_type is QuestionType.NUMERIC:
+            settings = {"answer": q.get("numeric_answer")}
+            if q.get("tolerance") is not None:
+                settings["tolerance"] = q.get("tolerance")
 
-        prepared_questions.append(
-            QuestionCreateRequest(
-                question_text=q_text,
-                question_type=q_type,
-                points=points,
-                order=i,
-                options=options_input,
+        try:
+            prepared_questions.append(
+                QuestionCreateRequest(
+                    question_text=q_text,
+                    question_type=q_type,
+                    points=points,
+                    order=i,
+                    options=options_input,
+                    settings=settings,
+                    explanation=(q.get("explanation") or None),
+                )
             )
-        )
+        except ValueError as exc:
+            # Raised before anything is saved, so a bad question leaves no
+            # half-built quiz behind; the message says which one to fix.
+            raise ValidationError(f"Question #{i} cannot be saved: {exc}") from exc
 
     # 5. Create Draft Quiz via QuizService
     quiz_svc = QuizService(session)
@@ -270,7 +289,7 @@ async def handle_create_assignment_draft(
         if batch:
             visible_batches = await resolver.visible_batch_ids(user)
             if not visible_batches.allows(batch.id):
-                raise AuthorizationError("You are not assigned to this batch.")
+                raise NotFoundError("Batch not found.")  # same answer as one that does not exist
 
     due_date_raw = arguments.get("due_date")
     if due_date_raw:
@@ -300,11 +319,19 @@ async def handle_create_assignment_draft(
         max_score=max_score,
         rubric=rubric,
         allow_late_submissions=bool(arguments.get("allow_late_submissions", True)),
+        submission_type=SubmissionType(str(arguments.get("submission_type") or "FILE_UPLOAD").upper())
+        if str(arguments.get("submission_type") or "FILE_UPLOAD").upper() in SubmissionType.__members__
+        else SubmissionType.FILE_UPLOAD,
         scope=AssessmentScope.BATCH if batch else AssessmentScope.COURSE,
         batch_id=batch.public_id if batch else None,
+        # Stated explicitly: the request schema defaults to PUBLISHED, which
+        # notified every student the moment the assistant "drafted" one.
+        # Publishing is a separate, confirmed step (publish_assessment).
+        state=AssessmentState.DRAFT,
     )
 
     created = await assignment_svc.create(course.public_id, req, actor=user)
+    state = created.state.value if hasattr(created.state, "value") else str(created.state)
 
     return {
         "success": True,
@@ -315,8 +342,13 @@ async def handle_create_assignment_draft(
         "max_score": float(created.max_score),
         "due_date": created.due_date.isoformat(),
         "rubric": created.rubric,
-        "state": created.state.value if hasattr(created.state, "value") else str(created.state),
-        "summary": f"Draft assignment '{created.title}' created in DRAFT state for {course.title} (Max score: {float(created.max_score)}).",
+        "state": state,
+        "summary": (
+            f"Assignment '{created.title}' saved in {state} state for {course.title} "
+            f"(max score {float(created.max_score)}). Students cannot see it until it is published."
+            if state == AssessmentState.DRAFT.value
+            else f"Assignment '{created.title}' is {state} for {course.title}."
+        ),
     }
 
 
@@ -357,7 +389,7 @@ async def handle_create_examination_draft(
         if batch:
             visible_batches = await resolver.visible_batch_ids(user)
             if not visible_batches.allows(batch.id):
-                raise AuthorizationError("You are not assigned to this batch.")
+                raise NotFoundError("Batch not found.")  # same answer as one that does not exist
 
     sched_raw = arguments.get("scheduled_at")
     if sched_raw:
@@ -701,28 +733,67 @@ async def handle_get_course_curriculum(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
-    """Retrieve syllabus, learning objectives, and curriculum overview for a course."""
-    session = context.session
-    course_query = arguments.get("course_identifier", "").strip()
+    """A course's published content: description, outline, overview, prerequisites.
 
-    stmt = select(Course).where(
-        (Course.code.ilike(f"%{course_query}%"))
-        | (Course.title.ilike(f"%{course_query}%"))
-        | (Course.public_id == course_query if len(course_query) == 36 else False)
-    )
-    course = (await session.execute(stmt)).scalars().first()
-    if not course:
+    Candidates are found by id, code or title, and each is admitted through
+    `CourseService.get` -- the catalogue's own rule, so a draft course is
+    visible only to the tutors assigned to it, exactly as on the Courses screen.
+    The schema has no module or lesson tables: the outline, from the
+    institution's course page, is the curriculum, and is said to be missing
+    when it is.
+    """
+    session = context.session
+    course_query = str(arguments.get("course_identifier") or "").strip()
+    if not course_query:
+        raise ValidationError("Name the course by its title, code or id.")
+
+    try:
+        by_id = uuid.UUID(course_query)
+    except ValueError:
+        by_id = None
+    if by_id is not None:
+        stmt = select(Course.public_id).where(Course.public_id == by_id)
+    else:
+        stmt = (
+            select(Course.public_id)
+            .where(
+                Course.deleted_at.is_(None),
+                (func.lower(Course.code) == course_query.lower()) | Course.title.ilike(f"%{course_query}%"),
+            )
+            # An exact code or title outranks a partial title match.
+            .order_by(
+                (func.lower(Course.code) == course_query.lower()).desc(),
+                (func.lower(Course.title) == course_query.lower()).desc(),
+                Course.title,
+            )
+            .limit(10)
+        )
+    courses = CourseService(session)
+    course = None
+    for public_id in (await session.execute(stmt)).scalars():
+        try:
+            course = await courses.get(public_id, actor=context.user)
+            break
+        except NotFoundError:
+            continue
+    if course is None:
         raise NotFoundError(f"Course matching '{course_query}' was not found.")
 
     return {
         "course_id": str(course.public_id),
         "code": course.code,
         "title": course.title,
-        "level": course.level.value if course.level else "BEGINNER",
-        "summary": course.summary or course.description or "No description available.",
-        "prerequisites": course.prerequisites or "None",
+        "level": course.level.value if course.level else None,
+        "description": course.description,
+        "prerequisites": course.prerequisites,
         "duration_hours": course.duration_hours,
-        "credit_hours": course.credit_hours,
+        "official_outline": course.outline,
+        "overview": course.overview,
+        "course_page": course.course_link,
+        "sources": {
+            "official_outline": "verified_lms" if course.outline else "missing",
+            "description": "verified_lms" if course.description else "missing",
+        },
     }
 
 
@@ -733,7 +804,10 @@ async def handle_get_course_curriculum(
 
 create_assessment_draft_tool = ToolDefinition(
     name="create_assessment_draft",
-    description="Create a new quiz draft with verified questions, point values, and answer keys in DRAFT state.",
+    description=(
+        "Create an unpublished quiz with questions, points, answer keys and explanations. Students see nothing "
+        "until it is published with publish_assessment."
+    ),
     policy=ToolPolicy(
         name="create_assessment_draft",
         description="Create draft assessment",
@@ -760,21 +834,40 @@ create_assessment_draft_tool = ToolDefinition(
                         "question_text": {"type": "string"},
                         "question_type": {
                             "type": "string",
-                            "enum": ["MCQ_SINGLE", "MCQ_MULTIPLE", "TRUE_FALSE", "SHORT_ANSWER", "ESSAY"],
+                            "enum": [
+                                "MCQ_SINGLE", "MCQ_MULTIPLE", "TRUE_FALSE", "FILL_BLANK", "NUMERIC",
+                                "MATCHING", "ORDERING", "SHORT_ANSWER", "ESSAY",
+                            ],
                         },
                         "points": {"type": "number", "default": 1.0},
+                        "explanation": {
+                            "type": "string",
+                            "description": "Why the answer is correct; also the marking guide for SHORT_ANSWER/ESSAY",
+                        },
                         "options": {
                             "type": "array",
+                            "description": (
+                                "MCQ/TRUE_FALSE: choices with is_correct. ORDERING: items in the CORRECT order. "
+                                "MATCHING: each item with its match_text."
+                            ),
                             "items": {
                                 "type": "object",
                                 "properties": {
                                     "option_text": {"type": "string"},
                                     "is_correct": {"type": "boolean"},
-                                    "explanation": {"type": "string"},
+                                    "match_text": {"type": "string"},
                                 },
-                                "required": ["option_text", "is_correct"],
+                                "required": ["option_text"],
                             },
                         },
+                        "accepted_answers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "FILL_BLANK: every answer that counts as correct",
+                        },
+                        "case_sensitive": {"type": "boolean"},
+                        "numeric_answer": {"type": "number", "description": "NUMERIC: the correct value"},
+                        "tolerance": {"type": "number", "description": "NUMERIC: allowed +/- difference"},
                     },
                     "required": ["question_text", "question_type"],
                 },
@@ -805,6 +898,11 @@ create_assignment_draft_tool = ToolDefinition(
             "batch_id": {"type": "string", "description": "Batch UUID or batch code (optional)"},
             "description": {"type": "string", "description": "Assignment instructions and tasks"},
             "max_score": {"type": "number", "description": "Maximum marks (e.g. 100.0)", "default": 100.0},
+            "submission_type": {
+                "type": "string",
+                "enum": ["FILE_UPLOAD", "TEXT", "LINK"],
+                "description": "How students hand it in: a file (default), typed text, or a link",
+            },
             "due_date": {"type": "string", "description": "Due date in ISO 8601 (optional)"},
             "rubric": {
                 "type": "object",
@@ -940,7 +1038,10 @@ manage_course_resources_tool = ToolDefinition(
 
 get_course_curriculum_tool = ToolDefinition(
     name="get_course_curriculum",
-    description="Retrieve the syllabus, modules, and prerequisites of an authorized course.",
+    description=(
+        "Retrieve a course's published description, official outline, overview and prerequisites. "
+        "For preparing a class the caller teaches, prefer get_teaching_context."
+    ),
     policy=ToolPolicy(
         name="get_course_curriculum",
         description="View course curriculum",

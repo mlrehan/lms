@@ -296,6 +296,8 @@ class LaitAcademicSyncService:
         level = Levels(page.level) if page and page.level else None
         prerequisites = page.prerequisites if page else None
         price = page.price if page else None
+        outline = page.outline if page else None
+        overview = page.overview if page else None
         category_id = await cache.category(session, category_name, report) if category_name else None
         now = datetime.now(timezone.utc)
 
@@ -304,6 +306,7 @@ class LaitAcademicSyncService:
                 code=mapped.external_id, title=mapped.title, description=mapped.description,
                 duration_hours=duration, course_link=mapped.course_link, course_image=mapped.course_image,
                 small_course_image=mapped.small_course_image, prerequisites=prerequisites, price=price,
+                outline=outline, overview=overview,
                 level=level or Levels.BEGINNER, category_id=category_id, status=CourseStatus.PUBLISHED,
                 created_at=now, updated_at=now,
             )
@@ -318,7 +321,7 @@ class LaitAcademicSyncService:
             ("title", mapped.title), ("description", mapped.description), ("duration_hours", duration),
             ("course_link", mapped.course_link), ("course_image", mapped.course_image),
             ("small_course_image", mapped.small_course_image), ("prerequisites", prerequisites), ("level", level),
-            ("price", price),
+            ("price", price), ("outline", outline), ("overview", overview),
         ):
             if name in ("course_image", "small_course_image") and _is_uploaded(getattr(course, name)):
                 continue  # a picture an administrator uploaded is theirs; LAIT only refreshes URLs it supplied
