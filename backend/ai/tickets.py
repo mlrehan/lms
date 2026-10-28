@@ -44,6 +44,9 @@ class ConfirmationTicket(BaseModel):
     created_at: datetime
     expires_at: datetime
     status: TicketStatus = TicketStatus.PENDING
+    # True when the registry staged this ticket for a tool call: confirming it
+    # re-runs that tool's handler with exactly these parameters.
+    via_registry: bool = False
 
     @property
     def is_expired(self) -> bool:
@@ -72,6 +75,7 @@ class ConfirmationTicketManager:
         affected_records_count: int,
         preview_summary: str,
         ttl_seconds: int | None = None,
+        via_registry: bool = False,
     ) -> ConfirmationTicket:
         """Issue a new ephemeral approval ticket."""
         settings = get_ai_settings()
@@ -94,6 +98,7 @@ class ConfirmationTicketManager:
             created_at=now,
             expires_at=expires_at,
             status=TicketStatus.PENDING,
+            via_registry=via_registry,
         )
 
         self._tickets[ticket_id] = ticket

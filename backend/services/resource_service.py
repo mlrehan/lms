@@ -784,7 +784,11 @@ class ResourceService:
         is_super = getattr(actor, "is_super_admin", False) or any(
             (r.name or "").upper() == "SUPER_ADMIN" for r in (getattr(actor, "roles", []) or [])
         )
-        if not resource.is_deleted and not (is_super or force):
+        # Skipping the recycle bin is a Super Admin's act and must be asked for
+        # (`force`). `force` from anyone else is ignored: it arrives in the
+        # request, so honouring it for every holder of `resource.delete` made
+        # the two-step, recoverable deletion a one-step irreversible one.
+        if not resource.is_deleted and not (is_super and force):
             raise ConflictError("Delete the resource before purging it.")
 
         # Clean up any direct shares and scope permissions first
@@ -814,7 +818,7 @@ class ResourceService:
             actor_email=actor.email,
             entity_type="resource",
             entity_id=entity_id,
-            details={"purged": True, "versions": len(versions), "force": force or is_super},
+            details={"purged": True, "versions": len(versions), "force": bool(force and is_super)},
         )
 
     async def purge_many(
@@ -834,7 +838,7 @@ class ResourceService:
             if not at_least(actual, ResourcePermissionLevel.MANAGE):
                 continue
 
-            if not resource.is_deleted and not (is_super or force):
+            if not resource.is_deleted and not (is_super and force):
                 continue
 
             # Clean up direct shares and scope permissions
@@ -864,7 +868,7 @@ class ResourceService:
                 actor_email=actor.email,
                 entity_type="resource",
                 entity_id=entity_id,
-                details={"purged": True, "versions": len(versions), "bulk": True, "force": force or is_super},
+                details={"purged": True, "versions": len(versions), "bulk": True, "force": bool(force and is_super)},
             )
             count += 1
 

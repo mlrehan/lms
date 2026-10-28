@@ -12,12 +12,18 @@ from sqlalchemy import func, or_, select
 
 from backend.ai.orchestrator import AIOrchestrator
 from backend.ai.security import RiskLevel, ToolPolicy
-from backend.ai.tools.registry import ToolDefinition, ToolExecutionContext
+from backend.ai.tools.registry import (
+    BOUND_PREFIX,
+    ConfirmationPreview,
+    ToolDefinition,
+    ToolExecutionContext,
+)
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.attendance import Attendance
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
 from backend.models.enrollment import Enrollments
+from backend.services import audit_service
 from backend.services.scope import ScopeResolver
 from backend.services.session_service import SessionService
 from backend.utils.enums import AttendanceStatus, Roles
@@ -538,6 +544,47 @@ async def handle_mark_session_attendance(
     }
 
 
+# Each action needs the permission the console's own route needs for it.
+# Scheduling is the administration's (tutors hold `session.update`, not
+# `session.create`), and taking a class off the timetable is a removal
+# (`session.delete`). Gating the whole tool on `session.update` let a tutor
+# schedule and cancel classes through the assistant that the console refuses.
+_SESSION_ACTION_PERMISSION = {
+    "create": "session.create",
+    "update": "session.update",
+    "cancel": "session.delete",
+}
+
+
+def _require_session_permission(user: Any, action: str) -> None:
+    from backend.ai.security import SecurityPolicyEngine
+
+    needed = _SESSION_ACTION_PERMISSION.get(action)
+    if needed is None:
+        raise ValidationError(f"Unknown session action: '{action}'.")
+    if needed not in SecurityPolicyEngine.caller_permissions(user):
+        raise AuthorizationError(f"You do not hold permission to {action} class sessions.")
+
+
+async def preview_manage_batch_session(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> ConfirmationPreview:
+    """Only `cancel` is staged; show which class, at what time."""
+    _require_session_permission(context.user, "cancel")
+    session_id = arguments.get("session_id")
+    if not session_id:
+        raise ValidationError("session_id is required to cancel a session.")
+    row = await SessionService(context.session).get(uuid.UUID(str(session_id).strip()), actor=context.user)
+    if row.cancelled_at is not None:
+        raise ValidationError("That class is already cancelled.")
+    when = row.session_start_time.isoformat() if row.session_start_time else "an unscheduled time"
+    return ConfirmationPreview(
+        summary=f"Cancel the class at {when} (UTC)? Its students will no longer be able to join it.",
+        bound_parameters={"session_public_id": str(row.public_id)},
+    )
+
+
 async def handle_manage_batch_session(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
@@ -554,6 +601,7 @@ async def handle_manage_batch_session(
     is_tutor = any(r.name == Roles.TUTOR.value for r in (user.roles or []))
     if not (is_admin or is_tutor):
         raise AuthorizationError("Only tutors and administrators can manage class sessions.")
+    _require_session_permission(user, action)
 
     session_svc = SessionService(session)
 
@@ -615,10 +663,21 @@ async def handle_manage_batch_session(
         if not session_id:
             raise ValidationError("session_id is required to cancel a session.")
         suuid = uuid.UUID(str(session_id).strip())
+        if str(suuid) != str(arguments.get(f"{BOUND_PREFIX}session_public_id")):
+            raise ValidationError("The class no longer matches the one confirmed; ask again.")
         reason = arguments.get("cancelled_reason", "Cancelled by tutor")
         row = await session_svc.get(suuid, actor=user)
         row.cancelled_at = datetime.now(UTC)
         row.cancelled_reason = reason
+        audit_service.record(
+            session,
+            action=audit_service.AuditAction.UPDATE,
+            actor_user_id=user.id,
+            actor_email=user.email,
+            entity_type="batch_session",
+            entity_id=row.id,
+            details={"operation": "AI_CANCEL_SESSION", "cancelled_reason": reason},
+        )
         await session.flush()
         return {
             "success": True,
@@ -714,6 +773,8 @@ manage_batch_session_tool = ToolDefinition(
         required_permissions=("session.update",),
         allowed_roles=(Roles.TUTOR.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
         risk_level=RiskLevel.MODERATE,
+        requires_confirmation=True,
+        confirm_actions=("cancel",),
     ),
     parameters_schema={
         "type": "object",
@@ -759,5 +820,6 @@ manage_batch_session_tool = ToolDefinition(
         "required": ["action"],
     },
     handler=handle_manage_batch_session,
+    preview=preview_manage_batch_session,
 )
 

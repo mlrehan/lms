@@ -418,6 +418,10 @@ async def handle_execute_database_query(
     purpose = arguments.get("purpose", "")
     user = context.user
     held_roles = SecurityPolicyEngine.caller_roles(user)
+    # Checked again here, not only by the registry: a handler that trusts its
+    # caller to have filtered is one refactor away from being called unfiltered.
+    if not held_roles.intersection(_SQL_ROLES):
+        return {"success": False, "error": "Direct database queries are not available for your role."}
 
     logger.info(
         "User %s (%s) executing dynamic database query: %s (Purpose: %s)",
@@ -506,6 +510,8 @@ async def handle_inspect_database_schema(
     table_name = arguments.get("table_name", "").strip().lower()
     user = context.user
     held_roles = SecurityPolicyEngine.caller_roles(user)
+    if not held_roles.intersection(_SQL_ROLES):
+        return {"success": False, "error": "Database schema inspection is not available for your role."}
 
     # 1. If no table name provided, return primary domain tables overview
     if not table_name:
@@ -637,6 +643,11 @@ async def handle_inspect_database_schema(
 # TOOL DEFINITIONS & REGISTRATION
 # =============================================================================
 
+# Raw SQL bypasses every row-level rule in the platform (ScopeResolver,
+# contact privacy, the quiz answer key), so it is offered to the Super Admin
+# alone. Every other role answers through the scoped, service-backed tools.
+_SQL_ROLES: tuple[str, ...] = (Roles.SUPER_ADMIN.value,)
+
 execute_database_query_tool = ToolDefinition(
     name="execute_database_query",
     description=(
@@ -648,7 +659,8 @@ execute_database_query_tool = ToolDefinition(
     policy=ToolPolicy(
         name="execute_database_query",
         description="Execute read-only SQL database queries",
-        required_permissions=(),
+        required_permissions=("institution.view_all",),
+        allowed_roles=_SQL_ROLES,
         risk_level=RiskLevel.LOW,
         requires_confirmation=False,
     ),
@@ -684,7 +696,8 @@ inspect_database_schema_tool = ToolDefinition(
     policy=ToolPolicy(
         name="inspect_database_schema",
         description="Inspect database schema metadata",
-        required_permissions=(),
+        required_permissions=("institution.view_all",),
+        allowed_roles=_SQL_ROLES,
         risk_level=RiskLevel.LOW,
         requires_confirmation=False,
     ),

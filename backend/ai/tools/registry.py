@@ -35,6 +35,24 @@ ToolHandler = Callable[[dict[str, Any], ToolExecutionContext], Awaitable[dict[st
 
 
 @dataclass
+class ConfirmationPreview:
+    """What a person is shown before confirming -- composed by the server."""
+
+    summary: str
+    affected_records_count: int = 1
+    # Facts fixed at preview time (e.g. exactly which records), merged into the
+    # ticket so execution acts on what was shown rather than re-deciding.
+    bound_parameters: dict[str, Any] | None = None
+
+
+PreviewBuilder = Callable[[dict[str, Any], ToolExecutionContext], Awaitable[ConfirmationPreview]]
+
+# Keys beginning with this prefix are written by the server into a ticket.
+# Anything the model sends under it is discarded, so it cannot pre-bind them.
+BOUND_PREFIX = "_bound_"
+
+
+@dataclass
 class ToolDefinition:
     """Complete specification of an AI tool."""
 
@@ -43,6 +61,7 @@ class ToolDefinition:
     policy: ToolPolicy
     parameters_schema: dict[str, Any]
     handler: ToolHandler
+    preview: PreviewBuilder | None = None
 
     def to_openai_tool(self) -> dict[str, Any]:
         """Convert into standard OpenAI tool dictionary."""
@@ -108,31 +127,83 @@ class ToolRegistry:
             user=context.user,
         )
 
-        # 2. Check if tool requires two-phase human confirmation
-        if tool.policy.requires_confirmation:
-            ticket_mgr = get_ticket_manager()
-            ticket = ticket_mgr.create_ticket(
-                action_name=tool.name,
-                actor_user_id=context.user.id,
-                actor_public_id=str(context.user.public_id),
-                parameters=arguments,
-                affected_records_count=arguments.get("affected_count", 1),
-                preview_summary=arguments.get(
-                    "preview_summary",
-                    f"Action '{tool.name}' requires explicit operator confirmation.",
-                ),
-            )
-            return {
-                "status": "REQUIRES_CONFIRMATION",
-                "ticket_id": ticket.ticket_id,
-                "confirmation_ticket_id": ticket.ticket_id,
-                "action_name": ticket.action_name,
-                "parameters_hash": ticket.parameters_hash,
-                "preview_summary": ticket.preview_summary,
-                "expires_at": ticket.expires_at.isoformat(),
-                "affected_records_count": ticket.affected_records_count,
-            }
+        arguments = {k: v for k, v in arguments.items() if not str(k).startswith(BOUND_PREFIX)}
 
+        # 2. Check if tool requires two-phase human confirmation
+        if tool.policy.needs_confirmation(arguments):
+            return await self._stage(tool, arguments, context)
+
+        return await self._run(tool, arguments, context)
+
+    async def execute_confirmed(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> dict[str, Any]:
+        """Run a tool whose ticket a person has just confirmed.
+
+        Authorization is checked again: the person may have lost the role
+        between preview and confirmation, and a ticket must not outlive that.
+        """
+        tool = self.get(name)
+        if not tool:
+            raise NotFoundError(f"AI tool '{name}' does not exist.")
+        SecurityPolicyEngine.authorize_tool_invocation(
+            tool_policy=tool.policy,
+            user=context.user,
+        )
+        return await self._run(tool, arguments, context)
+
+    async def _stage(
+        self,
+        tool: ToolDefinition,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> dict[str, Any]:
+        """Issue a confirmation ticket instead of running the tool.
+
+        The summary is the server's, never the model's: a model that could
+        write the confirmation text could describe a deletion as a refresh.
+        """
+        if tool.preview is not None:
+            preview = await tool.preview(arguments, context)
+        else:
+            preview = ConfirmationPreview(summary=f"Confirm the action '{tool.name}'.")
+        parameters = dict(arguments)
+        for key, value in (preview.bound_parameters or {}).items():
+            parameters[f"{BOUND_PREFIX}{key}"] = value
+
+        ticket = get_ticket_manager().create_ticket(
+            action_name=tool.name,
+            actor_user_id=context.user.id,
+            actor_public_id=str(context.user.public_id),
+            parameters=parameters,
+            affected_records_count=preview.affected_records_count,
+            preview_summary=preview.summary,
+            via_registry=True,
+        )
+        return {
+            "status": "REQUIRES_CONFIRMATION",
+            "success": False,
+            "ticket_id": ticket.ticket_id,
+            "confirmation_ticket_id": ticket.ticket_id,
+            "action_name": ticket.action_name,
+            "parameters_hash": ticket.parameters_hash,
+            "preview_summary": ticket.preview_summary,
+            "expires_at": ticket.expires_at.isoformat(),
+            "affected_records_count": ticket.affected_records_count,
+            "message": "Nothing has been done yet. The action is waiting for the user's confirmation.",
+        }
+
+    async def _run(
+        self,
+        tool: ToolDefinition,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> dict[str, Any]:
+        name = tool.name
         # 3. Execute authorized handler
         logger.info("Executing AI tool '%s' for user %s", name, context.user.public_id)
         result = await tool.handler(arguments, context)
@@ -177,7 +248,6 @@ def get_tool_registry() -> ToolRegistry:
             get_quiz_evaluation_summary_tool,
             manage_course_resources_tool,
             publish_assessment_tool,
-            submit_assignment_solution_tool,
             suggest_submission_grade_tool,
         )
         from backend.ai.tools.attendance_tools import (
@@ -229,7 +299,9 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(get_student_assessments_and_deadlines_tool)
         _global_tool_registry.register(get_student_enrolled_courses_tool)
         _global_tool_registry.register(enroll_corporate_employee_tool)
-        _global_tool_registry.register(submit_assignment_solution_tool)
+        # submit_assignment_solution is deliberately not registered: an
+        # assistant that writes a student's answer and hands it in for them is
+        # the academic-integrity failure the student prompt forbids.
         _global_tool_registry.register(search_course_knowledge_tool)
         _global_tool_registry.register(sync_all_data_tool)
         _global_tool_registry.register(delete_inactive_users_tool)

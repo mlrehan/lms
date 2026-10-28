@@ -15,11 +15,14 @@ from backend.ai.tools.attendance_tools import (
     handle_manage_batch_session,
     handle_mark_session_attendance,
 )
-from backend.ai.tools.registry import ToolExecutionContext
+from backend.ai.tools.registry import BOUND_PREFIX, ToolExecutionContext
 from backend.ai.tools.reporting_tools import handle_generate_institution_report
 from backend.models.assignment import Assignment
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
+from backend.core.errors import AuthorizationError
+from backend.core.permissions import ROLE_PERMISSIONS
+from backend.models.identity.permission import Permission
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
 from backend.models.quiz import Quiz
@@ -27,7 +30,12 @@ from backend.utils.enums import AssessmentScope, AssessmentState, AttendanceStat
 
 
 def make_test_user(role_name: str = Roles.TUTOR.value) -> User:
+    """A user holding the role's real grants from the permission catalogue."""
     role = Role(id=3, name=role_name, description=role_name)
+    role.permissions = [
+        Permission(id=i, name=name)
+        for i, name in enumerate(sorted(ROLE_PERMISSIONS[role_name]), start=1)
+    ]
     user = User(
         id=777,
         public_id=uuid.uuid4(),
@@ -98,27 +106,50 @@ def test_publish_assessment_quiz():
             is_published=False,
         )
 
-        with patch("backend.ai.tools.academic_tools._resolve_quiz", return_value=mock_quiz), \
+        with patch("backend.ai.tools.academic_tools._resolve_for_publish", new_callable=AsyncMock, return_value=mock_quiz), \
+             patch("backend.services.quiz_service.QuizService.get", new_callable=AsyncMock, return_value=mock_quiz), \
              patch("backend.services.quiz_service.QuizService.set_published", new_callable=AsyncMock) as mock_pub:
             mock_pub.return_value = mock_quiz
             mock_quiz.is_published = True
 
             res = await handle_publish_assessment(
-                {"assessment_type": "quiz", "assessment_id": str(quiz_uuid)},
+                {
+                    "assessment_type": "quiz",
+                    "assessment_id": str(quiz_uuid),
+                    f"{BOUND_PREFIX}assessment_public_id": str(quiz_uuid),
+                },
                 ctx,
             )
 
             assert res["success"] is True
             assert res["is_published"] is True
             assert "published" in res["message"].lower()
+            mock_pub.assert_awaited_once_with(quiz_uuid, True, actor=user)
+
+    asyncio.run(run())
+
+
+def test_publish_examination_needs_exam_publish():
+    """The console's exam publish route needs `exam.publish`; so does the tool."""
+    async def run():
+        user = make_test_user(Roles.TUTOR.value)
+        user.roles[0].permissions = [p for p in user.roles[0].permissions if p.name != "exam.publish"]
+        ctx = ToolExecutionContext(user=user, session=AsyncMock())
+        with patch("backend.services.exam_service.ExamService.set_published", new_callable=AsyncMock) as mock_pub:
+            with pytest.raises(AuthorizationError):
+                await handle_publish_assessment(
+                    {"assessment_type": "examination", "assessment_id": str(uuid.uuid4())},
+                    ctx,
+                )
+            mock_pub.assert_not_awaited()
 
     asyncio.run(run())
 
 
 def test_manage_batch_session_cancel():
-    """Verify handle_manage_batch_session cancels a session with reason."""
+    """An administrator cancels the session that was confirmed, with its reason."""
     async def run():
-        user = make_test_user()
+        user = make_test_user(Roles.ADMIN.value)
         session = AsyncMock()
         ctx = ToolExecutionContext(user=user, session=session)
 
@@ -133,12 +164,34 @@ def test_manage_batch_session_cancel():
 
         with patch("backend.services.session_service.SessionService.get", new_callable=AsyncMock, return_value=mock_session):
             res = await handle_manage_batch_session(
-                {"action": "cancel", "session_id": str(sess_uuid), "cancelled_reason": "Weather alert"},
+                {
+                    "action": "cancel",
+                    "session_id": str(sess_uuid),
+                    "cancelled_reason": "Weather alert",
+                    f"{BOUND_PREFIX}session_public_id": str(sess_uuid),
+                },
                 ctx,
             )
             assert res["success"] is True
             assert res["action"] == "cancel"
             assert mock_session.cancelled_at is not None
             assert mock_session.cancelled_reason == "Weather alert"
+
+    asyncio.run(run())
+
+
+def test_tutor_cannot_cancel_or_schedule_sessions_through_the_assistant():
+    """Tutors hold `session.update` only; scheduling and cancelling are refused."""
+    async def run():
+        user = make_test_user(Roles.TUTOR.value)
+        ctx = ToolExecutionContext(user=user, session=AsyncMock())
+        with patch("backend.services.session_service.SessionService.get", new_callable=AsyncMock) as mock_get:
+            for action in ("cancel", "create"):
+                with pytest.raises(AuthorizationError):
+                    await handle_manage_batch_session(
+                        {"action": action, "session_id": str(uuid.uuid4()), "batch_code": "B1"},
+                        ctx,
+                    )
+            mock_get.assert_not_awaited()
 
     asyncio.run(run())

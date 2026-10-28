@@ -65,7 +65,7 @@ def make_resource(*, is_deleted: bool = False, public_id: uuid.UUID | None = Non
 
 
 
-def test_super_admin_can_purge_live_resource_directly() -> None:
+def test_super_admin_can_purge_live_resource_when_asked_to_force() -> None:
     async def _run() -> None:
         session = AsyncMock()
         service = ResourceService(session)
@@ -78,7 +78,7 @@ def test_super_admin_can_purge_live_resource_directly() -> None:
         service.storage.delete = AsyncMock()
 
         super_admin = make_user(is_super=True)
-        await service.purge(res.public_id, actor=super_admin)
+        await service.purge(res.public_id, actor=super_admin, force=True)
 
         session.delete.assert_called_once_with(res)
         service.storage.delete.assert_called_once_with(res.versions[0].path)
@@ -99,6 +99,44 @@ def test_regular_user_cannot_purge_live_resource_without_force() -> None:
         regular_user = make_user(is_super=False)
         with pytest.raises(ConflictError, match="Delete the resource before purging it"):
             await service.purge(res.public_id, actor=regular_user)
+
+    asyncio.run(_run())
+
+
+def test_force_from_a_non_super_admin_does_not_skip_the_recycle_bin() -> None:
+    """`force` arrives in the request; honouring it for every holder of
+    `resource.delete` turned two-step, recoverable deletion into one step."""
+    async def _run() -> None:
+        session = AsyncMock()
+        service = ResourceService(session)
+
+        res = make_resource(is_deleted=False)
+        service.resources.get_by_public_id_full = AsyncMock(return_value=res)
+        service._resource_reachable = AsyncMock(return_value=True)
+        service.require_level = AsyncMock()
+
+        regular_user = make_user(is_super=False)
+        with pytest.raises(ConflictError, match="Delete the resource before purging it"):
+            await service.purge(res.public_id, actor=regular_user, force=True)
+        session.delete.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_super_admin_without_force_still_needs_the_recycle_bin() -> None:
+    """Skipping the bin is something the Super Admin asks for, not a default."""
+    async def _run() -> None:
+        session = AsyncMock()
+        service = ResourceService(session)
+
+        res = make_resource(is_deleted=False)
+        service.resources.get_by_public_id_full = AsyncMock(return_value=res)
+        service._resource_reachable = AsyncMock(return_value=True)
+        service.require_level = AsyncMock()
+
+        with pytest.raises(ConflictError, match="Delete the resource before purging it"):
+            await service.purge(res.public_id, actor=make_user(is_super=True))
+        session.delete.assert_not_called()
 
     asyncio.run(_run())
 
@@ -145,7 +183,7 @@ def test_purge_many_deletes_multiple_resources_at_once() -> None:
         service.storage.delete = AsyncMock()
 
         super_admin = make_user(is_super=True)
-        count = await service.purge_many([res1.public_id, res2.public_id], actor=super_admin)
+        count = await service.purge_many([res1.public_id, res2.public_id], actor=super_admin, force=True)
 
         assert count == 2
         assert session.delete.call_count == 2
@@ -265,7 +303,7 @@ def test_get_deletion_impact_and_superadmin_purge_shared_resource() -> None:
         assert impact.resources[0].direct_shares[0].user_id == shared_user.public_id
 
         # Test that superadmin can purge even when shared
-        await service.purge(res.public_id, actor=admin)
+        await service.purge(res.public_id, actor=admin, force=True)
         session.delete.assert_called_once_with(res)
         assert session.execute.call_count >= 2  # perms and shares delete statements
 

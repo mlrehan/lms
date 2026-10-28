@@ -48,6 +48,15 @@ export function ActionConfirmationDialog({
         },
       );
 
+      // The server reports the action's own outcome; a confirmed action that
+      // did nothing (e.g. a sync already running) must not read as success.
+      if (response?.success === false) {
+        toast.error("Action not completed", {
+          description: (response?.result?.message as string) || "The action did not complete.",
+        });
+        onOpenChange(false);
+        return;
+      }
       toast.success("Action executed successfully", {
         description: (response?.result?.message as string) || "The confirmed operation has completed.",
       });

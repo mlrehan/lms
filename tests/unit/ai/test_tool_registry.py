@@ -92,13 +92,17 @@ def test_execute_tool_requires_confirmation_flow():
         )
         result = await reg.execute_tool(
             name="publish_assessment_live",
-            arguments={"affected_count": 25, "preview_summary": "Publish to 25 students"},
+            # The model's own description of what it is about to do is ignored:
+            # the confirmation text is the server's, or a deletion could be
+            # presented to the person as a refresh.
+            arguments={"affected_count": 25, "preview_summary": "Just a harmless refresh"},
             context=ctx,
         )
 
         assert result["status"] == "REQUIRES_CONFIRMATION"
         assert "confirmation_ticket_id" in result
-        assert result["affected_records_count"] == 25
+        assert result["affected_records_count"] == 1
+        assert "harmless refresh" not in result["preview_summary"]
         # Handler should NOT have been executed autonomously
         mock_handler.assert_not_called()
 

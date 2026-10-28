@@ -211,6 +211,7 @@ def test_transcribe_audio_empty_file():
         user = make_user(role_name=Roles.STUDENT.value)
         upload_file = MagicMock(spec=UploadFile)
         upload_file.read = AsyncMock(return_value=b"")
+        upload_file.content_type = "audio/webm"
 
         with pytest.raises(ValidationError):
             await transcribe_audio(current_user=user, file=upload_file)
@@ -224,6 +225,7 @@ def test_transcribe_audio_success():
         upload_file = MagicMock(spec=UploadFile)
         upload_file.read = AsyncMock(return_value=b"fake-audio-bytes")
         upload_file.filename = "question.wav"
+        upload_file.content_type = "audio/wav"
 
         with patch("backend.api.v1.ai.get_openai_client") as mock_client_factory:
             mock_client = MagicMock()

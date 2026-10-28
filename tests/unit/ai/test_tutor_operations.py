@@ -24,6 +24,8 @@ from backend.ai.tools.registry import ToolExecutionContext
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course
+from backend.core.permissions import ROLE_PERMISSIONS
+from backend.models.identity.permission import Permission
 from backend.models.identity.role import Role
 from backend.models.identity.user import User
 from backend.models.quiz import Quiz, QuizAttempt
@@ -32,6 +34,13 @@ from backend.utils.enums import AssessmentScope, Roles, SubmissionState
 
 def make_tutor_user() -> User:
     role = Role(id=3, name=Roles.TUTOR.value, description="Tutor")
+    # The tutor's real grants from the catalogue. Without them the only tools
+    # this tutor was ever offered were the two raw-SQL tools, which required no
+    # permission at all -- so the agent-loop tests were passing on those.
+    role.permissions = [
+        Permission(id=i, name=name)
+        for i, name in enumerate(sorted(ROLE_PERMISSIONS[Roles.TUTOR.value]), start=1)
+    ]
     user = User(
         id=636,
         public_id=uuid.uuid4(),
@@ -202,7 +211,9 @@ def test_tutor_suggest_submission_grade():
         asmt.course_id = sample_course.id
         asmt.max_score = Decimal("100.0")
         student = MagicMock()
-        student.username = "anna.student"
+        student.username = "anna.student@example.com"
+        student.first_name = "Anna"
+        student.last_name = "Student"
 
         exec_result = MagicMock()
         exec_result.first.return_value = (sub, asmt, student)
@@ -221,8 +232,8 @@ def test_tutor_suggest_submission_grade():
 
             assert res["status"] == "PROPOSED_FOR_REVIEW"
             assert res["suggested_grade"] == 88.0
-            assert res["student_username"] == "anna.student"
-            assert "tutor approval" in res["summary"]
+            assert res["student_name"] == "Anna Student"
+            assert "Nothing has been recorded" in res["summary"]
 
     asyncio.run(run())
 

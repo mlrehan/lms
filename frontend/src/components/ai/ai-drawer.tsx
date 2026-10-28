@@ -470,10 +470,10 @@ export function AIDrawer() {
           },
         },
       );
-      const isSync = ticket.action_name.includes("sync");
+      const succeeded = resp?.success !== false;
       const successMsg =
         (resp?.result?.message as string) ||
-        (isSync ? "All data synchronized successfully." : "Action executed successfully.");
+        (succeeded ? "Action executed." : "The action did not complete.");
 
       setMessages((prev) => [
         ...prev,
@@ -489,7 +489,8 @@ export function AIDrawer() {
           content: successMsg,
         },
       ]);
-      toast.success("Action Executed", { description: successMsg });
+      if (succeeded) toast.success("Action Executed", { description: successMsg });
+      else toast.error("Action not completed", { description: successMsg });
     } catch (err) {
       const errorMsg =
         err instanceof ApiError ? err.message : "Failed to execute confirmed action.";

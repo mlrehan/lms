@@ -54,15 +54,23 @@ class ConfirmationExecutionService:
             actor.public_id,
         )
 
-        # 2. Dispatch to authorized action handler
+        # 2. A ticket the tool registry staged re-runs that tool's own handler,
+        # so a confirmed action does exactly what the tool does unconfirmed --
+        # through the same services, scope checks and audit -- rather than a
+        # second implementation of it that drifts.
+        if ticket.via_registry:
+            from backend.ai.tools.registry import ToolExecutionContext, get_tool_registry
+
+            return await get_tool_registry().execute_confirmed(
+                name=action,
+                arguments=params,
+                context=ToolExecutionContext(user=actor, session=self.session, client_ip=client_ip),
+            )
+
+        # Tickets issued by POST /ai/tickets/publish-assessment.
         if action in ("publish_assessment", "publish_assessment_live"):
             return await self._execute_publish_assessment(ticket, actor, client_ip)
-        elif action == "sync_all_data":
-            return await self._execute_sync_all_data(ticket, actor, client_ip)
-        elif action == "delete_inactive_users":
-            return await self._execute_delete_inactive_users(ticket, actor, client_ip)
-        else:
-            raise ValidationError(f"Unsupported action for confirmation ticket: '{action}'")
+        raise ValidationError(f"Unsupported action for confirmation ticket: '{action}'")
 
     async def _execute_publish_assessment(
         self,
@@ -118,103 +126,3 @@ class ConfirmationExecutionService:
             "is_published": quiz.is_published,
             "message": f"Assessment '{quiz.title}' has been successfully published to enrolled students.",
         }
-
-    async def _execute_sync_all_data(
-        self,
-        ticket: ConfirmationTicket,
-        actor: User,
-        client_ip: str | None,
-    ) -> dict[str, Any]:
-        """Execute the confirmed system-wide data synchronization."""
-        held_roles = SecurityPolicyEngine.caller_roles(actor)
-        if Roles.SUPER_ADMIN.value not in held_roles and Roles.ADMIN.value not in held_roles:
-            raise AuthorizationError("Only Super Administrators can confirm data synchronization.")
-
-        import asyncio
-        from backend.core.config import get_settings
-        from backend.db.manager import DatabaseManager
-        from backend.services.sync_pipeline_service import SyncPipelineService
-
-        settings = get_settings()
-        db_mgr = DatabaseManager(settings.database, application_name="ai_confirmed_sync")
-        service = SyncPipelineService(db_mgr.session_factory, settings)
-
-        try:
-            run = await service.start(
-                trigger_type="MANUAL_AI",
-                triggered_by_user_id=actor.id,
-            )
-            asyncio.create_task(service.execute(run.id))
-        except ConflictError:
-            pass  # Pipeline already in flight
-
-        try:
-            audit_service.record(
-                self.session,
-                action=audit_service.AuditAction.AI_CONFIRMED_ACTION,
-                actor_user_id=actor.id,
-                actor_email=actor.email,
-                entity_type="sync_pipeline",
-                details={
-                    "operation": "AI_CONFIRMED_SYNC_ALL",
-                    "ticket_id": ticket.ticket_id,
-                },
-            )
-        except Exception as exc:
-            logger.warning("Audit logging for sync ticket failed: %s", exc)
-
-        return {
-            "success": True,
-            "status": "COMPLETED",
-            "message": "All data synchronized successfully.",
-        }
-
-    async def _execute_delete_inactive_users(
-        self,
-        ticket: ConfirmationTicket,
-        actor: User,
-        client_ip: str | None,
-    ) -> dict[str, Any]:
-        """Execute confirmed bulk deletion of inactive users."""
-        held_roles = SecurityPolicyEngine.caller_roles(actor)
-        if Roles.SUPER_ADMIN.value not in held_roles:
-            raise AuthorizationError("Only Super Administrators can confirm bulk deletions.")
-
-        from datetime import UTC, datetime
-        from sqlalchemy import select
-        from backend.utils.enums import UserStatus
-
-        stmt = select(User).where(User.status == UserStatus.INACTIVE, User.id != actor.id)
-        inactive_users = (await self.session.execute(stmt)).scalars().all()
-        count = len(inactive_users)
-
-        now = datetime.now(UTC)
-        for u in inactive_users:
-            u.status = UserStatus.DELETED
-            u.deleted_at = now
-            u.deleted_by = actor.id
-
-        try:
-            audit_service.record(
-                self.session,
-                action=audit_service.AuditAction.DELETE,
-                actor_user_id=actor.id,
-                actor_email=actor.email,
-                entity_type="user",
-                details={
-                    "operation": "AI_CONFIRMED_BULK_DELETE_INACTIVE",
-                    "ticket_id": ticket.ticket_id,
-                    "count": count,
-                },
-            )
-            await self.session.commit()
-        except Exception as exc:
-            logger.warning("Audit or commit for bulk delete failed: %s", exc)
-
-        return {
-            "success": True,
-            "status": "DELETED",
-            "count": count,
-            "message": f"{count} inactive users deleted successfully.",
-        }
-

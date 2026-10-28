@@ -82,19 +82,30 @@ class BaseAgent:
         now_utc = datetime.now(timezone.utc)
         today_iso = now_utc.strftime("%Y-%m-%d")
         now_iso = now_utc.isoformat()
-        return (
+        context = (
             f"{self.system_prompt}\n\n"
             f"[CALLER CONTEXT]\n"
             f"User: {caller_name} (Username: {self.user.username})\n"
-            f"Database User ID: {self.user.id}\n"
             f"Public ID: {self.user.public_id}\n"
             f"Roles: {held_roles}\n"
             f"Platform Timezone: {self.user.timezone or 'UTC'}\n"
             f"Server Timestamp (UTC): {now_iso}\n"
             f"Current Date (UTC): {today_iso}\n"
             f"Today Boundary (UTC): '{today_iso} 00:00:00' to '{today_iso} 23:59:59'\n"
-            f"Self-Query Invariant: When filtering for your own records in SQL queries, always use users.id = {self.user.id} or users.public_id = '{self.user.public_id}'. Do NOT filter by or select email/phone columns.\n"
-            f"Strict Invariant: All facts must come from tool queries. Never invent or hallucinate course, batch, or student IDs.\n\n"
+            f"Strict Invariant: All facts must come from tool results. Never invent or hallucinate course, batch, or student IDs. "
+            f"If no tool can answer a question, say so plainly rather than guessing.\n"
+            f"Actions: an action is complete only when its tool result says so. A result with status REQUIRES_CONFIRMATION "
+            f"has done nothing yet -- tell the user it is awaiting their confirmation.\n"
+        )
+        # The SQL instructions are given only to callers who are offered the SQL
+        # tools. Telling every role it "possesses direct database query
+        # capabilities" is what made the model reach for a tool it may not hold.
+        if not self._offers_tool("execute_database_query"):
+            return context
+        return (
+            f"{context}"
+            f"Database User ID: {self.user.id}\n"
+            f"Self-Query Invariant: When filtering for your own records in SQL queries, always use users.id = {self.user.id} or users.public_id = '{self.user.public_id}'.\n\n"
             f"[DIRECT DATABASE QUERY & REAL-TIME GROUNDING]\n"
             f"You possess direct, real-time database query capabilities via 'execute_database_query' and 'inspect_database_schema'.\n"
             f"1. Zero Internal Exposure: Never mention internal tool names (e.g. execute_database_query), schema queries, SQL syntax, or execution traces in your text responses. Output must be executive-level business communication.\n"
@@ -130,6 +141,10 @@ class BaseAgent:
             f"8. Mandatory Tool Calling Rule: NEVER output conversational filler like 'I will check', 'I will look that up', or 'Checking your schedule now' without invoking a tool. Always execute the database tool immediately on the first turn and return the final complete answer.\n"
             f"9. Response Style — Strictly Concise: Return direct, natural, factual answers grounded in the database results."
         )
+
+    def _offers_tool(self, name: str) -> bool:
+        """Whether this caller is offered `name` -- the same check that builds the tool list."""
+        return any(t.name == name for t in self.tool_registry.list_tools_for_caller(self.user))
 
     def check_unauthorized_pii_request(self, prompt: str) -> str | None:
         """Deterministic pre-execution guardrail blocking unauthorized personal data access across roles."""

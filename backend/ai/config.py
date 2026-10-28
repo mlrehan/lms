@@ -81,6 +81,28 @@ class AISettings(BaseSettings):
         description="Version identifier for immutable system instructions",
     )
 
+    # Per-person request limits. Every chat turn and every transcription is a
+    # paid call to OpenAI made on the institution's key, by any signed-in user;
+    # without a limit one account (or one stuck client) can spend the budget.
+    chat_requests_per_minute: int = Field(
+        default=20,
+        alias="AI_CHAT_REQUESTS_PER_MINUTE",
+        ge=1,
+        description="Maximum /ai/chat requests per user per rolling minute",
+    )
+    transcribe_requests_per_minute: int = Field(
+        default=6,
+        alias="AI_TRANSCRIBE_REQUESTS_PER_MINUTE",
+        ge=1,
+        description="Maximum /ai/transcribe requests per user per rolling minute",
+    )
+    max_audio_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        alias="AI_MAX_AUDIO_BYTES",
+        ge=1,
+        description="Largest audio upload accepted for transcription (OpenAI's own limit is 25 MB)",
+    )
+
     @field_validator("openai_api_key", mode="before")
     @classmethod
     def clean_api_key(cls, value: str | SecretStr) -> str | SecretStr:

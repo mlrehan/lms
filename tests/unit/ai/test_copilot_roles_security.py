@@ -77,7 +77,10 @@ class TestRoleToolSeparation:
         # Must have student-appropriate tools
         assert "get_student_assessments_and_deadlines" in tool_names
         assert "get_student_enrolled_courses" in tool_names
-        assert "submit_assignment_solution" in tool_names
+        # Students submit their own work; the assistant is not offered the tool.
+        assert "submit_assignment_solution" not in tool_names
+        assert "execute_database_query" not in tool_names
+        assert "inspect_database_schema" not in tool_names
         assert "get_attendance_summary" in tool_names
         assert "get_my_schedule" in tool_names
 
@@ -139,17 +142,33 @@ class TestStrictPolicyAuthorizations:
                 user=student,
             )
 
-    def test_guardian_cannot_invoke_student_submit(self):
-        registry = get_tool_registry()
-        submit_tool = registry.get("submit_assignment_solution")
-        assert submit_tool is not None
+    def test_assignment_submission_tool_is_not_registered(self):
+        """Nobody -- student, guardian or admin -- can have the AI hand work in."""
+        assert get_tool_registry().get("submit_assignment_solution") is None
 
-        guardian = build_test_user(role_name=Roles.GUARDIAN.value, permissions=["assignment.submit"])
-        with pytest.raises(AuthorizationError):
-            SecurityPolicyEngine.authorize_tool_invocation(
-                tool_policy=submit_tool.policy,
-                user=guardian,
-            )
+    @pytest.mark.parametrize(
+        "role_name",
+        [Roles.STUDENT.value, Roles.GUARDIAN.value, Roles.TUTOR.value, Roles.CORPORATE_MANAGER.value, Roles.ADMIN.value],
+    )
+    def test_raw_sql_tools_are_super_admin_only(self, role_name):
+        """Raw SQL bypasses row-level scoping, so only the Super Admin is offered it --
+        even a caller who holds `institution.view_all` (an Administrator) is refused."""
+        registry = get_tool_registry()
+        user = build_test_user(role_name=role_name, permissions=["institution.view_all"])
+        offered = {t.name for t in registry.list_tools_for_caller(user)}
+        assert "execute_database_query" not in offered
+        assert "inspect_database_schema" not in offered
+        for name in ("execute_database_query", "inspect_database_schema"):
+            with pytest.raises(AuthorizationError):
+                SecurityPolicyEngine.authorize_tool_invocation(
+                    tool_policy=registry.get(name).policy, user=user
+                )
+
+    def test_raw_sql_tools_are_offered_to_super_admin(self):
+        registry = get_tool_registry()
+        user = build_test_user(role_name=Roles.SUPER_ADMIN.value, permissions=["institution.view_all"])
+        offered = {t.name for t in registry.list_tools_for_caller(user)}
+        assert {"execute_database_query", "inspect_database_schema"} <= offered
 
     def test_student_cannot_invoke_corporate_enrollment(self):
         registry = get_tool_registry()

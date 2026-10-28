@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.security import RiskLevel, ToolPolicy
-from backend.ai.tools.registry import ToolDefinition, ToolExecutionContext
+from backend.ai.tools.registry import ConfirmationPreview, ToolDefinition, ToolExecutionContext
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.batch import Batch
@@ -483,7 +483,7 @@ async def handle_suggest_submission_grade(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
-    """Evaluate a student submission against the rubric, propose grades, and optionally record."""
+    """Evaluate a student submission against the rubric and propose a grade (records nothing)."""
     user = context.user
     session = context.session
 
@@ -508,51 +508,40 @@ async def handle_suggest_submission_grade(
     if not visible_courses.allows(asmt.course_id):
         raise AuthorizationError("You are not authorized to grade submissions for this course.")
 
-    suggested_score = Decimal(str(arguments.get("suggested_grade", asmt.max_score)))
+    # A missing score is refused, never defaulted: the previous default was
+    # full marks, which is a grade nobody decided.
+    raw_grade = arguments.get("suggested_grade")
+    if raw_grade is None:
+        raise ValidationError("A suggested grade is required.")
+    suggested_score = Decimal(str(raw_grade))
+    if suggested_score < 0:
+        raise ValidationError("A suggested grade cannot be negative.")
     if suggested_score > asmt.max_score:
         suggested_score = asmt.max_score
 
-    feedback = arguments.get("feedback", "Good effort. Meets primary evaluation criteria.")
+    feedback = arguments.get("feedback")
     rubric_eval = arguments.get("rubric_breakdown") or {
         "evaluation": "Rubric criteria satisfied.",
         "score": float(suggested_score),
         "max_score": float(asmt.max_score),
     }
 
-    apply_immediately = bool(arguments.get("apply_immediately", False))
-
-    if apply_immediately:
-        from backend.schemas.assignment import GradeSubmissionRequest
-        asmt_svc = AssignmentService(session)
-        graded = await asmt_svc.grade(
-            public_id=sub.public_id,
-            payload=GradeSubmissionRequest(
-                grade=suggested_score,
-                feedback=feedback,
-            ),
-            actor=user,
-        )
-        return {
-            "status": "GRADED",
-            "submission_id": str(graded.public_id),
-            "grade": float(graded.grade or suggested_score),
-            "max_score": float(asmt.max_score),
-            "feedback": graded.feedback,
-            "rubric_evaluation": rubric_eval,
-            "summary": f"Grade of {float(suggested_score)}/{float(asmt.max_score)} recorded successfully for {student.username}.",
-        }
+    # Suggest only. Recording a mark is the tutor's act, on the marking screen;
+    # an `apply_immediately` switch here let a model-chosen number become a
+    # student's grade with no confirmation at all.
+    student_name = f"{student.first_name or ''} {student.last_name or ''}".strip() or "this student"
 
     return {
         "status": "PROPOSED_FOR_REVIEW",
         "submission_id": str(sub.public_id),
-        "student_username": student.username,
+        "student_name": student_name,
         "suggested_grade": float(suggested_score),
         "max_score": float(asmt.max_score),
         "feedback": feedback,
         "rubric_evaluation": rubric_eval,
         "summary": (
-            f"AI proposed grade: {float(suggested_score)}/{float(asmt.max_score)} for {student.username}. "
-            "Feedback and rubric evaluation prepared for tutor approval."
+            f"Suggested grade: {float(suggested_score)}/{float(asmt.max_score)} for {student_name}. "
+            "Nothing has been recorded; the tutor records the mark on the marking screen."
         ),
     }
 
@@ -893,7 +882,6 @@ suggest_submission_grade_tool = ToolDefinition(
             "submission_id": {"type": "string", "description": "Submission UUID"},
             "suggested_grade": {"type": "number", "description": "Proposed score"},
             "feedback": {"type": "string", "description": "Constructive student feedback"},
-            "apply_immediately": {"type": "boolean", "description": "Whether to record the grade directly", "default": False},
         },
         "required": ["submission_id", "suggested_grade", "feedback"],
     },
@@ -968,95 +956,136 @@ get_course_curriculum_tool = ToolDefinition(
 )
 
 
-async def handle_publish_assessment(
-    arguments: dict[str, Any],
-    context: ToolExecutionContext,
-) -> dict[str, Any]:
-    """Publish an assessment (quiz, assignment, or examination) making it live for enrolled students."""
-    user = context.user
-    session = context.session
-    assessment_type = str(arguments.get("assessment_type", "quiz")).lower().strip()
+# Publishing an assessment needs the same permission the console's own route
+# needs for that type -- `exam.publish` for a schedule, `quiz.publish` for a
+# quiz, `assignment.update` for an assignment (its publish is a state change on
+# the ordinary update route). The tool used to accept `course.read` plus a role
+# list, so whether it agreed with the console depended on how roles happened to
+# be granted rather than on the permission the console actually checks.
+_PUBLISH_PERMISSION = {
+    "quiz": "quiz.publish",
+    "assignment": "assignment.update",
+    "examination": "exam.publish",
+}
+
+
+def _publish_type(arguments: dict[str, Any]) -> str:
+    raw = str(arguments.get("assessment_type", "quiz")).lower().strip()
+    kind = "examination" if raw == "exam" else raw
+    if kind not in _PUBLISH_PERMISSION:
+        raise ValidationError(f"Unknown assessment type: '{raw}'.")
+    return kind
+
+
+async def _resolve_for_publish(session: AsyncSession, model: Any, identifier: str) -> Any:
+    """An exact id, or an exact title that names one row -- never a fuzzy match.
+
+    Publishing the first title that merely contains the words typed would make
+    a near-namesake live for a whole class.
+    """
+    ident = str(identifier).strip()
+    try:
+        return (
+            await session.execute(select(model).where(model.public_id == uuid.UUID(ident)))
+        ).scalar_one_or_none()
+    except (ValueError, TypeError):
+        pass
+    rows = (
+        await session.execute(select(model).where(func.lower(model.title) == ident.lower()).limit(2))
+    ).scalars().all()
+    if len(rows) > 1:
+        raise ValidationError(f"More than one assessment is titled '{ident}'. Give its id instead.")
+    return rows[0] if rows else None
+
+
+async def _load_for_publish(arguments: dict[str, Any], context: ToolExecutionContext) -> tuple[str, Any]:
+    """Resolve the assessment through its own service, so its scope rules apply."""
+    from backend.ai.security import SecurityPolicyEngine
+
+    kind = _publish_type(arguments)
+    if _PUBLISH_PERMISSION[kind] not in SecurityPolicyEngine.caller_permissions(context.user):
+        raise AuthorizationError(f"You do not hold permission to publish this {kind}.")
+
     identifier = arguments.get("assessment_id") or arguments.get("identifier")
     if not identifier:
         raise ValidationError("assessment_id or identifier is required.")
 
-    if assessment_type == "quiz":
-        quiz = await _resolve_quiz(session, str(identifier))
-        if not quiz:
-            raise NotFoundError(f"Quiz '{identifier}' not found.")
-        quiz_svc = QuizService(session)
-        updated = await quiz_svc.set_published(
-            public_id=quiz.public_id,
-            is_published=True,
-            actor=user,
+    model = {"quiz": Quiz, "assignment": Assignment, "examination": Exam}[kind]
+    row = await _resolve_for_publish(context.session, model, str(identifier))
+    if row is None:
+        raise NotFoundError(f"{kind.capitalize()} '{identifier}' not found.")
+
+    service = {"quiz": QuizService, "assignment": AssignmentService, "examination": ExamService}[kind]
+    # `get` applies the same visibility the console applies: 404 if outside scope.
+    row = await service(context.session).get(row.public_id, actor=context.user)
+    return kind, row
+
+
+async def preview_publish_assessment(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> ConfirmationPreview:
+    kind, row = await _load_for_publish(arguments, context)
+    return ConfirmationPreview(
+        summary=f"Publish the {kind} '{row.title}' to its students?",
+        bound_parameters={"assessment_public_id": str(row.public_id)},
+    )
+
+
+async def handle_publish_assessment(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> dict[str, Any]:
+    """Publish an assessment through its service (runs only after confirmation)."""
+    from backend.ai.tools.registry import BOUND_PREFIX
+    from backend.schemas.assignment import AssignmentUpdateRequest
+    from backend.utils.enums import AssessmentState
+
+    kind, row = await _load_for_publish(arguments, context)
+    if str(row.public_id) != str(arguments.get(f"{BOUND_PREFIX}assessment_public_id")):
+        raise ValidationError("The assessment no longer matches the one confirmed; ask again.")
+
+    user = context.user
+    if kind == "quiz":
+        updated = await QuizService(context.session).set_published(row.public_id, True, actor=user)
+        published = bool(updated.is_published)
+    elif kind == "assignment":
+        updated = await AssignmentService(context.session).update(
+            row.public_id, AssignmentUpdateRequest(state=AssessmentState.PUBLISHED), actor=user
         )
-        return {
-            "success": True,
-            "assessment_type": "quiz",
-            "quiz_id": str(updated.public_id),
-            "title": updated.title,
-            "is_published": True,
-            "message": f"Quiz '{updated.title}' has been successfully published to students.",
-        }
+        published = updated.state is AssessmentState.PUBLISHED
+    else:
+        updated = await ExamService(context.session).set_published(row.public_id, True, actor=user)
+        published = bool(updated.is_published)
 
-    elif assessment_type == "assignment":
-        asmt_uuid = None
-        try:
-            asmt_uuid = uuid.UUID(str(identifier).strip())
-        except (ValueError, TypeError):
-            pass
-        if asmt_uuid:
-            stmt = select(Assignment).where(Assignment.public_id == asmt_uuid)
-        else:
-            stmt = select(Assignment).where(Assignment.title == str(identifier).strip())
-        asmt = (await session.execute(stmt)).scalar_one_or_none()
-        if not asmt:
-            raise NotFoundError(f"Assignment '{identifier}' not found.")
-
-        resolver = ScopeResolver(session)
-        visible_courses = await resolver.visible_course_ids(user)
-        if not visible_courses.allows(asmt.course_id):
-            raise AuthorizationError("You are not authorized to publish this assignment.")
-
-        asmt.state = AssessmentState.PUBLISHED
-        await session.flush()
-        return {
-            "success": True,
-            "assessment_type": "assignment",
-            "assignment_id": str(asmt.public_id),
-            "title": asmt.title,
-            "state": "PUBLISHED",
-            "message": f"Assignment '{asmt.title}' has been successfully published to students.",
-        }
-
-    elif assessment_type in ("exam", "examination"):
-        from backend.services.exam_service import ExamService
-        exam_svc = ExamService(session)
-        ex_uuid = uuid.UUID(str(identifier).strip())
-        exam = await exam_svc.get(ex_uuid, actor=user)
-        exam.is_published = True
-        await session.flush()
-        return {
-            "success": True,
-            "assessment_type": "examination",
-            "exam_id": str(exam.public_id),
-            "title": exam.title,
-            "is_published": True,
-            "message": f"Examination '{exam.title}' has been successfully published.",
-        }
-
-    raise ValidationError(f"Unknown assessment type: '{assessment_type}'.")
+    # Reported from the row the service returned, not assumed from the call.
+    return {
+        "success": published,
+        "assessment_type": kind,
+        "assessment_id": str(updated.public_id),
+        "title": updated.title,
+        "is_published": published,
+        "message": (
+            f"The {kind} '{updated.title}' is now published."
+            if published
+            else f"The {kind} '{updated.title}' could not be published."
+        ),
+    }
 
 
 publish_assessment_tool = ToolDefinition(
     name="publish_assessment",
-    description="Publish an assessment (quiz, assignment, or examination) making it live and visible for students.",
+    description=(
+        "Publish an assessment (quiz, assignment, or examination) so its students can see it. "
+        "Requires the user's confirmation."
+    ),
     policy=ToolPolicy(
         name="publish_assessment",
         description="Publish assessment to students",
         required_permissions=("course.read",),
         allowed_roles=(Roles.TUTOR.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
         risk_level=RiskLevel.HIGH,
+        requires_confirmation=True,
         audit_action="UPDATE",
     ),
     parameters_schema={
@@ -1070,12 +1099,13 @@ publish_assessment_tool = ToolDefinition(
             },
             "assessment_id": {
                 "type": "string",
-                "description": "UUID or title of the assessment to publish",
+                "description": "UUID or exact title of the assessment to publish",
             },
         },
         "required": ["assessment_id"],
     },
     handler=handle_publish_assessment,
+    preview=preview_publish_assessment,
 )
 
 

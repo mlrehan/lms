@@ -15,7 +15,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from backend.ai.client import get_openai_client
+from backend.ai.config import get_ai_settings
 from backend.ai.orchestrator import create_role_agent
+from backend.ai.rate_limit import get_request_limiter
 from backend.ai.security import AISecurityError, SecurityError, SecurityPolicyEngine
 from backend.ai.state import ConversationStateManager
 from backend.ai.tickets import get_ticket_manager
@@ -29,7 +31,7 @@ from backend.core.errors import (
     ValidationError,
 )
 from backend.core.logging import get_logger
-from backend.db.dependencies import DBSession
+from backend.db.dependencies import DBSession, commit_before_responding
 from backend.models.enrollment import Enrollments
 from backend.models.identity.user import User
 from backend.models.quiz import Quiz
@@ -120,6 +122,14 @@ async def chat_with_agent(
     request: Request,
 ) -> Any:
     """Send a conversational prompt to the caller's role-bound AI assistant."""
+    # 0. Per-person request limit, before any work (including refused prompts,
+    # which still cost a guard pass and an audit row).
+    get_request_limiter().check(
+        user_id=current_user.id,
+        bucket="chat",
+        limit=get_ai_settings().chat_requests_per_minute,
+    )
+
     # 1. Prompt Injection & Jailbreak Defense
     try:
         sanitized_prompt = SecurityPolicyEngine.sanitize_user_input(payload.prompt)
@@ -173,6 +183,7 @@ async def chat_with_agent(
                     actor=current_user,
                     client_ip=client_ip,
                 )
+                await commit_before_responding(session)
                 msg = res.get("message", "Action completed successfully.")
                 await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
                 await state_mgr.append_message(user_id=current_user.id, role="assistant", content=msg)
@@ -504,9 +515,14 @@ async def confirm_action_ticket(
         provided_parameters=payload.parameters or None,
         client_ip=client_ip,
     )
+    # A confirmed action is reported as done, so it must be done -- committed --
+    # before the person is told so (see commit_before_responding).
+    await commit_before_responding(session)
 
     return ConfirmationExecuteResponse(
-        success=True,
+        # The tool's own verdict, not an unconditional True: a sync that found
+        # one already running did nothing, and must not read as success.
+        success=bool(result.get("success", True)),
         result=result,
     )
 
@@ -526,7 +542,26 @@ async def transcribe_audio(
     file: UploadFile = File(...),
 ) -> AudioTranscriptionResponse:
     """Convert spoken voice audio into text using configured transcription model."""
-    content = await file.read()
+    settings = get_ai_settings()
+    get_request_limiter().check(
+        user_id=current_user.id,
+        bucket="transcribe",
+        limit=settings.transcribe_requests_per_minute,
+    )
+
+    # Browsers label a MediaRecorder capture `audio/webm` or, in some builds,
+    # `video/webm`; anything else is not a voice note and is not forwarded.
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if not (content_type.startswith("audio/") or content_type == "video/webm"):
+        raise ValidationError("Only audio recordings can be transcribed.")
+
+    # Read one byte past the cap rather than the whole body, so an oversized
+    # upload is refused without first being held in memory in full.
+    content = await file.read(settings.max_audio_bytes + 1)
+    if len(content) > settings.max_audio_bytes:
+        raise ValidationError(
+            f"Audio is larger than {settings.max_audio_bytes // (1024 * 1024)} MB and was not transcribed."
+        )
     if not content:
         raise ValidationError("Audio file is empty.")
 

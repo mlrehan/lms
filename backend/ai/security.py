@@ -51,7 +51,20 @@ class ToolPolicy(BaseModel):
     allowed_roles: tuple[str, ...] | None = None
     risk_level: RiskLevel = RiskLevel.LOW
     requires_confirmation: bool = False
+    # When set, only these values of the tool's `action` argument need
+    # confirmation: a session tool that creates and updates routinely but
+    # cancels consequentially asks only for the cancel.
+    confirm_actions: tuple[str, ...] | None = None
     audit_action: str | None = None
+
+    def needs_confirmation(self, arguments: dict[str, Any]) -> bool:
+        """Whether this call must be staged as a ticket rather than run."""
+        if not self.requires_confirmation:
+            return False
+        if self.confirm_actions is None:
+            return True
+        action = str(arguments.get("action", "")).lower().strip()
+        return action in self.confirm_actions
 
 
 # Patterns that signal adversarial jailbreaks, prompt extractions, or privilege overrides
