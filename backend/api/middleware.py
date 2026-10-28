@@ -16,7 +16,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.core.context import client_ip_ctx, client_private_ip_ctx, request_id_ctx
+from backend.core.client_ip import ClientAddress, resolve_client
+from backend.core.config import get_settings
+from backend.core.context import client_ip_ctx, client_ip_scope_ctx, client_private_ip_ctx, request_id_ctx
 from backend.core.logging import get_logger
 from backend.core.metrics import REGISTRY
 
@@ -30,13 +32,12 @@ def _peer_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def _client_ip(request: Request) -> str | None:
-    """Best-effort PUBLIC client IP. Honours the first hop in ``X-Forwarded-For`` (set by a
-    trusted reverse proxy such as the bundled nginx), else falls back to the socket peer."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or None
-    return _peer_ip(request)
+def _client_address(request: Request) -> ClientAddress:
+    """The client's address, by `core/client_ip.py`'s rule: forwarding headers count only
+    when the socket peer is a trusted proxy (`SERVER_FORWARDED_ALLOW_IPS`), and an unknown
+    client is recorded as unknown -- never as the proxy's own address."""
+    forwarded = ",".join(request.headers.getlist("X-Forwarded-For"))
+    return resolve_client(_peer_ip(request), forwarded, get_settings().server.forwarded_allow_ips)
 
 
 def _private_ip(request: Request) -> str | None:
@@ -89,7 +90,9 @@ class RequestContextMiddleware:
         request_id = request.headers.get(_REQUEST_ID_HEADER) or uuid.uuid4().hex
 
         token = request_id_ctx.set(request_id)
-        ip_token = client_ip_ctx.set(_client_ip(request))
+        address = _client_address(request)
+        ip_token = client_ip_ctx.set(address.ip)
+        scope_token = client_ip_scope_ctx.set(address.scope.value)
         priv_token = client_private_ip_ctx.set(_private_ip(request))
         start = time.perf_counter()
         status_code = 500
@@ -129,6 +132,7 @@ class RequestContextMiddleware:
         finally:
             request_id_ctx.reset(token)
             client_ip_ctx.reset(ip_token)
+            client_ip_scope_ctx.reset(scope_token)
             client_private_ip_ctx.reset(priv_token)
 
 

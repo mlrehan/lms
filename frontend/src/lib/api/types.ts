@@ -329,9 +329,31 @@ export interface AuditLogResponse {
   entity_label?: string | null;
   details?: Record<string, unknown> | null;
   ip_address?: string | null;
+  /** PUBLIC, PRIVATE, LOOPBACK, RESERVED or UNAVAILABLE. Null for events no request caused, and for rows recorded before the scope was captured. */
+  ip_scope?: string | null;
+  /** Where a GeoLite2 lookup placed ip_address when the row was written. Null for rows recorded before locations were captured. */
+  location?: AuditLocation | null;
   user_agent?: string | null;
   request_id?: string | null;
   created_at: string;
+}
+
+/**
+ * An IP-based estimate of where the address's network is -- never a person's position.
+ */
+export interface AuditLocation {
+  /** OK, NOT_FOUND, NOT_APPLICABLE, UNAVAILABLE or ERROR. */
+  status: string;
+  /** Database and build date, e.g. 'GeoLite2-City 2026-10-24'. */
+  source?: string | null;
+  country_code?: string | null;
+  country?: string | null;
+  region?: string | null;
+  city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  /** Radius the estimate is good to, at best. */
+  accuracy_km?: number | null;
 }
 
 /**

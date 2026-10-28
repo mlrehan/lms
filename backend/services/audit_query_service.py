@@ -27,7 +27,7 @@ import csv
 import io
 import uuid
 from datetime import UTC, datetime
-from typing import Sequence
+from typing import Any, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,7 @@ from backend.repositories.audit import (
     AuditRepository,
     ResolvedEntity,
 )
-from backend.schemas.audit import AuditLogResponse
+from backend.schemas.audit import AuditLocation, AuditLogResponse
 from backend.schemas.base import PageParams
 from backend.services.audit_service import AuditAction
 
@@ -179,6 +179,8 @@ class AuditQueryService:
                     entity_label=entity.label if entity else None,
                     details=row.details,
                     ip_address=row.ip_address,
+                    ip_scope=row.ip_scope,
+                    location=_location(row),
                     user_agent=row.user_agent,
                     request_id=row.request_id,
                     created_at=row.created_at,
@@ -211,6 +213,16 @@ class AuditQueryService:
                 "ip_address",
                 "request_id",
                 "details",
+                # Appended, so a spreadsheet built on the earlier columns still lines up.
+                "ip_scope",
+                "geo_status",
+                "geo_country",
+                "geo_region",
+                "geo_city",
+                "geo_latitude",
+                "geo_longitude",
+                "geo_accuracy_km",
+                "geo_source",
             ]
         )
         for row in rows:
@@ -227,6 +239,8 @@ class AuditQueryService:
                     row.ip_address or "",
                     row.request_id or "",
                     json.dumps(row.details, separators=(",", ":")) if row.details else "",
+                    row.ip_scope or "",
+                    *_location_cells(row.location),
                 ]
             )
         return buffer.getvalue()
@@ -238,3 +252,38 @@ class AuditQueryService:
         if pk is None:
             raise NotFoundError("User not found.")
         return pk
+
+
+def _location(row: Any) -> AuditLocation | None:
+    """The stored estimate, or None for a row written before locations were captured."""
+    if row.geo_status is None:
+        return None
+    return AuditLocation(
+        status=row.geo_status,
+        source=row.geo_source,
+        country_code=row.geo_country_code,
+        country=row.geo_country,
+        region=row.geo_region,
+        city=row.geo_city,
+        latitude=row.geo_latitude,
+        longitude=row.geo_longitude,
+        accuracy_km=row.geo_accuracy_km,
+    )
+
+
+def _location_cells(location: AuditLocation | None) -> list[str]:
+    """Empty cells, never a zero: "no estimate" and "latitude 0" are different facts."""
+    if location is None:
+        return [""] * 8
+    def cell(value: Any) -> str:
+        return "" if value is None else str(value)
+    return [
+        location.status,
+        cell(location.country),
+        cell(location.region),
+        cell(location.city),
+        cell(location.latitude),
+        cell(location.longitude),
+        cell(location.accuracy_km),
+        cell(location.source),
+    ]

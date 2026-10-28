@@ -22,7 +22,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.core.context import get_client_ip, get_request_id
+from backend.core.context import get_client_ip, get_client_ip_scope, get_request_id
+from backend.integrations.geoip import get_locator
 from backend.core.logging import get_logger
 from backend.models.audit import AuditLog
 
@@ -78,7 +79,16 @@ def _build(
     details: dict[str, Any] | None,
     user_agent: str | None,
 ) -> AuditLog:
+    ip = get_client_ip()
+    scope = get_client_ip_scope()
+    geo: dict[str, Any] = {}
+    if scope is not None:
+        # Only for events a request caused; a scheduled job has no client to place.
+        # A local file lookup that never raises: it cannot delay or lose this row.
+        geo = get_locator().locate(ip, scope).as_columns()
     return AuditLog(
+        **geo,
+        ip_scope=scope,
         actor_user_id=actor_user_id,
         actor_email=actor_email,
         action=action,

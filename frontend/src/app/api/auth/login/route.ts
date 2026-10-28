@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiBaseUrl } from "@/lib/env";
 import { writeSessionCookies } from "@/lib/server/session";
-import { UpstreamTimeout, fetchUpstream } from "@/lib/server/upstream";
+import { UpstreamTimeout, fetchUpstream, withClientAddress } from "@/lib/server/upstream";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +29,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     upstream = await fetchUpstream(`${apiBaseUrl()}/auth/login`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      // Without this the API recorded every sign-in -- the event an audit is
+      // most often asked about -- as coming from this server.
+      headers: withClientAddress(new Headers({ "content-type": "application/json" }), request.headers),
       body: JSON.stringify(payload),
       cache: "no-store",
     });

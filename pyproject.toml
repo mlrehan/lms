@@ -38,6 +38,7 @@ dependencies = [
     "openai>=1.50.0",
     "sqlglot>=25,<28",
     "pypdf>=4,<7",
+    "maxminddb>=2.6",
 ]
 
 [project.optional-dependencies]

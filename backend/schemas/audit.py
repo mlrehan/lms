@@ -32,6 +32,20 @@ class ExportFormat(str, Enum):
     CSV = "csv"
 
 
+class AuditLocation(APIModel):
+    """An IP-based estimate of where the address's network is -- never a person's position."""
+
+    status: str = Field(description="OK, NOT_FOUND, NOT_APPLICABLE, UNAVAILABLE or ERROR.")
+    source: str | None = Field(default=None, description="Database and build date, e.g. 'GeoLite2-City 2026-10-24'.")
+    country_code: str | None = None
+    country: str | None = None
+    region: str | None = None
+    city: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    accuracy_km: int | None = Field(default=None, description="Radius the estimate is good to, at best.")
+
+
 class AuditLogResponse(APIModel):
     public_id: uuid.UUID
     action: str
@@ -55,9 +69,20 @@ class AuditLogResponse(APIModel):
 
     details: dict[str, Any] | None = None
     ip_address: str | None = None
+    ip_scope: str | None = Field(
+        default=None,
+        description="PUBLIC, PRIVATE, LOOPBACK, RESERVED or UNAVAILABLE. Null for events no "
+        "request caused, and for rows recorded before the scope was captured.",
+    )
+    location: AuditLocation | None = Field(
+        default=None,
+        description="Where a GeoLite2 lookup placed ip_address when the row was written. "
+        "Null for rows recorded before locations were captured.",
+    )
     user_agent: str | None = None
     request_id: str | None = None
     created_at: datetime
+
 
 
 class AuditCatalogResponse(APIModel):

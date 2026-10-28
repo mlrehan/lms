@@ -54,10 +54,10 @@ type Rotated = Awaited<ReturnType<typeof refreshTokens>>;
 const REFRESH_GRACE_MS = 15_000;
 const refreshes = new Map<string, Promise<Rotated>>();
 
-function refreshOnce(refreshToken: string): Promise<Rotated> {
+function refreshOnce(refreshToken: string, client: Headers): Promise<Rotated> {
   const existing = refreshes.get(refreshToken);
   if (existing) return existing;
-  const attempt = refreshTokens(refreshToken);
+  const attempt = refreshTokens(refreshToken, client);
   refreshes.set(refreshToken, attempt);
   const forget = () => setTimeout(() => refreshes.delete(refreshToken), REFRESH_GRACE_MS);
   // A failure is forgotten at once so a later, legitimate attempt is not poisoned.
@@ -106,7 +106,7 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
     const firstBody = await upstream.arrayBuffer();
     const firstStatus = upstream.status;
     const firstHeaders = upstream.headers;
-    rotated = await refreshOnce(refreshToken);
+    rotated = await refreshOnce(refreshToken, request.headers);
     if (!rotated) {
       const failed = new NextResponse(firstBody, {
         status: firstStatus,

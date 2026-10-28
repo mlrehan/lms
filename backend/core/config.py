@@ -919,6 +919,25 @@ class LaitSettings(BaseSettings):
         return bool(self.api_base_url and self.api_key.get_secret_value())
 
 
+class GeoIPSettings(BaseSettings):
+    """Approximate location of a client IP, for the audit trail.
+
+    Read from a **local** MaxMind GeoLite2-City database file, so no address
+    ever leaves the server and a lookup costs microseconds. The file is not
+    shipped with the code: MaxMind's licence requires a (free) account, and the
+    file must be kept current with their `geoipupdate` tool -- see
+    DEPLOYMENT.md. With no file, locations are recorded as unavailable and
+    every audit event is still written.
+    """
+
+    model_config = _BASE_SETTINGS_CONFIG | SettingsConfigDict(env_prefix="GEOIP_")
+
+    enabled: bool = True
+    city_db_path: str = "var/geoip/GeoLite2-City.mmdb"
+    # Distinct addresses kept in memory; a whole office shares one.
+    cache_size: int = Field(default=4096, ge=0, le=1_000_000)
+
+
 class LocaleSettings(BaseSettings):
     """Working out where a signed-in person is, and so which time zone to show them.
 
@@ -1210,6 +1229,7 @@ class Settings(BaseModel):
     push: PushSettings = Field(default_factory=PushSettings)
     google: GoogleSettings = Field(default_factory=GoogleSettings)
     locale: LocaleSettings = Field(default_factory=LocaleSettings)
+    geoip: GeoIPSettings = Field(default_factory=GeoIPSettings)
     lait: LaitSettings = Field(
         default_factory=LaitSettings,
     )

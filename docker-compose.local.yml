@@ -67,7 +67,8 @@ services:
       - APP_DEBUG=true
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8000
-      - SERVER_FORWARDED_ALLOW_IPS=*
+      # The console container (Docker network). "*" would make every address look like a proxy.
+      - SERVER_FORWARDED_ALLOW_IPS=127.0.0.1,172.16.0.0/12
       - API_PREFIX=/api/v1
       - API_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
       - API_TRUSTED_HOSTS=localhost,127.0.0.1,backend

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, String, JSON, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.models.base import Base, PublicIdMixin
@@ -49,8 +49,28 @@ class AuditLog(Base, PublicIdMixin):
 
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    # Client IP that initiated the request (best-effort; may be NULL).
+    # Client IP that initiated the request, resolved by `core/client_ip.py`
+    # (forwarding headers believed only from a trusted proxy). NULL when the
+    # client could not be identified, or when no request caused the event.
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # PUBLIC / PRIVATE / LOOPBACK / RESERVED / UNAVAILABLE; NULL when no
+    # request caused the event (a scheduled sync) and for rows written before
+    # this column existed -- which are deliberately not backfilled.
+    ip_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Approximate location of `ip_address`, from a local GeoLite2 lookup made
+    # when the row was written (the table is append-only, so it can only ever
+    # describe the address at that moment). An estimate of where the network
+    # is, never a person's physical location.
+    geo_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    geo_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    geo_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    geo_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geo_region: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geo_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geo_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geo_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geo_accuracy_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

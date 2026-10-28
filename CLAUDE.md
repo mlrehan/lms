@@ -22,7 +22,7 @@ That was fixed in three passes:
 2. **Models rewritten from scratch** to be internally consistent and match the spec: one import convention throughout, `PublicIdMixin` (internal integer PK + a UUID `public_id` for anything API-facing, since sequential integer PKs are trivially enumerable), `SoftDeleteMixin`, `native_enum=False` on every enum column, the frozen-timestamp `server_default` bug fixed everywhere it appeared, the `course_batch.py` grab-bag file split into one file per aggregate. Verified by `configure_mappers()` plus compiling every table's DDL against the Postgres dialect — not just read for correctness.
 3. **Roles expanded to six, plus a corporate/guardian schema, plus the session layer fixed** — see "Confirmed architectural decisions" and "Session/DB layer" below. Findings and the schema proposal preserved in a second published Artifact, *"Roles, Organizations & Architecture Review."*
 
-**`alembic upgrade head` has been run.** As of 2026-10-28 the local `lms_platform_db` is at head `e8b3f52a6d71` (course outline and overview), verified with `alembic current` and a model-to-database drift check, not assumed from the migration files.
+**`alembic upgrade head` has been run.** As of 2026-10-28 the local `lms_platform_db` is at head `f3c9a1d47e85` (audit IP scope and geolocation), verified with `alembic current` and a model-to-database drift check, not assumed from the migration files.
 
 **Two development phases, two tools.** Everything up to commit `19ed7a1` (2026-10-13) was built with Claude Code. The project then moved to Google Antigravity: commit `c260392` ("UPDATED FROM GOOGLE ANTIGRAVITY", 2026-10-18) bundles work this file documents (permanent deletion, system reset, live badges) with work it did not (course/category editors, notification sounds, announcement reads, the Docker/nginx deployment), and the commits after it added the OpenAI assistant (`backend/ai/`). Claude Code then audited and hardened that assistant in six phases (commits `5daa4ae`..`5c8c243`); see "The AI assistant" at the end of this file.
 
@@ -1760,6 +1760,38 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 - **Do not run the test suite beside `next dev` and the API**: they compete
   for the same cores and vitest starts failing to spawn workers at all.
 
+## Audit log: real client IP and IP-estimated location
+
+**Root cause of "the audit log shows our server's IP":** the Next.js BFF never
+passed the browser's address to the API (sign-in, refresh and logout sent only
+`content-type`), so the API recorded the console's own socket address --
+15,715 local rows read `127.0.0.1`. And the API took the *first*
+`X-Forwarded-For` entry from any caller, which nginx's
+`$proxy_add_x_forwarded_for` leaves under the client's control.
+`SERVER_FORWARDED_ALLOW_IPS` existed and was never used.
+
+* **One resolver** (`backend/core/client_ip.py`, wired in `api/middleware.py`;
+  every audit row and session row reads it through `get_client_ip()`):
+  forwarding headers count only when the socket peer is in
+  `SERVER_FORWARDED_ALLOW_IPS`; the chain is read right-to-left; an unknown
+  client is `None` + scope `UNAVAILABLE`, never the proxy. `*` trusts nothing.
+* **The BFF vouches for one address**: it strips every client-address header
+  the browser sent and sets a single `X-Forwarded-For` from
+  `LMS_CLIENT_IP_HEADER` (production: nginx's `X-Real-IP`), only because the
+  console is bound to 127.0.0.1. Unset locally, so local rows read "unknown".
+* **Location** (`backend/integrations/geoip.py`): a local MaxMind
+  GeoLite2-City file via `maxminddb`, cached, reopened when `geoipupdate`
+  replaces it, never raises. Computed when the row is written (the table is
+  append-only) into nullable `audit_logs.ip_scope` / `geo_*` columns
+  (migration `f3c9a1d47e85`). Old rows are not backfilled.
+* The presence screen deliberately does *not* place people by IP; the audit
+  location is an `audit.read`-only estimate and the UI says it is approximate.
+* Production setup (env, `geoipupdate`, read-only mount): DEPLOYMENT.md,
+  "Audit Log: Client IP Address & Location".
+* Tests: `tests/unit/test_client_ip.py`, `tests/unit/test_geoip.py`,
+  `tests/integration/test_audit_client_ip.py`, and the frontend
+  `upstream.test.ts` / `audit-origin.test.ts`; mutation-checked (8/8).
+
 ## Known gaps — flagged, not forgotten, not yet addressed
 
 > **Pruned 2026-10-05.** Four entries here had become false — "no automated
@@ -1841,7 +1873,7 @@ render 15:00 in Asia/Dhaka and 09:00 in Europe/London.
 cd D:\LAIT\LMS_ANGIGRAVITY
 uv sync
 .venv\Scripts\python.exe -c "from backend.models import *; from sqlalchemy.orm import configure_mappers; configure_mappers(); print('OK')"
-.venv\Scripts\python.exe -m alembic current # should report e8b3f52a6d71 (head)
+.venv\Scripts\python.exe -m alembic current # should report f3c9a1d47e85 (head)
 .venv\Scripts\python.exe -m backend.main    # NOT `uvicorn ...` -- see the event-loop note above
 # then: curl http://localhost:8000/readyz
 #       http://localhost:8000/docs for the interactive API browser

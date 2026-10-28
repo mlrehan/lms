@@ -9,6 +9,7 @@
  * in-flight refresh instead.
  */
 
+import { isIP } from "node:net";
 import { apiBaseUrl } from "@/lib/env";
 
 /**
@@ -68,7 +69,7 @@ export interface Tokens {
 
 const inFlight = new Map<string, Promise<Tokens | null>>();
 
-export async function refreshTokens(refreshToken: string): Promise<Tokens | null> {
+export async function refreshTokens(refreshToken: string, client?: Headers): Promise<Tokens | null> {
   const existing = inFlight.get(refreshToken);
   if (existing) return existing;
 
@@ -76,7 +77,9 @@ export async function refreshTokens(refreshToken: string): Promise<Tokens | null
     try {
       const response = await fetchUpstream(`${apiBaseUrl()}/auth/refresh`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // The refresh is made on the browser's behalf, so its session row
+        // records the browser's address, not this server's.
+        headers: withClientAddress(new Headers({ "content-type": "application/json" }), client),
         body: JSON.stringify({ refresh_token: refreshToken }),
         cache: "no-store",
       });
@@ -122,12 +125,60 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "upgrade",
 ]);
 
+/**
+ * Client-address headers a browser can simply send. None of them is passed
+ * on as received: the API would otherwise record whatever address the caller
+ * chose to claim. The one address this server vouches for is added back by
+ * `withClientAddress`.
+ */
+const CLIENT_ADDRESS_HEADERS = new Set([
+  "forwarded",
+  "x-forwarded-for",
+  "x-real-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "cf-connecting-ip",
+  "true-client-ip",
+  "fastly-client-ip",
+]);
+
+/**
+ * The browser's address, as the reverse proxy in front of this server reported
+ * it -- or null when there is no such proxy or it said nothing usable.
+ *
+ * `LMS_CLIENT_IP_HEADER` names the header that proxy *sets* (production:
+ * nginx's `X-Real-IP $remote_addr`, which it overwrites, so a client cannot
+ * supply it). It is only trustworthy because this server is reachable through
+ * that proxy alone (bound to 127.0.0.1 in docker-compose.yml). Unset -- local
+ * development, where the browser talks to this server directly -- nothing is
+ * vouched for, and the API records the client as unknown rather than as this
+ * server's own address.
+ */
+export function clientAddress(source: Headers): string | null {
+  const header = process.env.LMS_CLIENT_IP_HEADER?.trim().toLowerCase();
+  if (!header) return null;
+  const raw = source.get(header);
+  if (!raw) return null;
+  // A single address is expected; if a list arrives, the entry the proxy
+  // itself appended is the last one.
+  const candidate = raw.split(",").pop()?.trim() ?? "";
+  return isIP(candidate) ? candidate : null;
+}
+
+/** Add the one client address this server vouches for, as a single-entry X-Forwarded-For. */
+export function withClientAddress(headers: Headers, source: Headers | undefined): Headers {
+  const address = source ? clientAddress(source) : null;
+  if (address) headers.set("x-forwarded-for", address);
+  return headers;
+}
+
 export function forwardableRequestHeaders(source: Headers): Headers {
   const headers = new Headers();
   source.forEach((value, key) => {
-    if (!STRIPPED_REQUEST_HEADERS.has(key.toLowerCase())) headers.set(key, value);
+    const name = key.toLowerCase();
+    if (!STRIPPED_REQUEST_HEADERS.has(name) && !CLIENT_ADDRESS_HEADERS.has(name)) headers.set(key, value);
   });
-  return headers;
+  return withClientAddress(headers, source);
 }
 
 const STRIPPED_RESPONSE_HEADERS = new Set([

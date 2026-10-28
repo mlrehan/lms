@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { forwardableRequestHeaders, forwardableResponseHeaders, refreshTokens } from "./upstream";
+import { clientAddress, forwardableRequestHeaders, forwardableResponseHeaders, refreshTokens } from "./upstream";
 
 const originalFetch = globalThis.fetch;
 
@@ -184,5 +184,57 @@ describe("upstream timeout", () => {
     }) as unknown as typeof fetch;
 
     await expect(fetchUpstream("http://api.test/down")).rejects.not.toBeInstanceOf(UpstreamTimeout);
+  });
+});
+
+describe("client address", () => {
+  afterEach(() => {
+    delete process.env.LMS_CLIENT_IP_HEADER;
+  });
+
+  it("never passes on an address the browser supplied", () => {
+    const forwarded = forwardableRequestHeaders(
+      new Headers({
+        "x-forwarded-for": "6.6.6.6",
+        "x-real-ip": "6.6.6.6",
+        forwarded: "for=6.6.6.6",
+        "cf-connecting-ip": "6.6.6.6",
+        "true-client-ip": "6.6.6.6",
+        accept: "application/json",
+      }),
+    );
+    expect(forwarded.get("x-forwarded-for")).toBeNull();
+    expect(forwarded.get("x-real-ip")).toBeNull();
+    expect(forwarded.get("forwarded")).toBeNull();
+    expect(forwarded.get("cf-connecting-ip")).toBeNull();
+    expect(forwarded.get("accept")).toBe("application/json");
+  });
+
+  it("forwards the proxy-set address as the only X-Forwarded-For entry", () => {
+    process.env.LMS_CLIENT_IP_HEADER = "x-real-ip";
+    const forwarded = forwardableRequestHeaders(
+      new Headers({ "x-real-ip": "103.170.173.46", "x-forwarded-for": "6.6.6.6, 103.170.173.46" }),
+    );
+    expect(forwarded.get("x-forwarded-for")).toBe("103.170.173.46");
+  });
+
+  it("accepts IPv6 and refuses anything that is not an address", () => {
+    process.env.LMS_CLIENT_IP_HEADER = "x-real-ip";
+    expect(clientAddress(new Headers({ "x-real-ip": "2a02:c204:2110:73::99" }))).toBe("2a02:c204:2110:73::99");
+    expect(clientAddress(new Headers({ "x-real-ip": "evil.example" }))).toBeNull();
+    expect(clientAddress(new Headers({ "x-real-ip": "1.2.3.4; drop" }))).toBeNull();
+  });
+
+  it("vouches for nothing when no proxy header is configured", () => {
+    expect(clientAddress(new Headers({ "x-real-ip": "103.170.173.46" }))).toBeNull();
+  });
+
+  it("sends the browser's address with a server-side token refresh", async () => {
+    process.env.LMS_CLIENT_IP_HEADER = "x-real-ip";
+    const fetchMock = vi.fn(async () => tokenResponse("ip"));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await refreshTokens("ip-token", new Headers({ "x-real-ip": "103.170.173.46" }));
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(new Headers(init.headers).get("x-forwarded-for")).toBe("103.170.173.46");
   });
 });

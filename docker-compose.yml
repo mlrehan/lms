@@ -70,6 +70,9 @@ services:
       - .env
     volumes:
       - storage_data:/app/var/storage
+      # MaxMind GeoLite2-City for audit-log locations, kept current on the host by
+      # geoipupdate (DEPLOYMENT.md). Read-only; absent file = locations "unavailable".
+      - ./var/geoip:/app/var/geoip:ro
     networks:
       - lms-network
     healthcheck:
@@ -119,6 +122,10 @@ services:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
       - LMS_API_URL=http://backend:8000/api/v1
+      # The header the reverse proxy in front of this container sets to the browser's
+      # address (nginx: `proxy_set_header X-Real-IP $remote_addr;`). Trustworthy only
+      # because the port below is bound to 127.0.0.1, so nginx is the only way in.
+      - LMS_CLIENT_IP_HEADER=x-real-ip
       - PORT=3000
       - HOSTNAME=0.0.0.0
     ports:

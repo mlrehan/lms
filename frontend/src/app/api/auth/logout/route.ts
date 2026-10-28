@@ -22,7 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiBaseUrl } from "@/lib/env";
 import { ACCESS_COOKIE, REFRESH_COOKIE, clearSessionCookies } from "@/lib/server/session";
-import { fetchUpstream } from "@/lib/server/upstream";
+import { fetchUpstream, withClientAddress } from "@/lib/server/upstream";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
       const upstream = await fetchUpstream(`${apiBaseUrl()}/auth/${target}`, {
         method: "POST",
-        headers,
+        headers: withClientAddress(new Headers(headers), request.headers),
         body,
         cache: "no-store",
       });

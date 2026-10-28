@@ -314,6 +314,57 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ---
 
+## Audit Log: Client IP Address & Location
+
+The audit trail records each user's public IP address and an IP-estimated
+location. Both depend on deployment configuration; without it the addresses
+are recorded as *unknown* (never as the server's own address).
+
+**How the address travels:** browser -> host nginx (sets `X-Real-IP
+$remote_addr`, which a client cannot override) -> console container -> API.
+
+1. **Console** (`frontend` service): `LMS_CLIENT_IP_HEADER=x-real-ip` (already
+   in `docker-compose.yml`). Safe only while its port is bound to `127.0.0.1`,
+   so nginx is the only way in. Do not set it on a console reachable directly.
+2. **API** (`.env.production`): `SERVER_FORWARDED_ALLOW_IPS` must list the
+   addresses the console reaches the API from -- the Docker network:
+   `SERVER_FORWARDED_ALLOW_IPS=127.0.0.1,172.16.0.0/12`. Never `*`.
+3. **nginx**: every `location` that proxies to the console must keep
+   `proxy_set_header X-Real-IP $remote_addr;` (the configuration above does).
+   If a CDN (e.g. Cloudflare) is ever put in front, nginx must first restore the
+   real address with `set_real_ip_from` + `real_ip_header` for that CDN's
+   ranges; otherwise every user is recorded at the CDN's address.
+
+**Location database (MaxMind GeoLite2-City, free account required):**
+
+```bash
+# 1. Create a free MaxMind account and a licence key: https://www.maxmind.com/en/geolite2/signup
+sudo apt install geoipupdate
+sudo tee /etc/GeoIP.conf >/dev/null <<'EOF'
+AccountID YOUR_ACCOUNT_ID
+LicenseKey YOUR_LICENCE_KEY
+EditionIDs GeoLite2-City
+DatabaseDirectory /var/www/lait/LMS/var/geoip
+EOF
+sudo mkdir -p /var/www/lait/LMS/var/geoip
+sudo geoipupdate -v
+# 2. Keep it current (MaxMind publishes twice weekly; their licence requires
+#    updates). The API notices the replaced file on its own -- no restart.
+echo "17 3 * * 2,5 root /usr/bin/geoipupdate" | sudo tee /etc/cron.d/geoipupdate
+```
+
+The file is mounted read-only at `/app/var/geoip/GeoLite2-City.mmdb`
+(`GEOIP_CITY_DB_PATH`). Without it, events are still written with location
+status `UNAVAILABLE`. `GEOIP_ENABLED=false` turns lookups off. GeoLite2 data
+is © MaxMind and requires attribution where it is shown.
+
+Locations are estimates of where an IP address's network is, not where a
+person is: VPNs, mobile carriers and shared office connections place users
+elsewhere. Rows written before this release keep their original IP and have
+no location (the audit table is append-only; nothing is backfilled).
+
+---
+
 ## Scenario C: Applying Updates & Code Changes in Production
 
 Whenever you make changes to the code, fix bugs, or push new features to your Git repository, follow this zero-downtime update sequence:

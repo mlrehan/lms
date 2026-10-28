@@ -20,6 +20,7 @@ import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatRelative } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
+import { coordinatesText, locationStatusText, originSummary, placeName, scopeLabel } from "@/lib/format/audit-origin";
 
 function DetailDialog({
   log,
@@ -85,9 +86,37 @@ function DetailDialog({
                 <dd className="font-mono text-xs break-all">{log.request_id ?? "—"}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">IP address</dt>
-                <dd className="font-mono text-xs">{log.ip_address ?? "—"}</dd>
+                <dt className="text-xs text-muted-foreground">Client IP address</dt>
+                <dd className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs break-all">{log.ip_address ?? "—"}</span>
+                  {scopeLabel(log.ip_scope) ? (
+                    <Badge tone={log.ip_scope === "PUBLIC" ? "neutral" : "warning"}>
+                      {scopeLabel(log.ip_scope)}
+                    </Badge>
+                  ) : null}
+                </dd>
               </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">IP-estimated location</dt>
+                <dd className="text-xs">
+                  {placeName(log.location) ?? locationStatusText(log) ?? "—"}
+                  {coordinatesText(log.location) ? (
+                    <span className="block font-mono text-muted-foreground">
+                      {coordinatesText(log.location)}
+                    </span>
+                  ) : null}
+                  {log.location?.source ? (
+                    <span className="block text-muted-foreground">Source: {log.location.source}</span>
+                  ) : null}
+                </dd>
+              </div>
+              {log.location?.status === "OK" ? (
+                <p className="sm:col-span-2 text-xs text-muted-foreground">
+                  Approximate: estimated from the IP address, not the person&apos;s physical location.
+                  VPNs, mobile networks and shared office connections can place someone far from
+                  where they are.
+                </p>
+              ) : null}
               <div className="sm:col-span-2">
                 <dt className="text-xs text-muted-foreground">User agent</dt>
                 <dd className="break-words text-xs">{log.user_agent ?? "—"}</dd>
@@ -201,6 +230,22 @@ export default function AuditPage() {
           </span>
         ) : (
           "—"
+        ),
+    },
+    {
+      key: "origin",
+      header: "IP / location",
+      secondary: true,
+      cell: (row) =>
+        row.ip_address || row.location ? (
+          <span className="block max-w-56">
+            <span className="block truncate font-mono text-xs">{row.ip_address ?? "Unknown IP"}</span>
+            <span className="block truncate text-xs text-muted-foreground" title={originSummary(row)}>
+              {originSummary(row)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
         ),
     },
     {
