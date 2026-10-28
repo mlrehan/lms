@@ -57,21 +57,17 @@ def test_retriever_excludes_restricted_materials_for_students():
         # Mock query return: only public chunk returned by SQL because caller is not staff
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            (chunk_public, "Public Python Notes"),
+            (chunk_public, uuid.uuid4(), "Public Python Notes"),
         ]
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_client = MagicMock()
         mock_client.create_embeddings = AsyncMock(return_value=[[1.0, 0.0]])
 
-        with patch("backend.ai.rag.retriever.ScopeResolver") as mock_sr_cls:
-            mock_sr = MagicMock()
-            mock_courses = MagicMock()
-            mock_courses.allows.return_value = True
-            mock_courses.unrestricted = True
-            mock_sr.visible_course_ids = AsyncMock(return_value=mock_courses)
-            mock_sr.visible_batch_ids = AsyncMock(return_value=MagicMock(ids=set()))
-            mock_sr_cls.return_value = mock_sr
+        # Each candidate file is admitted by ResourceService.get, the rule the
+        # Resources screen uses; here it admits, so the test is about the SQL
+        # filter on the live staff-only column.
+        with patch("backend.ai.rag.retriever.ResourceService.get", new_callable=AsyncMock):
 
             retriever = PermissionAwareRetriever(session=mock_session, client=mock_client)
             results = await retriever.search(
@@ -81,6 +77,10 @@ def test_retriever_excludes_restricted_materials_for_students():
             )
 
             assert len(results) == 1
+            # Students are filtered on the live resources.is_restricted, not the
+            # copy taken into the index when it was built.
+            sql = str(mock_session.execute.call_args[0][0]).lower()
+            assert "resources.is_restricted is false" in sql
             assert results[0].resource_name == "Public Python Notes"
             assert results[0].is_restricted is False
             assert "Public" in results[0].text
@@ -112,21 +112,17 @@ def test_retriever_allows_restricted_materials_for_staff():
         mock_session = MagicMock()
         mock_result = MagicMock()
         mock_result.all.return_value = [
-            (chunk_restricted, "Staff Marking Guide"),
+            (chunk_restricted, uuid.uuid4(), "Staff Marking Guide"),
         ]
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_client = MagicMock()
         mock_client.create_embeddings = AsyncMock(return_value=[[1.0, 0.0]])
 
-        with patch("backend.ai.rag.retriever.ScopeResolver") as mock_sr_cls:
-            mock_sr = MagicMock()
-            mock_courses = MagicMock()
-            mock_courses.allows.return_value = True
-            mock_courses.unrestricted = True
-            mock_sr.visible_course_ids = AsyncMock(return_value=mock_courses)
-            mock_sr.visible_batch_ids = AsyncMock(return_value=MagicMock(ids=set()))
-            mock_sr_cls.return_value = mock_sr
+        # Each candidate file is admitted by ResourceService.get, the rule the
+        # Resources screen uses; here it admits, so the test is about the SQL
+        # filter on the live staff-only column.
+        with patch("backend.ai.rag.retriever.ResourceService.get", new_callable=AsyncMock):
 
             retriever = PermissionAwareRetriever(session=mock_session, client=mock_client)
             results = await retriever.search(
@@ -136,6 +132,7 @@ def test_retriever_allows_restricted_materials_for_staff():
             )
 
             assert len(results) == 1
+            assert "is_restricted is false" not in str(mock_session.execute.call_args[0][0]).lower()
             assert results[0].is_restricted is True
             assert "Staff Marking" in results[0].text
 

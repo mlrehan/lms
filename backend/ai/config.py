@@ -109,6 +109,14 @@ class AISettings(BaseSettings):
         le=100_000,
         description="Most rows one confirmed SQL change through the assistant may affect",
     )
+    # Course-material index. Runs inside the API process on an interval, like
+    # the sync scheduler, so an upload never waits on OpenAI and an OpenAI
+    # outage delays search rather than breaking uploads.
+    rag_indexing_enabled: bool = Field(default=True, alias="AI_RAG_INDEXING_ENABLED")
+    rag_index_interval_seconds: int = Field(default=120, alias="AI_RAG_INDEX_INTERVAL_SECONDS", ge=10)
+    rag_index_batch_size: int = Field(default=10, alias="AI_RAG_INDEX_BATCH_SIZE", ge=1, le=200)
+    rag_max_file_bytes: int = Field(default=20 * 1024 * 1024, alias="AI_RAG_MAX_FILE_BYTES", ge=1024)
+    rag_max_chunks_per_resource: int = Field(default=300, alias="AI_RAG_MAX_CHUNKS_PER_RESOURCE", ge=1)
     conversation_retention_days: int = Field(
         default=30,
         alias="AI_CONVERSATION_RETENTION_DAYS",

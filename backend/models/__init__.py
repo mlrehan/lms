@@ -47,10 +47,11 @@ from .push import PushSubscription
 from .shared_links import SharedLink, SharedLinkTarget
 from .ai_embedding import ResourceEmbedding, AIConversationMessage
 from .ai_ticket import AIConfirmationTicket
+from .ai_index_state import ResourceIndexState
 
 __all__ = [
     # AI & Embeddings
-    "ResourceEmbedding", "AIConversationMessage", "AIConfirmationTicket",
+    "ResourceEmbedding", "AIConversationMessage", "AIConfirmationTicket", "ResourceIndexState",
     # Identity
     "User", "CurrentUser", "Role", "Permission", "Token", "UserRole", "RolePermission",
     # Geo

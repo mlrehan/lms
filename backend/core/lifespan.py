@@ -81,9 +81,28 @@ async def lifespan(app: FastAPI):
     else:
         app.state.sync_scheduler_task = None
 
+    # The course-material index for the assistant's search. Only with an
+    # OpenAI key: without one every pass would fail and record a failure per
+    # file, which looks like broken files rather than missing configuration.
+    index_task: asyncio.Task[None] | None = None
+    from backend.ai.config import get_ai_settings
+
+    ai_settings = get_ai_settings()
+    if ai_settings.rag_indexing_enabled and ai_settings.openai_api_key.get_secret_value().strip():
+        from backend.ai.rag.indexer import run_index_scheduler
+
+        index_task = asyncio.create_task(run_index_scheduler(db.session_factory))
+        logger.info("Course-material index scheduler started")
+
     try:
         yield
     finally:
+        if index_task is not None:
+            index_task.cancel()
+            try:
+                await index_task
+            except asyncio.CancelledError:
+                pass
         if scheduler_task is not None:
             scheduler_task.cancel()
             try:

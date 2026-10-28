@@ -234,15 +234,7 @@ def test_rag_retrieval_excludes_restricted_media_from_students():
             perms=["resource.read"],  # Holds resource.read, but NOT resource.view_restricted
         )
 
-        with patch("backend.ai.rag.retriever.ScopeResolver") as mock_sr_cls:
-            mock_sr = MagicMock()
-            mock_scope = MagicMock()
-            mock_scope.allows.return_value = True
-            mock_scope.is_empty = False
-            mock_scope.ids = {10}
-            mock_sr.visible_course_ids = AsyncMock(return_value=mock_scope)
-            mock_sr.visible_batch_ids = AsyncMock(return_value=mock_scope)
-            mock_sr_cls.return_value = mock_sr
+        with patch("backend.ai.rag.retriever.ResourceService.get", new_callable=AsyncMock):
 
             # Mock DB execute
             mock_db_res = MagicMock()
@@ -257,7 +249,8 @@ def test_rag_retrieval_excludes_restricted_media_from_students():
             compiled_sql = str(executed_stmt).lower()
 
             # The SQL statement MUST contain the restricted media filter: is_restricted is false
-            assert "is_restricted is false" in compiled_sql or "is_restricted = false" in compiled_sql
+            # On the live resource row, never the copy in the index.
+            assert "resources.is_restricted is false" in compiled_sql
 
     asyncio.run(run())
 

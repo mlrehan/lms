@@ -9,16 +9,23 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any, Sequence
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.client import OpenAIClient, get_openai_client
-from backend.ai.security import SecurityPolicyEngine
 from backend.core.logging import get_logger
 from backend.models.ai_embedding import ResourceEmbedding
 from backend.models.identity.user import User
 from backend.models.resource import Resource
-from backend.services.scope import ScopeResolver
+from backend.core.errors import NotFoundError
+from backend.ai.config import get_ai_settings
+from backend.services.resource_service import ResourceService
+
+# Bounds on one search: chunks considered, and distinct files whose access is
+# checked. Similarity is computed in Python over JSON vectors, so the first
+# bound is what keeps a large library from making search slow.
+_MAX_CANDIDATE_CHUNKS = 20_000
+_MAX_FILES_CHECKED = 50
 
 logger = get_logger(__name__)
 
@@ -77,65 +84,65 @@ class PermissionAwareRetriever:
             return []
         query_vector = embeddings[0]
 
-        # 2. Scope resolution
-        resolver = ScopeResolver(self.session)
-        visible_courses = await resolver.visible_course_ids(user)
-        visible_batches = await resolver.visible_batch_ids(user)
-        held_perms = SecurityPolicyEngine.caller_permissions(user)
-
-        # Can caller see staff-restricted files?
-        can_view_restricted = "resource.view_restricted" in held_perms or "institution.view_all" in held_perms
-
-        # 3. Base SQL query constrained to caller scope
+        # 2. Candidates. Every filter here reads the live resource row, never a
+        # value copied into the index when it was built: a file marked
+        # staff-only, or deleted, after indexing must stop matching at once.
+        # Only chunks from the current embedding model are comparable.
+        resources = ResourceService(self.session)
         stmt = (
-            select(
-                ResourceEmbedding,
-                Resource.name.label("resource_name"),
-            )
+            select(ResourceEmbedding, Resource.public_id, Resource.name)
             .join(Resource, Resource.id == ResourceEmbedding.resource_id)
-            .where(Resource.is_deleted.is_(False))
-        )
-
-        # Apply restricted materials filter
-        if not can_view_restricted:
-            stmt = stmt.where(ResourceEmbedding.is_restricted.is_(False))
-
-        # Apply course scope filter
-        if course_id is not None:
-            if not visible_courses.allows(course_id):
-                logger.warning("Caller %s attempted out-of-scope course RAG search: %d", user.public_id, course_id)
-                return []
-            stmt = stmt.where(ResourceEmbedding.course_id == course_id)
-        elif not visible_courses.unrestricted:
-            stmt = stmt.where(
-                or_(
-                    ResourceEmbedding.course_id.in_(visible_courses.ids),
-                    ResourceEmbedding.batch_id.in_(visible_batches.ids),
-                )
+            .where(
+                Resource.is_deleted.is_(False),
+                ResourceEmbedding.embedding_model == get_ai_settings().openai_embedding_model,
             )
+            .limit(_MAX_CANDIDATE_CHUNKS)
+        )
+        if not resources.may_see_restricted(user):
+            stmt = stmt.where(Resource.is_restricted.is_(False))
+        if course_id is not None:
+            stmt = stmt.where(Resource.course_id == course_id)
 
         rows = (await self.session.execute(stmt)).all()
         if not rows:
             return []
 
-        # 4. Rank candidate chunks by vector similarity
+        # 3. Rank, then admit each file through ResourceService.get -- the rule
+        # the Resources screen uses, including direct shares and staff-only
+        # material -- rather than a second, narrower copy of it here.
+        ranked = sorted(
+            ((_cosine_similarity(query_vector, chunk.embedding), chunk, public_id, name) for chunk, public_id, name in rows),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        allowed: dict[int, bool] = {}
         scored_chunks: list[RetrievedChunk] = []
-        for embedding_obj, res_name in rows:
-            sim = _cosine_similarity(query_vector, embedding_obj.embedding)
-            if sim >= min_similarity:
-                scored_chunks.append(
-                    RetrievedChunk(
-                        chunk_id=str(embedding_obj.public_id),
-                        resource_id=embedding_obj.resource_id,
-                        resource_name=res_name or "Course Document",
-                        course_id=embedding_obj.course_id,
-                        batch_id=embedding_obj.batch_id,
-                        is_restricted=embedding_obj.is_restricted,
-                        text=embedding_obj.chunk_text,
-                        similarity=round(sim, 4),
-                        chunk_index=embedding_obj.chunk_index,
-                    )
+        for sim, chunk, public_id, name in ranked:
+            if sim < min_similarity or len(scored_chunks) >= limit:
+                break
+            if chunk.resource_id not in allowed:
+                if len(allowed) >= _MAX_FILES_CHECKED:
+                    break
+                try:
+                    await resources.get(public_id, actor=user)
+                    allowed[chunk.resource_id] = True
+                except NotFoundError:
+                    allowed[chunk.resource_id] = False
+            if not allowed[chunk.resource_id]:
+                continue
+            scored_chunks.append(
+                RetrievedChunk(
+                    chunk_id=str(chunk.public_id),
+                    resource_id=chunk.resource_id,
+                    resource_name=name or "Course Document",
+                    course_id=chunk.course_id,
+                    batch_id=chunk.batch_id,
+                    is_restricted=chunk.is_restricted,
+                    text=chunk.chunk_text,
+                    similarity=round(sim, 4),
+                    chunk_index=chunk.chunk_index,
                 )
+            )
 
         # Sort descending by similarity score and truncate to limit
         scored_chunks.sort(key=lambda c: c.similarity, reverse=True)
