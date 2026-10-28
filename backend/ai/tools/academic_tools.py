@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.security import RiskLevel, ToolPolicy
 from backend.ai.tools.registry import ConfirmationPreview, ToolDefinition, ToolExecutionContext
+from backend.core.privacy import visible_email, visible_username
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.batch import Batch
@@ -451,13 +452,13 @@ async def handle_get_pending_submissions(
 
     out = []
     for sub, asmt, student in rows:
-        s_name = f"{student.first_name or ''} {student.last_name or ''}".strip() or student.username
+        s_name = f"{student.first_name or ''} {student.last_name or ''}".strip() or "Unnamed account"
         out.append({
             "submission_id": str(sub.public_id),
             "assignment_title": asmt.title,
             "max_score": float(asmt.max_score),
             "student_name": s_name,
-            "student_username": student.username,
+            "student_username": visible_username(student),
             "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else "",
             "state": sub.state.value if hasattr(sub.state, "value") else str(sub.state),
             "rubric": asmt.rubric,
@@ -873,8 +874,9 @@ suggest_submission_grade_tool = ToolDefinition(
         description="Evaluate submission grade",
         required_permissions=("assignment.grade",),
         allowed_roles=(Roles.TUTOR.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
+        # Records nothing, so it audits nothing: an UPDATE row here would put a
+        # write into the trail that never happened.
         risk_level=RiskLevel.MODERATE,
-        audit_action="UPDATE",
     ),
     parameters_schema={
         "type": "object",

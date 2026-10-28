@@ -127,7 +127,7 @@ def test_delete_inactive_users_preview_counts_and_binds_the_accounts():
         assert res["status"] == "REQUIRES_CONFIRMATION"
         assert res["preview_summary"] == "Delete 3 inactive users? This cannot be undone."
         assert res["affected_records_count"] == 3
-        ticket = get_ticket_manager().get_ticket(res["ticket_id"])
+        ticket = await get_ticket_manager().get_ticket(res["ticket_id"])
         assert ticket.parameters[f"{BOUND_PREFIX}user_ids"] == [str(i) for i in ids]
         assert ticket.via_registry is True
 
@@ -226,27 +226,29 @@ def test_manage_user_change_is_staged_then_applied_through_user_service():
     asyncio.run(run())
 
 
-def test_ticket_manager_latest_pending_and_cancel():
-    """Ticket manager correctly identifies latest pending ticket and supports cancellation."""
+def test_ticket_manager_lists_pending_and_cancels_all_of_them():
+    """"No" cancels every pending ticket, not just the newest, so a later
+    "yes" can never confirm something that was declined."""
     admin = make_superadmin_user(user_id=888)
     ticket_mgr = ConfirmationTicketManager()
 
-    ticket = ticket_mgr.create_ticket(
-        action_name="sync_all_data",
-        actor_user_id=admin.id,
-        actor_public_id=str(admin.public_id),
-        parameters={},
-        affected_records_count=0,
-        preview_summary="Sync all data",
+    first, second = (
+        asyncio.run(ticket_mgr.create_ticket(
+            action_name=name,
+            actor_user_id=admin.id,
+            actor_public_id=str(admin.public_id),
+            parameters={},
+            affected_records_count=0,
+            preview_summary=name,
+        ))
+        for name in ("sync_all_data", "delete_inactive_users")
     )
 
-    found = ticket_mgr.get_latest_pending_for_user(admin.id)
-    assert found is not None
-    assert found.ticket_id == ticket.ticket_id
+    pending = asyncio.run(ticket_mgr.pending_for_user(admin.id))
+    assert {t.ticket_id for t in pending} == {first.ticket_id, second.ticket_id}
 
-    cancelled = ticket_mgr.cancel_pending_for_user(admin.id)
-    assert cancelled is not None
-    assert cancelled.status.value == "CANCELLED"
-
-    assert ticket_mgr.get_latest_pending_for_user(admin.id) is None
-
+    cancelled = asyncio.run(ticket_mgr.cancel_pending_for_user(admin.id))
+    assert len(cancelled) == 2
+    assert asyncio.run(ticket_mgr.pending_for_user(admin.id)) == []
+    for t in (first, second):
+        assert asyncio.run(ticket_mgr.get_ticket(t.ticket_id)).status.value == "CANCELLED"

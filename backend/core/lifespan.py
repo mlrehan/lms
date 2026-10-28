@@ -49,6 +49,15 @@ async def lifespan(app: FastAPI):
         else None
     )
 
+    # Confirmation tickets live in Postgres so they survive a restart and are
+    # visible to every process; the AI layer borrows this engine for work that
+    # outlives a request instead of building its own.
+    from backend.ai.runtime import configure_ai_runtime
+    from backend.ai.tickets import DatabaseTicketStore, configure_ticket_store
+
+    configure_ticket_store(DatabaseTicketStore(db.session_factory))
+    configure_ai_runtime(session_factory=db.session_factory, event_bus=app.state.event_bus)
+
     # Fail fast on startup if the database is unreachable, rather than
     # accepting traffic and failing on the first request that needs it.
     await db.ping()

@@ -83,14 +83,16 @@ async def handle_sync_all_data(
     user = context.user
     _require_super_admin(user, "trigger full data synchronization")
 
-    settings = get_settings()
-    from backend.db.manager import DatabaseManager
-    db_mgr = DatabaseManager(settings.database, application_name="ai_sync_all")
+    from backend.ai.runtime import get_ai_runtime
 
+    runtime = get_ai_runtime()
     try:
+        # The application's own engine and event bus, exactly as the dashboard
+        # button uses them -- so the run's progress reaches the sync panel live.
         service = SyncPipelineService(
-            db_mgr.session_factory,
-            settings,
+            runtime.session_factory,
+            get_settings(),
+            event_bus=runtime.event_bus,
         )
         run = await service.start(
             trigger_type="MANUAL_AI",

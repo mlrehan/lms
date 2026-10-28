@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 
 from backend.ai.client import get_openai_client
 from backend.ai.config import get_ai_settings
-from backend.ai.orchestrator import create_role_agent
+from backend.ai.orchestrator import AIOrchestrator, create_role_agent
 from backend.ai.rate_limit import get_request_limiter
 from backend.ai.security import AISecurityError, SecurityError, SecurityPolicyEngine
 from backend.ai.state import ConversationStateManager
@@ -168,67 +168,64 @@ async def chat_with_agent(
         logger.warning("Recent conversation history retrieval failed: %s", exc)
         recent_history = []
 
-    # Fast-path for conversational confirmation (e.g. SuperAdmin answering "Yes" or "No" to confirmation prompt)
+    # Typed confirmation. The confirmation card's buttons name their ticket and
+    # go through POST /ai/confirm; this path is for someone who types "yes"
+    # instead. It may act only when that word is unambiguous: with two actions
+    # awaiting confirmation, "yes" does not say which, and guessing "the
+    # newest" would confirm something the person may not have been looking at.
     lowered_cmd = sanitized_prompt.lower().strip()
     ticket_mgr = get_ticket_manager()
+    reply_role = AIOrchestrator.resolve_caller_primary_role(current_user)
+
+    async def quick_reply(message: str, *, success: bool, tool_calls: list[dict[str, Any]] | None = None) -> Any:
+        await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
+        await state_mgr.append_message(user_id=current_user.id, role="assistant", content=message)
+        if payload.stream:
+            async def one_frame() -> AsyncIterator[bytes]:
+                yield b": keep-alive\n\n"
+                frame = {
+                    "type": "done" if success else "error",
+                    "message": message,
+                    "role": reply_role,
+                    "tool_calls": tool_calls or [],
+                    "success": success,
+                }
+                yield f"data: {json.dumps(frame, default=str)}\n\n".encode("utf-8")
+            return StreamingResponse(one_frame(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
+        return AIChatResponse(message=message, role=reply_role, tool_calls=tool_calls or [], success=success)
 
     if lowered_cmd in ("yes", "y", "confirm", "proceed", "yes, please", "do it"):
-        pending_ticket = ticket_mgr.get_latest_pending_for_user(current_user.id)
-        if pending_ticket:
-            exec_svc = ConfirmationExecutionService(session)
+        pending = await ticket_mgr.pending_for_user(current_user.id)
+        if len(pending) > 1:
+            return await quick_reply(
+                f"{len(pending)} actions are waiting for your confirmation. "
+                "Use the Confirm button on the one you mean.",
+                success=False,
+            )
+        if pending:
+            ticket = pending[0]
             client_ip = request.client.host if request.client else None
             try:
-                res = await exec_svc.execute_ticket(
-                    ticket_id=pending_ticket.ticket_id,
+                res = await ConfirmationExecutionService(session).execute_ticket(
+                    ticket_id=ticket.ticket_id,
                     actor=current_user,
                     client_ip=client_ip,
                 )
                 await commit_before_responding(session)
-                msg = res.get("message", "Action completed successfully.")
-                await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
-                await state_mgr.append_message(user_id=current_user.id, role="assistant", content=msg)
-                if payload.stream:
-                    async def fast_stream() -> AsyncIterator[bytes]:
-                        yield b": keep-alive\n\n"
-                        yield f"data: {json.dumps({'type': 'status', 'content': 'Executing confirmed action...'})}\n\n".encode("utf-8")
-                        yield f"data: {json.dumps({'type': 'done', 'message': msg, 'role': Roles.SUPER_ADMIN.value, 'tool_calls': [{'tool': pending_ticket.action_name, 'result': res}], 'success': True})}\n\n".encode("utf-8")
-                    return StreamingResponse(fast_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
-                return AIChatResponse(
-                    message=msg,
-                    role=Roles.SUPER_ADMIN.value,
-                    tool_calls=[{"tool": pending_ticket.action_name, "result": res}],
-                    success=True,
-                )
-            except Exception as exc:
-                err_msg = f"Operation failed: {str(exc)}"
-                if payload.stream:
-                    async def fast_err_stream() -> AsyncIterator[bytes]:
-                        yield b": keep-alive\n\n"
-                        yield f"data: {json.dumps({'type': 'error', 'message': err_msg, 'success': False})}\n\n".encode("utf-8")
-                    return StreamingResponse(fast_err_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
-                return AIChatResponse(
-                    message=err_msg,
-                    role=Roles.SUPER_ADMIN.value,
-                    success=False,
-                )
+            except AppError as exc:
+                return await quick_reply(f"The action was not carried out: {exc.message}", success=False)
+            succeeded = bool(res.get("success", True))
+            return await quick_reply(
+                res.get("message") or ("Done." if succeeded else "The action did not complete."),
+                success=succeeded,
+                tool_calls=[{"tool": ticket.action_name, "result": res}],
+            )
 
     if lowered_cmd in ("no", "n", "cancel", "abort", "stop", "nevermind", "no, cancel"):
-        cancelled_ticket = ticket_mgr.cancel_pending_for_user(current_user.id)
-        if cancelled_ticket:
-            action_name = cancelled_ticket.action_name
-            cancel_msg = "Synchronization cancelled." if "sync" in action_name else "Operation cancelled."
-            await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
-            await state_mgr.append_message(user_id=current_user.id, role="assistant", content=cancel_msg)
-            if payload.stream:
-                async def cancel_stream() -> AsyncIterator[bytes]:
-                    yield b": keep-alive\n\n"
-                    yield f"data: {json.dumps({'type': 'done', 'message': cancel_msg, 'role': Roles.SUPER_ADMIN.value, 'success': True})}\n\n".encode("utf-8")
-                return StreamingResponse(cancel_stream(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
-            return AIChatResponse(
-                message=cancel_msg,
-                role=Roles.SUPER_ADMIN.value,
-                success=True,
-            )
+        cancelled = await ticket_mgr.cancel_pending_for_user(current_user.id)
+        if cancelled:
+            noun = "action" if len(cancelled) == 1 else f"{len(cancelled)} actions"
+            return await quick_reply(f"Cancelled. Nothing was changed by the {noun} you declined.", success=True)
 
     # Convert to standard role/content list for agent
     formatted_history = [
@@ -473,7 +470,7 @@ async def create_publish_assessment_ticket(
         f"{affected_count} enrolled student(s)."
     )
 
-    ticket = ticket_mgr.create_ticket(
+    ticket = await ticket_mgr.create_ticket(
         action_name="publish_assessment",
         actor_user_id=current_user.id,
         actor_public_id=str(current_user.public_id),

@@ -11,7 +11,8 @@ import uuid
 from sqlalchemy import func, select
 
 from backend.ai.security import RiskLevel, SecurityPolicyEngine, ToolPolicy
-from backend.ai.tools.registry import ToolDefinition, ToolExecutionContext
+from backend.ai.tools.registry import ConfirmationPreview, ToolDefinition, ToolExecutionContext
+from backend.core.privacy import visible_email, visible_username
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.attendance import Attendance
@@ -88,8 +89,8 @@ async def handle_get_student_academic_summary(
     enrollments = (await session.execute(enrollment_stmt)).scalars().all()
 
     return {
-        "student_name": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or student_obj.username,
-        "student_username": student_obj.username,
+        "student_name": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or "Unnamed account",
+        "student_username": visible_username(student_obj),
         "enrolled_cohorts_count": len(enrollments),
         "assessments_completed": total_attempts,
         "average_assessment_score": round(avg_score, 1),
@@ -115,7 +116,7 @@ async def handle_get_corporate_training_progress(
 
     if not employees:
         return {
-            "manager": user.username,
+            "manager": visible_username(user),
             "linked_employee_count": 0,
             "message": "No employee accounts are currently linked to your corporate profile.",
             "employees": [],
@@ -174,8 +175,8 @@ async def handle_get_corporate_training_progress(
 
         roster.append({
             "employee_id": str(emp.public_id),
-            "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip() or emp.username,
-            "email": emp.email,
+            "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip() or "Unnamed account",
+            "email": visible_email(emp),
             "designation": emp.designation or "Employee",
             "active_courses": confirmed_count,
             "completed_courses": completed_count,
@@ -189,7 +190,7 @@ async def handle_get_corporate_training_progress(
     team_avg_score = round(sum(scores_collected) / len(scores_collected), 1) if scores_collected else 0.0
 
     return {
-        "manager": user.username,
+        "manager": visible_username(user),
         "linked_employee_count": len(employees),
         "team_metrics": {
             "total_active_enrollments": total_active_courses,
@@ -293,7 +294,7 @@ async def handle_get_batch_student_performance_and_gaps(
     at_risk_students = []
 
     for enr, student in enrolled_students:
-        s_name = f"{student.first_name or ''} {student.last_name or ''}".strip() or student.username
+        s_name = f"{student.first_name or ''} {student.last_name or ''}".strip() or "Unnamed account"
 
         attended = (await session.execute(
             select(func.count(Attendance.id))
@@ -323,7 +324,7 @@ async def handle_get_batch_student_performance_and_gaps(
             reasons.append(f"Low assessment score ({quiz_score}%)")
 
         item = {
-            "student_username": student.username,
+            "student_username": visible_username(student),
             "student_name": s_name,
             "attendance_percentage": att_pct,
             "average_quiz_score": quiz_score,
@@ -515,9 +516,9 @@ async def handle_get_guardian_dependents(
 
         dependents.append({
             "student_id": str(student.public_id),
-            "name": f"{student.first_name or ''} {student.last_name or ''}".strip() or student.username,
-            "username": student.username,
-            "email": student.email,
+            "name": f"{student.first_name or ''} {student.last_name or ''}".strip() or "Unnamed account",
+            "username": visible_username(student),
+            "email": visible_email(student),
             "relationship_type": sg.relationship_type or "Dependent",
             "is_primary": sg.is_primary,
             "active_enrollments": enr_count,
@@ -527,7 +528,7 @@ async def handle_get_guardian_dependents(
         })
 
     return {
-        "guardian_username": user.username,
+        "guardian_username": visible_username(user),
         "dependents_count": len(dependents),
         "dependents": dependents,
         "message": (
@@ -732,10 +733,10 @@ async def handle_get_student_assessments_and_deadlines(
             })
 
     return {
-        "student": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or student_obj.username,
+        "student": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or "Unnamed account",
         "total_assessments": len(assessments_list),
         "assessments": assessments_list,
-        "summary": f"Found {len(assessments_list)} assessment(s) matching filter '{status_filter}' for {student_obj.username}.",
+        "summary": f"Found {len(assessments_list)} assessment(s) matching filter '{status_filter}' for {visible_username(student_obj)}.",
     }
 
 
@@ -873,7 +874,7 @@ async def handle_get_student_enrolled_courses(
         })
 
     return {
-        "student": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or student_obj.username,
+        "student": f"{student_obj.first_name or ''} {student_obj.last_name or ''}".strip() or "Unnamed account",
         "enrolled_courses_count": len(enrolled),
         "courses": enrolled,
     }
@@ -914,94 +915,131 @@ get_student_enrolled_courses_tool = ToolDefinition(
 # =============================================================================
 
 
+def _person_name(person: UserModel) -> str:
+    return f"{person.first_name or ''} {person.last_name or ''}".strip() or "Unnamed account"
+
+
+async def _resolve_enrolment(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> tuple[UserModel, Batch, str]:
+    """Find the employee and batch, refusing anything outside the caller's reach.
+
+    Someone not on the manager's roster gets the **same** "not found" as
+    someone who does not exist. Two different refusals would tell a manager
+    which addresses belong to accounts here -- the enumeration this platform
+    already closed once in EnrollmentService.
+    """
+    user = context.user
+    session = context.session
+
+    emp_ident = str(arguments.get("employee_identifier") or "").strip()
+    batch_code = str(arguments.get("batch_code") or "").strip()
+    if not emp_ident or not batch_code:
+        raise ValidationError("employee_identifier and batch_code are both required.")
+
+    not_found = NotFoundError(f"No employee '{emp_ident}' was found on your roster.")
+    try:
+        u_stmt = select(UserModel).where(UserModel.public_id == uuid.UUID(emp_ident))
+    except ValueError:
+        u_stmt = select(UserModel).where((UserModel.email == emp_ident) | (UserModel.username == emp_ident))
+    employee = (await session.execute(u_stmt.where(UserModel.deleted_at.is_(None)))).scalars().first()
+    if employee is None:
+        raise not_found
+
+    if not ScopeResolver.is_unrestricted(user):
+        managed_ids = await ScopeResolver(session)._managed_student_ids(user.id)
+        if employee.id not in managed_ids:
+            raise not_found
+
+    batch = (await session.execute(select(Batch).where(Batch.batch_code == batch_code))).scalar_one_or_none()
+    if batch is None:
+        raise NotFoundError(f"Batch '{batch_code}' not found.")
+    course_title = (
+        await session.execute(select(Course.title).where(Course.id == batch.course_id))
+    ).scalar_one_or_none() or "Course"
+    return employee, batch, course_title
+
+
+async def preview_enroll_corporate_employee(
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> ConfirmationPreview:
+    employee, batch, course_title = await _resolve_enrolment(arguments, context)
+    return ConfirmationPreview(
+        summary=f"Enrol {_person_name(employee)} in batch {batch.batch_code} ({course_title})?",
+        bound_parameters={"employee_public_id": str(employee.public_id), "batch_public_id": str(batch.public_id)},
+    )
+
+
 async def handle_enroll_corporate_employee(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
 ) -> dict[str, Any]:
-    """Enroll an authorized corporate employee into an active course batch."""
-    user = context.user
-    session = context.session
-    resolver = ScopeResolver(session)
-
-    emp_ident = arguments.get("employee_identifier")
-    batch_code = arguments.get("batch_code")
-
-    if not emp_ident or not batch_code:
-        raise ValidationError("employee_identifier and batch_code are both required.")
-
-    # Find employee
-    user_uuid = None
-    try:
-        user_uuid = uuid.UUID(str(emp_ident).strip())
-    except Exception:
-        pass
-
-    if user_uuid:
-        u_stmt = select(UserModel).where((UserModel.public_id == user_uuid) | (UserModel.username == str(emp_ident)))
-    else:
-        u_stmt = select(UserModel).where((UserModel.email == str(emp_ident)) | (UserModel.username == str(emp_ident)))
-    employee = (await session.execute(u_stmt)).scalar_one_or_none()
-    if not employee:
-        raise NotFoundError(f"Employee '{emp_ident}' was not found.")
-
-    # Check manager authorization: employee must be in ManagedStudent
-    is_admin = any(r.name in (Roles.SUPER_ADMIN.value, Roles.ADMIN.value) for r in (user.roles or []))
-    if not is_admin:
-        managed_ids = await resolver._managed_student_ids(user.id)
-        if employee.id not in managed_ids:
-            raise AuthorizationError(f"User '{employee.username}' is not linked to your corporate management roster.")
-
-    # Find batch
-    b_stmt = select(Batch).where(Batch.batch_code == str(batch_code).strip())
-    batch = (await session.execute(b_stmt)).scalar_one_or_none()
-    if not batch:
-        raise NotFoundError(f"Batch '{batch_code}' not found.")
-
-    # Check existing enrollment
-    ex_stmt = select(Enrollments).where(Enrollments.student_id == employee.id, Enrollments.batch_id == batch.id)
-    existing = (await session.execute(ex_stmt)).scalar_one_or_none()
-    if existing:
-        if existing.status in [EnrollmentStatus.CONFIRMED, EnrollmentStatus.PENDING]:
-            return {
-                "success": True,
-                "message": f"Employee {employee.username} is already actively enrolled in batch {batch.batch_code}.",
-                "enrollment_id": str(existing.public_id),
-                "status": existing.status.value,
-            }
-
-    # Execute enrollment via EnrollmentService
+    """Enrol a person from the caller's roster (runs only after confirmation)."""
+    from backend.ai.tools.registry import BOUND_PREFIX
     from backend.services.enrollment_service import EnrollmentService
-    enr_svc = EnrollmentService(session)
-    enrollment = await enr_svc.enroll(
+
+    user = context.user
+    employee, batch, course_title = await _resolve_enrolment(arguments, context)
+    if (
+        str(employee.public_id) != str(arguments.get(f"{BOUND_PREFIX}employee_public_id"))
+        or str(batch.public_id) != str(arguments.get(f"{BOUND_PREFIX}batch_public_id"))
+    ):
+        raise ValidationError("The person or batch no longer matches what was confirmed; ask again.")
+
+    name = _person_name(employee)
+    existing = (
+        await context.session.execute(
+            select(Enrollments).where(
+                Enrollments.student_id == employee.id,
+                Enrollments.batch_id == batch.id,
+                Enrollments.status.in_([EnrollmentStatus.CONFIRMED, EnrollmentStatus.PENDING]),
+            )
+        )
+    ).scalars().first()
+    if existing is not None:
+        return {
+            "success": True,
+            "status": existing.status.value,
+            "enrollment_id": str(existing.public_id),
+            "message": f"{name} is already enrolled in batch {batch.batch_code}; nothing was changed.",
+        }
+
+    # EnrollmentService applies capacity, batch state, the sponsoring
+    # organisation and the roster rule again, and emits the notifications.
+    enrollment = await EnrollmentService(context.session).enroll(
         student_public_id=employee.public_id,
         batch_public_id=batch.public_id,
         confirmed=True,
         actor=user,
     )
-
-    c_title = (await session.execute(select(Course.title).where(Course.id == batch.course_id))).scalar_one_or_none() or "Course"
-
     return {
         "success": True,
         "enrollment_id": str(enrollment.public_id),
-        "employee_name": f"{employee.first_name or ''} {employee.last_name or ''}".strip() or employee.username,
-        "employee_email": employee.email,
+        "employee_name": name,
         "batch_code": batch.batch_code,
-        "course_title": c_title,
+        "course_title": course_title,
         "status": enrollment.status.value,
-        "message": f"Successfully enrolled {employee.username} in batch {batch.batch_code} ({c_title}).",
+        "message": f"{name} is now enrolled in batch {batch.batch_code} ({course_title}).",
     }
 
 
 enroll_corporate_employee_tool = ToolDefinition(
     name="enroll_corporate_employee",
-    description="Enroll a linked corporate employee into an active course batch. Enforces organization ownership.",
+    description=(
+        "Enrol a person on your corporate roster into a course batch. "
+        "Requires the user's confirmation."
+    ),
     policy=ToolPolicy(
         name="enroll_corporate_employee",
         description="Enroll corporate employee into batch",
         required_permissions=("enrollment.create", "organization.enroll"),
         allowed_roles=(Roles.CORPORATE_MANAGER.value, Roles.ADMIN.value, Roles.SUPER_ADMIN.value),
-        risk_level=RiskLevel.MODERATE,
+        # An enrolment carries fees, notifications and a place in a cohort, and
+        # is undone by dropping it, not deleting it: a consequential write.
+        risk_level=RiskLevel.HIGH,
+        requires_confirmation=True,
     ),
     parameters_schema={
         "type": "object",
@@ -1018,6 +1056,7 @@ enroll_corporate_employee_tool = ToolDefinition(
         "required": ["employee_identifier", "batch_code"],
     },
     handler=handle_enroll_corporate_employee,
+    preview=preview_enroll_corporate_employee,
 )
 
 

@@ -18,6 +18,7 @@ from backend.ai.tools.registry import (
     ToolDefinition,
     ToolExecutionContext,
 )
+from backend.core.privacy import visible_email, visible_username
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.models.attendance import Attendance
 from backend.models.batch import Batch, BatchSession
@@ -243,8 +244,8 @@ async def handle_get_attendance_summary(
             pct = round((w_pres / w_tot * 100), 1) if w_tot > 0 else 100.0
             ward_summaries.append({
                 "student_id": str(w.public_id),
-                "name": f"{w.first_name or ''} {w.last_name or ''}".strip() or w.username,
-                "email": w.email,
+                "name": f"{w.first_name or ''} {w.last_name or ''}".strip() or "Unnamed account",
+                "email": visible_email(w),
                 "total_classes": w_tot,
                 "present_count": w_pres,
                 "absent_count": counts.get(AttendanceStatus.ABSENT.value, 0),
@@ -295,8 +296,8 @@ async def handle_get_attendance_summary(
             pct = round((e_pres / e_tot * 100), 1) if e_tot > 0 else 100.0
             emp_summaries.append({
                 "student_id": str(emp.public_id),
-                "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip() or emp.username,
-                "email": emp.email,
+                "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip() or "Unnamed account",
+                "email": visible_email(emp),
                 "total_classes": e_tot,
                 "present_count": e_pres,
                 "absent_count": counts.get(AttendanceStatus.ABSENT.value, 0),
@@ -352,7 +353,7 @@ async def handle_get_attendance_summary(
 
     student_display = (
         f"{target_student_obj.first_name or ''} {target_student_obj.last_name or ''}".strip()
-        or target_student_obj.username
+        or "Unnamed account"
         if target_student_obj
         else (target_student_id or str(user.public_id))
     )

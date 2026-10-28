@@ -96,6 +96,12 @@ class AISettings(BaseSettings):
         ge=1,
         description="Maximum /ai/transcribe requests per user per rolling minute",
     )
+    conversation_retention_days: int = Field(
+        default=30,
+        alias="AI_CONVERSATION_RETENTION_DAYS",
+        ge=1,
+        description="Days an assistant conversation is kept before it is deleted",
+    )
     max_audio_bytes: int = Field(
         default=25 * 1024 * 1024,
         alias="AI_MAX_AUDIO_BYTES",

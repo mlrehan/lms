@@ -39,7 +39,7 @@ class ConfirmationExecutionService:
     ) -> dict[str, Any]:
         """Validate ticket fingerprint, consume it, and execute the underlying service mutation."""
         # 1. Validate ownership, expiration, and parameter integrity
-        ticket = self.ticket_manager.validate_and_consume(
+        ticket = await self.ticket_manager.validate_and_consume(
             ticket_id=ticket_id,
             actor_user_id=actor.id,
             provided_parameters=provided_parameters,

@@ -12,9 +12,11 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.security import RiskLevel, SecurityPolicyEngine, ToolPolicy
+from backend.ai.output_policy import redact_tool_result
 from backend.ai.tickets import get_ticket_manager
 from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.core.logging import get_logger
+from backend.core.privacy import set_viewer
 from backend.models.identity.user import User
 from backend.services import audit_service
 
@@ -46,6 +48,8 @@ class ConfirmationPreview:
 
 
 PreviewBuilder = Callable[[dict[str, Any], ToolExecutionContext], Awaitable[ConfirmationPreview]]
+
+_CONFIRMATION_REQUIRED_AT = frozenset({RiskLevel.HIGH, RiskLevel.CRITICAL})
 
 # Keys beginning with this prefix are written by the server into a ticket.
 # Anything the model sends under it is discarded, so it cannot pre-bind them.
@@ -82,7 +86,18 @@ class ToolRegistry:
         self._tools: dict[str, ToolDefinition] = {}
 
     def register(self, tool: ToolDefinition) -> None:
-        """Register a new tool definition."""
+        """Register a new tool definition.
+
+        A HIGH or CRITICAL tool that runs without confirmation is refused at
+        registration -- which happens at import, so it is a startup error
+        rather than a consequential write the model can make on its own.
+        Risk is declared once, and confirmation follows from it.
+        """
+        if tool.policy.risk_level in _CONFIRMATION_REQUIRED_AT and not tool.policy.requires_confirmation:
+            raise ValueError(
+                f"AI tool '{tool.name}' is {tool.policy.risk_level.value} risk but does not require "
+                "confirmation. Set requires_confirmation=True (and confirm_actions to narrow it)."
+            )
         self._tools[tool.name] = tool
         logger.debug("Registered AI tool: %s", tool.name)
 
@@ -175,7 +190,7 @@ class ToolRegistry:
         for key, value in (preview.bound_parameters or {}).items():
             parameters[f"{BOUND_PREFIX}{key}"] = value
 
-        ticket = get_ticket_manager().create_ticket(
+        ticket = await get_ticket_manager().create_ticket(
             action_name=tool.name,
             actor_user_id=context.user.id,
             actor_public_id=str(context.user.public_id),
@@ -184,7 +199,7 @@ class ToolRegistry:
             preview_summary=preview.summary,
             via_registry=True,
         )
-        return {
+        return redact_tool_result({
             "status": "REQUIRES_CONFIRMATION",
             "success": False,
             "ticket_id": ticket.ticket_id,
@@ -195,7 +210,7 @@ class ToolRegistry:
             "expires_at": ticket.expires_at.isoformat(),
             "affected_records_count": ticket.affected_records_count,
             "message": "Nothing has been done yet. The action is waiting for the user's confirmation.",
-        }
+        })
 
     async def _run(
         self,
@@ -204,30 +219,43 @@ class ToolRegistry:
         context: ToolExecutionContext,
     ) -> dict[str, Any]:
         name = tool.name
+        # The privacy rules key on who is asking. Recorded here, from the
+        # authenticated caller, so they hold for every tool call however it was
+        # reached -- a chat turn, a stream, or a confirmation.
+        set_viewer(context.user)
+
         # 3. Execute authorized handler
         logger.info("Executing AI tool '%s' for user %s", name, context.user.public_id)
         result = await tool.handler(arguments, context)
 
-        # 4. Record audit trail if action is defined
+        # 4. Record audit trail if action is defined. This used to pass
+        # `actor=` and `client_ip=`, which `record()` does not accept: every
+        # call raised TypeError into the except below, so no tool-level audit
+        # row was ever written and only a log line said so.
         if tool.policy.audit_action:
             try:
                 audit_service.record(
                     context.session,
                     action=tool.policy.audit_action,
-                    actor=context.user,
+                    actor_user_id=context.user.id,
+                    actor_email=context.user.email,
                     entity_type=arguments.get("entity_type", "ai_tool"),
                     entity_id=result.get("entity_id"),
+                    success=bool(result.get("success", True)),
                     details={
                         "tool": tool.name,
+                        "via": "ai_assistant",
                         "arguments": {k: v for k, v in arguments.items() if "password" not in k.lower()},
-                        "success": result.get("success", True),
+                        "client_ip": context.client_ip,
+                        "request_id": context.request_id,
                     },
-                    client_ip=context.client_ip,
                 )
             except Exception as exc:
                 logger.error("Failed to write audit log for tool '%s': %s", name, exc)
 
-        return result
+        # 5. One privacy rule for every result, before the model, the stream
+        # or saved history sees it.
+        return redact_tool_result(result)
 
 
 _global_tool_registry = ToolRegistry()
@@ -277,6 +305,13 @@ def get_tool_registry() -> ToolRegistry:
             inspect_database_schema_tool,
         )
         from backend.ai.tools.rag_tools import search_course_knowledge_tool
+        from backend.ai.tools.communication_tools import draft_message_tool, post_announcement_tool
+        from backend.ai.tools.gradebook_tools import get_batch_gradebook_tool, record_exam_marks_tool
+
+        _global_tool_registry.register(draft_message_tool)
+        _global_tool_registry.register(post_announcement_tool)
+        _global_tool_registry.register(get_batch_gradebook_tool)
+        _global_tool_registry.register(record_exam_marks_tool)
 
         _global_tool_registry.register(create_assessment_draft_tool)
         _global_tool_registry.register(create_assignment_draft_tool)

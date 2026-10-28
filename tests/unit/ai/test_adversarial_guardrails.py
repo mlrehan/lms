@@ -273,24 +273,24 @@ def test_ticket_parameter_tampering_raises_security_error():
     user = make_user(user_id=401, role_name=Roles.TUTOR.value)
 
     original_params = {"assessment_id": "quiz-alpha", "publish": True}
-    ticket = manager.create_ticket(
+    ticket = asyncio.run(manager.create_ticket(
         action_name="publish_assessment",
         actor_user_id=user.id,
         actor_public_id=str(user.public_id),
         parameters=original_params,
         affected_records_count=20,
         preview_summary="Publish quiz-alpha",
-    )
+    ))
 
     # Attacker tries to confirm the ticket but swaps parameters to publish a different quiz
     tampered_params = {"assessment_id": "quiz-omega", "publish": True}
 
     with pytest.raises(SecurityError) as exc:
-        manager.validate_and_consume(
+        asyncio.run(manager.validate_and_consume(
             ticket_id=ticket.ticket_id,
             actor_user_id=user.id,
             provided_parameters=tampered_params,
-        )
+        ))
     assert "altered" in str(exc.value).lower()
 
 
@@ -300,7 +300,7 @@ def test_ticket_expired_ttl_raises_conflict():
     user = make_user(user_id=402, role_name=Roles.TUTOR.value)
 
     # Issue ticket with 0 second TTL (instant expiry)
-    ticket = manager.create_ticket(
+    ticket = asyncio.run(manager.create_ticket(
         action_name="publish_assessment",
         actor_user_id=user.id,
         actor_public_id=str(user.public_id),
@@ -308,14 +308,14 @@ def test_ticket_expired_ttl_raises_conflict():
         affected_records_count=10,
         preview_summary="Publish quiz-1",
         ttl_seconds=-1,  # Already in the past!
-    )
+    ))
 
     with pytest.raises(ConflictError) as exc:
-        manager.validate_and_consume(
+        asyncio.run(manager.validate_and_consume(
             ticket_id=ticket.ticket_id,
             actor_user_id=user.id,
             provided_parameters={"assessment_id": "quiz-1"},
-        )
+        ))
     assert "expired" in str(exc.value).lower()
 
 
@@ -324,30 +324,30 @@ def test_ticket_replay_attack_rejected():
     manager = ConfirmationTicketManager()
     user = make_user(user_id=403, role_name=Roles.TUTOR.value)
 
-    ticket = manager.create_ticket(
+    ticket = asyncio.run(manager.create_ticket(
         action_name="publish_assessment",
         actor_user_id=user.id,
         actor_public_id=str(user.public_id),
         parameters={"assessment_id": "quiz-1"},
         affected_records_count=10,
         preview_summary="Publish quiz-1",
-    )
+    ))
 
     # First consumption succeeds
-    consumed = manager.validate_and_consume(
+    consumed = asyncio.run(manager.validate_and_consume(
         ticket_id=ticket.ticket_id,
         actor_user_id=user.id,
         provided_parameters={"assessment_id": "quiz-1"},
-    )
+    ))
     assert consumed.status == TicketStatus.CONFIRMED
 
     # Second consumption attempt (replay attack)
     with pytest.raises(ConflictError) as exc:
-        manager.validate_and_consume(
+        asyncio.run(manager.validate_and_consume(
             ticket_id=ticket.ticket_id,
             actor_user_id=user.id,
             provided_parameters={"assessment_id": "quiz-1"},
-        )
+        ))
     assert "already been executed" in str(exc.value).lower()
 
 
@@ -357,20 +357,20 @@ def test_ticket_cross_user_hijacking_rejected():
     victim_user = make_user(user_id=501, role_name=Roles.TUTOR.value)
     attacker_user = make_user(user_id=502, role_name=Roles.TUTOR.value)
 
-    ticket = manager.create_ticket(
+    ticket = asyncio.run(manager.create_ticket(
         action_name="publish_assessment",
         actor_user_id=victim_user.id,
         actor_public_id=str(victim_user.public_id),
         parameters={"assessment_id": "quiz-victim"},
         affected_records_count=15,
         preview_summary="Publish victim quiz",
-    )
+    ))
 
     # Attacker tries to consume victim's ticket
     with pytest.raises((SecurityError, AuthorizationError)) as exc:
-        manager.validate_and_consume(
+        asyncio.run(manager.validate_and_consume(
             ticket_id=ticket.ticket_id,
             actor_user_id=attacker_user.id,
             provided_parameters={"assessment_id": "quiz-victim"},
-        )
+        ))
     assert "another user" in str(exc.value).lower()

@@ -29,7 +29,7 @@ def test_execute_publish_assessment_success():
         quiz_id = str(uuid.uuid4())
         actor = make_actor(user_id=10, perms=["quiz.publish"])
 
-        ticket = mgr.create_ticket(
+        ticket = await mgr.create_ticket(
             action_name="publish_assessment",
             actor_user_id=10,
             actor_public_id="actor-public-uuid",
@@ -79,7 +79,7 @@ def test_execute_publish_fails_on_permission_denial():
         quiz_id = str(uuid.uuid4())
         actor_without_perm = make_actor(user_id=10, perms=[])  # Missing quiz.publish
 
-        ticket = mgr.create_ticket(
+        ticket = await mgr.create_ticket(
             action_name="publish_assessment",
             actor_user_id=10,
             actor_public_id="actor-public-uuid",
@@ -107,7 +107,7 @@ def test_execute_ticket_detects_parameter_tampering():
         quiz_id_altered = str(uuid.uuid4())
         actor = make_actor(user_id=10, perms=["quiz.publish"])
 
-        ticket = mgr.create_ticket(
+        ticket = await mgr.create_ticket(
             action_name="publish_assessment",
             actor_user_id=10,
             actor_public_id="actor-public-uuid",
