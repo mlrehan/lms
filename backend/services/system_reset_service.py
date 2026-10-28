@@ -58,6 +58,7 @@ from backend.bootstrap.runner import (
     bootstrap_identity,
     ensure_super_admin,
 )
+from backend.core.backups import backup_blockers
 from backend.core.config import Settings
 from backend.core.errors import ConflictError, ValidationError
 from backend.core.logging import get_logger
@@ -229,40 +230,16 @@ class SystemResetService:
     def _backup_blockers(self) -> list[str]:
         """Check there is a recent, readable backup. Refuse if unsure.
 
-        This verifies a real file: that it exists, that it is not empty, and
-        that it is recent. It does not and cannot verify that the dump is
-        *restorable* -- only a restore proves that, and claiming more than was
-        checked is how a backup policy becomes decoration.
+        The rule is `core/backups.backup_blockers`, shared with the AI
+        assistant's confirmed SQL changes so the two can never disagree about
+        what counts as a backup.
         """
         app = self.settings.app
-        path: Path | None = app.system_reset_backup_path
-        if path is None:
-            return [
-                "No backup has been configured (APP_SYSTEM_RESET_BACKUP_PATH). A reset "
-                "cannot be undone, so it will not run without one. Note that this "
-                "checks a recent dump file exists and is readable — only a test "
-                "restore proves a backup is good."
-            ]
-        try:
-            if not path.exists():
-                return [f"The configured backup was not found at {path}."]
-            stat = path.stat()
-            if stat.st_size == 0:
-                return [f"The configured backup at {path} is empty."]
-            age_hours = (datetime.now(UTC).timestamp() - stat.st_mtime) / 3600
-            limit = app.system_reset_backup_max_age_hours
-            if age_hours > limit:
-                return [
-                    f"The configured backup at {path} is {age_hours:.0f} hours old; "
-                    f"a reset requires one no older than {limit} hours. Take a fresh "
-                    "backup first."
-                ]
-        except OSError as exc:
-            # Unreadable is a refusal, not a pass. An exception here means we do
-            # not know the state of the backup, which is the one case where
-            # carrying on is least defensible.
-            return [f"The configured backup at {path} could not be read: {exc}."]
-        return []
+        return backup_blockers(
+            app.system_reset_backup_path,
+            max_age_hours=app.system_reset_backup_max_age_hours,
+            action="A reset",
+        )
 
     # -------------------------------------------------------------- execute
 

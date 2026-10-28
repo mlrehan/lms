@@ -16,6 +16,8 @@ export interface TicketDetails {
   preview_summary: string;
   expires_at: string;
   status: string;
+  /** When set, the person must type this phrase exactly before the action can run. */
+  typed_confirmation?: string | null;
 }
 
 interface ActionConfirmationDialogProps {
@@ -32,8 +34,19 @@ export function ActionConfirmationDialog({
   onSuccess,
 }: ActionConfirmationDialogProps) {
   const [submitting, setSubmitting] = useState(false);
+  const [typed, setTyped] = useState("");
 
   if (!ticket) return null;
+
+  const phrase = ticket.typed_confirmation ?? null;
+  // Exact match, as the server checks it: a phrase that is "close enough"
+  // here would only be refused there.
+  const phraseMatches = phrase === null || typed.trim() === phrase;
+
+  const close = (next: boolean) => {
+    if (!next) setTyped("");
+    onOpenChange(next);
+  };
 
   const handleConfirm = async () => {
     setSubmitting(true);
@@ -44,6 +57,7 @@ export function ActionConfirmationDialog({
           body: {
             ticket_id: ticket.ticket_id,
             parameters: ticket.parameters,
+            ...(phrase !== null ? { confirmation_text: typed.trim() } : {}),
           },
         },
       );
@@ -54,14 +68,14 @@ export function ActionConfirmationDialog({
         toast.error("Action not completed", {
           description: (response?.result?.message as string) || "The action did not complete.",
         });
-        onOpenChange(false);
+        close(false);
         return;
       }
       toast.success("Action executed successfully", {
         description: (response?.result?.message as string) || "The confirmed operation has completed.",
       });
 
-      onOpenChange(false);
+      close(false);
       onSuccess?.(response?.result || {});
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Confirmation failed to execute.";
@@ -77,43 +91,37 @@ export function ActionConfirmationDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent size="md">
         <DialogHeader
           title={
             <div className="flex items-center gap-2 text-warning">
               <AlertTriangle className="size-5 shrink-0" />
-              <span>Two-Phase Action Confirmation</span>
+              <span>Confirm this action</span>
             </div>
           }
-          description="High-risk and state-mutating LMS actions require explicit cryptographic verification."
+          description="Nothing has happened yet. Check what will be done, then confirm or cancel."
         />
 
         <div className="space-y-3.5 my-2">
-          {/* Summary Banner */}
+          {/* What will happen, as described by the server -- never by the assistant */}
           <div className="rounded-xl border border-warning/30 bg-warning/10 p-3.5 text-xs text-foreground">
-            <p className="font-semibold text-sm mb-1">{ticket.preview_summary}</p>
-            <p className="text-muted-foreground">
-              This action will publish content directly to student dashboards. Please verify the target parameters below.
-            </p>
+            <p className="font-semibold text-sm break-words">{ticket.preview_summary}</p>
           </div>
 
-          {/* Cryptographic Verification Details */}
           <div className="rounded-xl border border-border-subtle bg-muted/40 p-3 text-xs space-y-2">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Users className="size-3.5 text-primary" />
-                Affected Records:
+                Records affected:
               </span>
-              <span className="font-semibold text-foreground">
-                {ticket.affected_records_count} Enrolled Student(s)
-              </span>
+              <span className="font-semibold text-foreground">{ticket.affected_records_count}</span>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <KeyRound className="size-3.5 text-primary" />
-                Ticket Fingerprint:
+                Ticket:
               </span>
               <span className="font-mono text-2xs text-muted-foreground truncate max-w-48" title={ticket.ticket_id}>
                 {ticket.ticket_id}
@@ -133,40 +141,52 @@ export function ActionConfirmationDialog({
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Clock className="size-3.5 text-warning" />
-                Valid Until:
+                Valid until:
               </span>
-              <span className="font-medium text-foreground">{expiresTime} (15m TTL)</span>
+              <span className="font-medium text-foreground">{expiresTime}</span>
             </div>
           </div>
+
+          {phrase !== null && (
+            <label className="block space-y-1.5 text-xs">
+              <span className="text-muted-foreground">
+                Type <span className="font-mono font-semibold text-foreground">{phrase}</span> to confirm.
+              </span>
+              <input
+                type="text"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="Confirmation phrase"
+                data-testid="ai-confirm-phrase"
+                className="w-full rounded-md border border-border-subtle bg-background px-2.5 py-1.5 font-mono text-xs"
+              />
+            </label>
+          )}
         </div>
 
         <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={submitting}
-            onClick={() => onOpenChange(false)}
-          >
+          <Button type="button" variant="ghost" size="sm" disabled={submitting} onClick={() => close(false)}>
             Cancel
           </Button>
           <Button
             type="button"
             variant="primary"
             size="sm"
-            disabled={submitting}
+            disabled={submitting || !phraseMatches}
             onClick={handleConfirm}
             className="gap-1.5 bg-warning hover:bg-warning/90 text-warning-foreground"
           >
             {submitting ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" />
-                <span>Executing...</span>
+                <span>Working...</span>
               </>
             ) : (
               <>
                 <CheckCircle2 className="size-3.5" />
-                <span>Confirm & Publish</span>
+                <span>Confirm</span>
               </>
             )}
           </Button>

@@ -365,6 +365,20 @@ class ConfirmationTicketManager:
         tickets = await self.store.pending_for_user(actor_user_id)
         return sorted(tickets, key=lambda t: t.created_at, reverse=True)
 
+    async def cancel_ticket(self, *, ticket_id: str, actor_user_id: int) -> ConfirmationTicket:
+        """Cancel one ticket its owner has declined.
+
+        A declined action must stop being confirmable at once: left pending,
+        the next stray "yes" could carry it out.
+        """
+        ticket = await self.get_ticket(ticket_id)
+        if ticket.actor_user_id != actor_user_id:
+            raise SecurityError("You cannot cancel an action initiated by another user.")
+        if ticket.status is TicketStatus.PENDING:
+            await self.store.cancel([ticket_id])
+            ticket.status = TicketStatus.CANCELLED
+        return ticket
+
     async def cancel_pending_for_user(self, actor_user_id: int) -> list[ConfirmationTicket]:
         """Cancel every pending ticket this person holds.
 

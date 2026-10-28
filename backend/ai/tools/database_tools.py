@@ -22,6 +22,7 @@ from backend.ai.security import RiskLevel, SecurityPolicyEngine, ToolPolicy
 from backend.ai.tools.registry import ToolDefinition, ToolExecutionContext
 from backend.core.errors import AuthorizationError, ValidationError
 from backend.core.logging import get_logger
+from backend.ai.sql_access import READONLY_STATEMENT_TIMEOUT_MS, get_readonly_engine, readonly_configured
 from backend.utils.enums import Roles
 
 logger = get_logger(__name__)
@@ -446,21 +447,25 @@ async def handle_execute_database_query(
             "hint": "Ensure your query is a read-only SELECT statement with valid table and column names.",
         }
 
-    # 2. Execute query in safe read-only context with statement timeout and savepoint isolation
-    session = context.session
+    # 2. Execute through the read-only role, on its own connection. Never the
+    # request's session: the application account may be a superuser, and a
+    # failure here used to call rollback() on the very session the rest of the
+    # request was using.
+    if not readonly_configured():
+        return {
+            "success": False,
+            "error": (
+                "Direct database queries are not configured on this installation "
+                "(run: python -m backend.cli.create_ai_readonly_role)."
+            ),
+        }
     try:
-        # Recover if transaction was left in an aborted state by prior failures
-        try:
-            await session.execute(text("SELECT 1;"))
-        except Exception:
-            await session.rollback()
-
-        async with session.begin_nested():
-            await session.execute(text("SET LOCAL statement_timeout = '5000ms'"))
-            stmt = text(safe_query)
-            result = await session.execute(stmt)
-            raw_rows = result.mappings().all()
-            serialized_rows = [serialize_mapping(dict(r)) for r in raw_rows]
+        async with get_readonly_engine().connect() as conn:
+            async with conn.begin():
+                await conn.execute(text("SET TRANSACTION READ ONLY"))
+                await conn.execute(text(f"SET LOCAL statement_timeout = {READONLY_STATEMENT_TIMEOUT_MS}"))
+                result = await conn.execute(text(safe_query))
+                serialized_rows = [serialize_mapping(dict(r)) for r in result.mappings().all()]
 
         row_count = len(serialized_rows)
         logger.info(
@@ -483,17 +488,6 @@ async def handle_execute_database_query(
             "success": False,
             "error": err_msg,
             "hint": "Check the exact table and column names using 'inspect_database_schema' and retry with valid schema names.",
-        }
-    except Exception as exc:
-        logger.warning("Unexpected error during query execution: %s", exc)
-        try:
-            await session.rollback()
-        except Exception:
-            pass
-        return {
-            "success": False,
-            "error": str(exc),
-            "hint": "Check the query syntax and schema details before retrying.",
         }
 
 
@@ -545,15 +539,12 @@ async def handle_inspect_database_schema(
         }
 
     # 4. Query information_schema for columns
-    session = context.session
+    # The read-only role's view of information_schema lists only the columns it
+    # was granted, so withheld columns do not even appear in the schema.
+    if not readonly_configured():
+        return {"success": False, "error": "Direct database queries are not configured on this installation."}
     try:
-        # Recover if transaction was left in an aborted state
-        try:
-            await session.execute(text("SELECT 1;"))
-        except Exception:
-            await session.rollback()
-
-        async with session.begin_nested():
+        async with get_readonly_engine().connect() as session, session.begin():
             col_query = text("""
                 SELECT 
                     column_name, 

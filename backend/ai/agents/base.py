@@ -448,6 +448,7 @@ class BaseAgent:
                         "expires_at": tool_result.get("expires_at"),
                         "affected_records_count": tool_result.get("affected_records_count", 1),
                         "parameters_hash": tool_result.get("parameters_hash", "0" * 32),
+                        "typed_confirmation": tool_result.get("typed_confirmation"),
                     }
                     yield {
                         "type": "confirmation_required",

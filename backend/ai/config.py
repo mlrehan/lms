@@ -96,6 +96,19 @@ class AISettings(BaseSettings):
         ge=1,
         description="Maximum /ai/transcribe requests per user per rolling minute",
     )
+    # The Super Admin's SQL tool reads through its own PostgreSQL role, which
+    # can SELECT the tables it was granted and nothing else -- created by
+    # `python -m backend.cli.create_ai_readonly_role`. With no password set the
+    # tool refuses to run rather than fall back to the application's account.
+    sql_readonly_username: str = Field(default="lms_ai_readonly", alias="AI_SQL_READONLY_USERNAME")
+    sql_readonly_password: SecretStr = Field(default=SecretStr(""), alias="AI_SQL_READONLY_PASSWORD")
+    sql_max_write_rows: int = Field(
+        default=500,
+        alias="AI_SQL_MAX_WRITE_ROWS",
+        ge=1,
+        le=100_000,
+        description="Most rows one confirmed SQL change through the assistant may affect",
+    )
     conversation_retention_days: int = Field(
         default=30,
         alias="AI_CONVERSATION_RETENTION_DAYS",

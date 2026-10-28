@@ -439,9 +439,25 @@ export function AIDrawer() {
   };
 
   const handleDirectConfirm = async (ticket: TicketDetails, confirmed: boolean) => {
+    // An action that demands a typed phrase is confirmed in the dialog, where
+    // the phrase is typed -- never by a one-click "Yes".
+    if (confirmed && ticket.typed_confirmation) {
+      setActiveTicket(ticket);
+      setConfirmDialogOpen(true);
+      return;
+    }
     if (!confirmed) {
-      const isSync = ticket.action_name.includes("sync");
-      const cancelText = isSync ? "Synchronization cancelled." : "Operation cancelled.";
+      // Cancelled on the server, not just in the chat: a declined action left
+      // pending could be carried out by the next stray "yes".
+      let cancelText = "Cancelled. Nothing was changed.";
+      try {
+        await api.post(`/ai/tickets/${encodeURIComponent(ticket.ticket_id)}/cancel`, {});
+      } catch (err) {
+        cancelText =
+          err instanceof ApiError
+            ? `Could not cancel: ${err.message}`
+            : "Could not reach the server to cancel; the action may still be pending.";
+      }
       setMessages((prev) => [
         ...prev,
         {

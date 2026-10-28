@@ -1,7 +1,7 @@
 """Unit and Integration tests for Direct Database Query & Real-Time Grounding Tools."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 
 from backend.ai.tools.database_tools import (
@@ -162,6 +162,32 @@ def test_handle_inspect_database_schema_all_tables():
     asyncio.run(run())
 
 
+
+def readonly_connection(*results):
+    """Patch the read-only role's engine with a connection returning `results`
+    in order. Reads no longer touch the request session at all."""
+    from contextlib import asynccontextmanager
+
+    conn = MagicMock()
+    conn.execute = AsyncMock(side_effect=list(results))
+
+    @asynccontextmanager
+    async def begin():
+        yield None
+
+    @asynccontextmanager
+    async def connect():
+        yield conn
+
+    conn.begin = begin
+    engine = MagicMock()
+    engine.connect = connect
+    return conn, patch.multiple(
+        "backend.ai.tools.database_tools",
+        get_readonly_engine=MagicMock(return_value=engine),
+        readonly_configured=MagicMock(return_value=True),
+    )
+
 def test_handle_inspect_database_schema_specific_table():
     """Inspecting a specific table queries information_schema and returns columns."""
     async def run():
@@ -179,10 +205,12 @@ def test_handle_inspect_database_schema_specific_table():
         mock_fks_result = MagicMock()
         mock_fks_result.mappings.return_value.all.return_value = []
 
-        session.execute.side_effect = [None, mock_columns_result, mock_fks_result]
         ctx = ToolExecutionContext(user=user, session=session)
+        _, patched = readonly_connection(mock_columns_result, mock_fks_result)
 
-        res = await handle_inspect_database_schema({"table_name": "courses"}, ctx)
+        with patched:
+            res = await handle_inspect_database_schema({"table_name": "courses"}, ctx)
+        session.execute.assert_not_called()
         assert res["success"] is True
         assert res["table_name"] == "courses"
         assert res["columns_count"] == 3
@@ -220,15 +248,19 @@ def test_handle_execute_database_query_success():
         mock_exec_result.mappings.return_value.all.return_value = [
             {"tutor_count": 29},
         ]
-        session.execute.side_effect = [None, None, mock_exec_result]  # SELECT 1, SET timeout, SELECT
         ctx = ToolExecutionContext(user=user, session=session)
+        conn, patched = readonly_connection(None, None, mock_exec_result)  # READ ONLY, timeout, SELECT
 
         query = (
             "SELECT count(DISTINCT u.id) as tutor_count FROM users u "
             "JOIN user_roles ur ON ur.user_id = u.id "
             "JOIN roles r ON r.id = ur.role_id WHERE r.name = 'TUTOR' AND u.status != 'DELETED'"
         )
-        res = await handle_execute_database_query({"query": query, "purpose": "count tutors"}, ctx)
+        with patched:
+            res = await handle_execute_database_query({"query": query, "purpose": "count tutors"}, ctx)
+        # The request's own session is never used for a read.
+        session.execute.assert_not_called()
+        assert "SET TRANSACTION READ ONLY" in str(conn.execute.await_args_list[0].args[0])
         assert res["success"] is True
         assert res["row_count"] == 1
         assert res["rows"][0]["tutor_count"] == 29
@@ -243,10 +275,12 @@ def test_handle_execute_database_query_catches_sql_error():
     async def run():
         user = make_test_user()
         session = make_mock_session()
-        session.execute.side_effect = ProgrammingError("SELECT unknown_col FROM users", {}, orig=Exception('column "unknown_col" does not exist'))
+        error = ProgrammingError("SELECT unknown_col FROM users", {}, orig=Exception('column "unknown_col" does not exist'))
         ctx = ToolExecutionContext(user=user, session=session)
+        _, patched = readonly_connection(None, None, error)  # READ ONLY, timeout, then the failing SELECT
 
-        res = await handle_execute_database_query({"query": "SELECT unknown_col FROM users"}, ctx)
+        with patched:
+            res = await handle_execute_database_query({"query": "SELECT unknown_col FROM users"}, ctx)
         assert res["success"] is False
         assert "unknown_col" in res["error"]
         assert "inspect_database_schema" in res["hint"]

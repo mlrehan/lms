@@ -36,6 +36,7 @@ class ConfirmationExecutionService:
         actor: User,
         provided_parameters: dict[str, Any] | None = None,
         client_ip: str | None = None,
+        confirmation_text: str | None = None,
     ) -> dict[str, Any]:
         """Validate ticket fingerprint, consume it, and execute the underlying service mutation."""
         # 1. Validate ownership, expiration, and parameter integrity
@@ -64,7 +65,12 @@ class ConfirmationExecutionService:
             return await get_tool_registry().execute_confirmed(
                 name=action,
                 arguments=params,
-                context=ToolExecutionContext(user=actor, session=self.session, client_ip=client_ip),
+                context=ToolExecutionContext(
+                    user=actor,
+                    session=self.session,
+                    client_ip=client_ip,
+                    confirmation_text=confirmation_text,
+                ),
             )
 
         # Tickets issued by POST /ai/tickets/publish-assessment.

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { AssessmentPreviewCard } from "./assessment-preview-card";
 import { ActionConfirmationDialog } from "./action-confirmation-dialog";
 import { AIMessageList } from "./ai-message-list";
 import { useAIStore } from "@/lib/ai-store";
+import { api } from "@/lib/api/client";
 
 afterEach(cleanup);
 
@@ -69,11 +70,53 @@ describe("ActionConfirmationDialog", () => {
       />
     );
 
-    expect(screen.getByText(/Two-Phase Action Confirmation/i)).toBeInTheDocument();
-    expect(screen.getByText(/32 Enrolled Student\(s\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Confirm this action/i)).toBeInTheDocument();
+    expect(screen.getByText("32")).toBeInTheDocument();
     expect(screen.getByText(/act_0123456789abcdef/i)).toBeInTheDocument();
     expect(screen.getByText(/abcdef0123456789/i)).toBeInTheDocument();
     expect(screen.getByText(/Publish assessment 'Python Quiz' to 32 enrolled students/i)).toBeInTheDocument();
+    // No phrase demanded, so none is asked for.
+    expect(screen.queryByTestId("ai-confirm-phrase")).toBeNull();
+  });
+
+  const sqlTicket = {
+    ticket_id: "act_sql",
+    action_name: "execute_sql_change",
+    parameters: {},
+    parameters_hash: "f".repeat(64),
+    affected_records_count: 3,
+    preview_summary: "DELETE 3 row(s) in tags: DELETE FROM tags WHERE id < 4",
+    expires_at: new Date(Date.now() + 900000).toISOString(),
+    status: "PENDING",
+    typed_confirmation: "DELETE 3 ROWS IN tags",
+  };
+
+  it("keeps Confirm disabled until the exact phrase is typed", () => {
+    render(<ActionConfirmationDialog open={true} onOpenChange={vi.fn()} ticket={sqlTicket} />);
+    const confirm = screen.getByRole("button", { name: /^Confirm$/ });
+    const input = screen.getByTestId("ai-confirm-phrase");
+
+    expect(confirm).toBeDisabled();
+    fireEvent.change(input, { target: { value: "delete 3 rows in tags" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(input, { target: { value: "DELETE 3 ROWS IN tags" } });
+    expect(confirm).toBeEnabled();
+  });
+
+  it("sends the typed phrase to the server", async () => {
+    const post = vi.spyOn(api, "post").mockResolvedValue({ success: true, result: { message: "applied" } });
+    render(<ActionConfirmationDialog open={true} onOpenChange={vi.fn()} ticket={sqlTicket} />);
+    fireEvent.change(screen.getByTestId("ai-confirm-phrase"), { target: { value: "DELETE 3 ROWS IN tags" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Confirm$/ }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith(
+      "/ai/confirm",
+      expect.objectContaining({
+        body: expect.objectContaining({ ticket_id: "act_sql", confirmation_text: "DELETE 3 ROWS IN tags" }),
+      }),
+    );
+    post.mockRestore();
   });
 });
 

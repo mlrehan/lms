@@ -31,6 +31,10 @@ class ToolExecutionContext:
     session: AsyncSession
     client_ip: str | None = None
     request_id: str | None = None
+    # What the person typed into the confirmation dialog, for tools whose
+    # preview demands a typed phrase. Supplied only by the confirm endpoint;
+    # never by the model, which has no way to set it.
+    confirmation_text: str | None = None
 
 
 ToolHandler = Callable[[dict[str, Any], ToolExecutionContext], Awaitable[dict[str, Any]]]
@@ -45,6 +49,9 @@ class ConfirmationPreview:
     # Facts fixed at preview time (e.g. exactly which records), merged into the
     # ticket so execution acts on what was shown rather than re-deciding.
     bound_parameters: dict[str, Any] | None = None
+    # A phrase the person must type to confirm, for the most consequential
+    # actions. Shown in the dialog; checked by the tool when it runs.
+    typed_confirmation: str | None = None
 
 
 PreviewBuilder = Callable[[dict[str, Any], ToolExecutionContext], Awaitable[ConfirmationPreview]]
@@ -209,6 +216,7 @@ class ToolRegistry:
             "preview_summary": ticket.preview_summary,
             "expires_at": ticket.expires_at.isoformat(),
             "affected_records_count": ticket.affected_records_count,
+            "typed_confirmation": preview.typed_confirmation,
             "message": "Nothing has been done yet. The action is waiting for the user's confirmation.",
         })
 
@@ -312,6 +320,10 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(post_announcement_tool)
         _global_tool_registry.register(get_batch_gradebook_tool)
         _global_tool_registry.register(record_exam_marks_tool)
+
+        from backend.ai.tools.sql_change_tool import sql_change_tool
+
+        _global_tool_registry.register(sql_change_tool)
 
         _global_tool_registry.register(create_assessment_draft_tool)
         _global_tool_registry.register(create_assignment_draft_tool)

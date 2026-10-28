@@ -124,6 +124,14 @@ docker compose run --rm backend python -m backend.cli.seed \
 docker compose run --rm backend python -m backend.cli.sync_all --once
 ```
 
+After every `alembic upgrade head` that adds a table, refresh the AI assistant's
+read-only database role so the new table's grants are decided deliberately
+(new tables are invisible to it until this runs):
+
+```bash
+docker compose run --rm backend python -m backend.cli.create_ai_readonly_role
+```
+
 ### Step A.5 — Issue Let's Encrypt SSL & Launch Stack
 ```bash
 # 1. Bootstrap temporary HTTP config

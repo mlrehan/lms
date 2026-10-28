@@ -80,6 +80,11 @@ class ConfirmationTicketResponse(BaseModel):
 class ConfirmationExecuteRequest(BaseModel):
     ticket_id: str
     parameters: dict[str, Any] = Field(default_factory=dict)
+    confirmation_text: str | None = Field(
+        default=None,
+        max_length=300,
+        description="The phrase the person typed, for actions whose preview requires one.",
+    )
 
 
 class ConfirmationExecuteResponse(BaseModel):
@@ -491,6 +496,22 @@ async def create_publish_assessment_ticket(
     )
 
 
+class TicketCancelResponse(BaseModel):
+    ticket_id: str
+    status: str
+
+
+@router.post(
+    "/tickets/{ticket_id}/cancel",
+    response_model=TicketCancelResponse,
+    summary="Decline a pending action",
+)
+async def cancel_action_ticket(ticket_id: str, current_user: CurrentUser) -> TicketCancelResponse:
+    """Decline a staged action so it can no longer be confirmed by anyone."""
+    ticket = await get_ticket_manager().cancel_ticket(ticket_id=ticket_id, actor_user_id=current_user.id)
+    return TicketCancelResponse(ticket_id=ticket.ticket_id, status=ticket.status.value)
+
+
 @router.post(
     "/confirm",
     response_model=ConfirmationExecuteResponse,
@@ -511,6 +532,7 @@ async def confirm_action_ticket(
         actor=current_user,
         provided_parameters=payload.parameters or None,
         client_ip=client_ip,
+        confirmation_text=payload.confirmation_text,
     )
     # A confirmed action is reported as done, so it must be done -- committed --
     # before the person is told so (see commit_before_responding).
