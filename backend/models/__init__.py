@@ -48,10 +48,11 @@ from .shared_links import SharedLink, SharedLinkTarget
 from .ai_embedding import ResourceEmbedding, AIConversationMessage
 from .ai_ticket import AIConfirmationTicket
 from .ai_index_state import ResourceIndexState
+from .ai_attachment import AIAttachment
 
 __all__ = [
     # AI & Embeddings
-    "ResourceEmbedding", "AIConversationMessage", "AIConfirmationTicket", "ResourceIndexState",
+    "ResourceEmbedding", "AIConversationMessage", "AIConfirmationTicket", "ResourceIndexState", "AIAttachment",
     # Identity
     "User", "CurrentUser", "Role", "Permission", "Token", "UserRole", "RolePermission",
     # Geo

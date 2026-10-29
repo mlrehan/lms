@@ -74,6 +74,27 @@ def _convert_tools_for_responses(
     return converted
 
 
+def _user_content_for_responses(content: Any) -> Any:
+    """Chat-format content parts (text, image_url) as Responses input parts."""
+    if not isinstance(content, list):
+        return content
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        kind = part.get("type") if isinstance(part, dict) else None
+        if kind == "text":
+            parts.append({"type": "input_text", "text": part.get("text", "")})
+        elif kind == "image_url":
+            image = part.get("image_url") or {}
+            parts.append({
+                "type": "input_image",
+                "image_url": image.get("url", ""),
+                "detail": image.get("detail", "auto"),
+            })
+        elif isinstance(part, dict):
+            parts.append(part)
+    return parts
+
+
 def _convert_messages_for_responses(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -94,7 +115,7 @@ def _convert_messages_for_responses(
             items.append({"role": "developer", "content": content})
 
         elif role == "user":
-            items.append({"role": "user", "content": content})
+            items.append({"role": "user", "content": _user_content_for_responses(content)})
 
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")

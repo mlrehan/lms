@@ -5214,6 +5214,59 @@ the refusals. The health tool replied "Healthy" unconditionally.
 
 Tests: `tests/integration/test_ai_superadmin_tools.py` (17, mutation-checked).
 
+### Files in the chat: attachments, the composer, and no more 10,000-character cap
+
+A tutor asked to grade a notebook had to paste its JSON and hit "String should
+have at most 10000 characters". Now any role can attach files to a message.
+
+* **`POST/GET/DELETE /ai/attachments`** (`backend/ai/attachments.py`, model
+  `ai_attachments`, migration `a4e7c2b9d1f6`; `ai_conversation_messages.attachments`
+  records a message's files by id and name, never contents). **Owner-only**:
+  every lookup filters on `user_id`, and someone else's id answers 404 like one
+  that never existed, in the route, in `/ai/chat` and in the tool.
+* **`backend/ai/attachment_extract.py`** (pure): the *extension* picks the reader
+  (allowlist) and the *bytes* must agree. `%PDF-` for PDF, a ZIP with its main
+  part for docx/xlsx, decodable text with no NULs, and an image Pillow decodes.
+  Per-entry and total ZIP sizes are checked on open, a DTD in Office XML is
+  refused, images are re-encoded to JPEG (≤1600px) and only that is stored, and
+  the limit is 25 MB per file and 10 per message. Notebooks are rendered cell by
+  cell **with outputs, execution counts and errors**, and count unexecuted or
+  failed cells, because for marking the outputs are the evidence. A scanned PDF
+  is `EMPTY` and says so. `.doc/.xls/.pptx`, archives, SVG and programs are
+  refused by name.
+* **Context is budgeted, never silently cut.** Up to 160k characters of file
+  text go into the user's message, wrapped in `<attached_file>` tags as
+  untrusted data. A larger file shows its first 24k characters plus an outline,
+  with an explicit "NOT shown" note, and the model reads the rest through the
+  `read_attachment` tool (offset/max_chars or find; all roles, owner-only).
+  A turn with files gets 8 tool rounds instead of 4. Images go to the model as
+  images (Responses `input_image`).
+* **The prompt guard reads what was typed, not the file.** An SQL notebook
+  containing `DROP TABLE` is coursework. The file is labelled as data instead.
+  Typed prompts may now be 32,000 characters, and the console turns a paste over
+  8,000 characters into a `.txt` (or `.ipynb` when it is notebook JSON)
+  attachment.
+* `read_submission` uses the same extractor, so a notebook submitted through the
+  LMS is read with its outputs (up to 90k characters). The tutor prompt sets out
+  how to mark an attached file: brief and rubric from `read_submission`, read the
+  whole file, give marks and evidence per criterion, say the file came from the
+  chat rather than the LMS, then the confirmed `record_submission_grade`.
+* Erasing conversation memory deletes the attachments, and retention applies to
+  them too.
+* **Console:** `ai-composer.tsx` + `use-ai-attachments.ts`. Auto-growing input,
+  paperclip, drag-and-drop over the drawer, paste of files, chips with upload
+  progress and a reason when a file fails, remove (also deleted on the server),
+  and Send disabled while anything is uploading. Voice input is unchanged.
+* **Found on the way:** the pushed `007f8b2` had a literal newline inside a
+  string in `agents/superadmin.py` (a heredoc edit). `create_role_agent` imports
+  it for every role, so the chat failed for everyone. It is fixed here.
+* Tests: `tests/unit/ai/test_attachment_extract.py` (21),
+  `tests/integration/test_ai_attachments.py` (10, HTTP + real Postgres +
+  scripted model), `ai-composer.test.tsx` (9); 10/10 mutations caught.
+* Limits: no OCR (a scanned PDF must be sent as images), images inside notebook
+  outputs are named rather than shown, no web access (Colab/Drive links are not
+  opened), and no virus scanning (files are never served back or executed).
+
 ### Known gaps and residual risks
 
 * **Five unit tests fail independently of this work** --

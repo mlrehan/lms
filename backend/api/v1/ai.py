@@ -11,9 +11,10 @@ import uuid
 from typing import Annotated, Any, AsyncIterator
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 
+from backend.ai.attachments import MAX_FILE_BYTES, MAX_PER_MESSAGE, AttachmentService, describe, manifest_line
 from backend.ai.client import get_openai_client
 from backend.ai.config import get_ai_settings
 from backend.ai.orchestrator import AIOrchestrator, create_role_agent
@@ -48,9 +49,41 @@ logger = get_logger(__name__)
 # =============================================================================
 
 
+# What a person types. Long material -- a notebook, an essay, a log -- is sent
+# as an attachment instead (the console turns a long paste into one), where it
+# is extracted, budgeted and readable in parts rather than refused.
+MAX_PROMPT_CHARS = 32_000
+DEFAULT_ATTACHMENT_PROMPT = "Please look at the attached file(s)."
+
+
 class AIChatRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=10000, description="User prompt or instruction")
+    prompt: str = Field(default="", max_length=MAX_PROMPT_CHARS, description="User prompt or instruction")
     stream: bool = Field(default=False, description="Whether to stream the response via SSE")
+    attachment_ids: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_PER_MESSAGE,
+        description="Ids from POST /ai/attachments; only your own files are accepted.",
+    )
+
+    @model_validator(mode="after")
+    def _something_to_send(self) -> "AIChatRequest":
+        if not self.prompt.strip() and not self.attachment_ids:
+            raise ValueError("Type a message or attach a file.")
+        return self
+
+
+class AIAttachmentResponse(BaseModel):
+    id: str
+    filename: str
+    kind: str
+    mime_type: str
+    size: int
+    status: str
+    char_count: int
+    truncated: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    note: str | None = None
+    created_at: str | None = None
 
 
 class AIChatResponse(BaseModel):
@@ -101,6 +134,7 @@ class ConversationMessageItem(BaseModel):
     role: str
     content: str
     tool_calls: list[dict[str, Any]] | None = None
+    attachments: list[dict[str, Any]] | None = None
     created_at: str | None = None
 
 
@@ -135,9 +169,20 @@ async def chat_with_agent(
         limit=get_ai_settings().chat_requests_per_minute,
     )
 
-    # 1. Prompt Injection & Jailbreak Defense
+    # 0b. Attached files: the caller's own only, resolved before any work so a
+    # stale or foreign id fails the request rather than being silently dropped
+    # (an answer about a file the model never saw is the failure to avoid).
+    attachment_rows = await AttachmentService(session).owned_many(
+        user=current_user, attachment_ids=payload.attachment_ids
+    )
+    attachment_refs = [describe(r) for r in attachment_rows]
+    typed_prompt = payload.prompt.strip() or DEFAULT_ATTACHMENT_PROMPT
+
+    # 1. Prompt Injection & Jailbreak Defense. The guard reads what the person
+    # typed; file contents reach the model wrapped as untrusted data instead,
+    # where an SQL exercise containing DROP TABLE is coursework, not an attack.
     try:
-        sanitized_prompt = SecurityPolicyEngine.sanitize_user_input(payload.prompt)
+        sanitized_prompt = SecurityPolicyEngine.sanitize_user_input(typed_prompt)
     except (SecurityError, AISecurityError) as exc:
         logger.warning("Prompt injection blocked for user %s: %s", current_user.public_id, exc)
         try:
@@ -183,7 +228,7 @@ async def chat_with_agent(
     reply_role = AIOrchestrator.resolve_caller_primary_role(current_user)
 
     async def quick_reply(message: str, *, success: bool, tool_calls: list[dict[str, Any]] | None = None) -> Any:
-        await state_mgr.append_message(user_id=current_user.id, role="user", content=payload.prompt)
+        await state_mgr.append_message(user_id=current_user.id, role="user", content=typed_prompt)
         await state_mgr.append_message(user_id=current_user.id, role="assistant", content=message)
         if payload.stream:
             async def one_frame() -> AsyncIterator[bytes]:
@@ -199,7 +244,7 @@ async def chat_with_agent(
             return StreamingResponse(one_frame(), headers={"Content-Type": "text/event-stream; charset=utf-8"})
         return AIChatResponse(message=message, role=reply_role, tool_calls=tool_calls or [], success=success)
 
-    if lowered_cmd in ("yes", "y", "confirm", "proceed", "yes, please", "do it"):
+    if not attachment_rows and lowered_cmd in ("yes", "y", "confirm", "proceed", "yes, please", "do it"):
         pending = await ticket_mgr.pending_for_user(current_user.id)
         if len(pending) > 1:
             return await quick_reply(
@@ -226,15 +271,17 @@ async def chat_with_agent(
                 tool_calls=[{"tool": ticket.action_name, "result": res}],
             )
 
-    if lowered_cmd in ("no", "n", "cancel", "abort", "stop", "nevermind", "no, cancel"):
+    if not attachment_rows and lowered_cmd in ("no", "n", "cancel", "abort", "stop", "nevermind", "no, cancel"):
         cancelled = await ticket_mgr.cancel_pending_for_user(current_user.id)
         if cancelled:
             noun = "action" if len(cancelled) == 1 else f"{len(cancelled)} actions"
             return await quick_reply(f"Cancelled. Nothing was changed by the {noun} you declined.", success=True)
 
     # Convert to standard role/content list for agent
+    # Earlier messages' files are named (with their ids) but not repeated, so
+    # "now record that mark" can refer back and re-read through read_attachment.
     formatted_history = [
-        {"role": item["role"], "content": item["content"]}
+        {"role": item["role"], "content": item["content"] + manifest_line(item.get("attachments"))}
         for item in recent_history
         if item.get("role") in ("user", "assistant")
     ]
@@ -258,12 +305,15 @@ async def chat_with_agent(
             history=formatted_history,
             current_user=current_user,
             request=request,
+            attachments=attachment_rows,
+            attachment_refs=attachment_refs,
         )
 
     # Synchronous turn
     turn_response = await agent.execute_turn(
         prompt=sanitized_prompt,
         conversation_history=formatted_history,
+        attachments=attachment_rows,
     )
 
     # 5. Extract draft assessments created during execution
@@ -288,7 +338,8 @@ async def chat_with_agent(
                     await persist_mgr.append_message(
                         user_id=current_user.id,
                         role="user",
-                        content=payload.prompt,
+                        content=typed_prompt,
+                        attachments=attachment_refs,
                     )
                     await persist_mgr.append_message(
                         user_id=current_user.id,
@@ -301,7 +352,8 @@ async def chat_with_agent(
             await persist_mgr.append_message(
                 user_id=current_user.id,
                 role="user",
-                content=payload.prompt,
+                content=typed_prompt,
+                attachments=attachment_refs,
             )
             await persist_mgr.append_message(
                 user_id=current_user.id,
@@ -330,6 +382,8 @@ def _handle_chat_stream(
     current_user: User,
     request: Request,
     state_mgr: ConversationStateManager | None = None,
+    attachments: list[Any] | None = None,
+    attachment_refs: list[dict[str, Any]] | None = None,
 ) -> StreamingResponse:
     """Stream AI agent response via Server-Sent Events (SSE)."""
 
@@ -344,6 +398,7 @@ def _handle_chat_stream(
             async for event in agent.execute_turn_stream(
                 prompt=prompt,
                 conversation_history=history,
+                attachments=attachments,
             ):
                 yield f"data: {json.dumps(event)}\n\n".encode("utf-8")
 
@@ -368,6 +423,7 @@ def _handle_chat_stream(
                                     user_id=current_user.id,
                                     role="user",
                                     content=prompt,
+                                    attachments=attachment_refs,
                                 )
                                 await persist_mgr.append_message(
                                     user_id=current_user.id,
@@ -380,6 +436,7 @@ def _handle_chat_stream(
                             user_id=current_user.id,
                             role="user",
                             content=prompt,
+                            attachments=attachment_refs,
                         )
                         await state_mgr.append_message(
                             user_id=current_user.id,
@@ -614,6 +671,7 @@ async def get_conversation_history(
             role=m["role"],
             content=m["content"],
             tool_calls=m.get("tool_calls"),
+            attachments=m.get("attachments"),
             created_at=m.get("created_at"),
         )
         for m in messages
@@ -633,4 +691,61 @@ async def clear_conversation_history(
     """Permanently delete all stored AI conversation messages for the caller."""
     state_mgr = ConversationStateManager(session)
     deleted_count = await state_mgr.clear_history(user_id=current_user.id)
+    # Erasing the conversation erases the files attached to it as well.
+    await AttachmentService(session).purge_user(user_id=current_user.id)
     return ClearHistoryResponse(success=True, deleted_count=deleted_count)
+
+
+# =============================================================================
+# ATTACHMENTS
+# =============================================================================
+
+
+@router.post(
+    "/attachments",
+    response_model=AIAttachmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Attach a file to the AI assistant conversation",
+)
+async def upload_attachment(
+    current_user: CurrentUser,
+    session: DBSession,
+    file: UploadFile = File(...),
+) -> AIAttachmentResponse:
+    """Store a file for the caller's own conversation and extract its text.
+
+    The file is readable only by the person who attached it. It is refused,
+    with the reason, when its type is not supported, when its contents do not
+    match its extension, or when it is larger than the limit.
+    """
+    get_request_limiter().check(user_id=current_user.id, bucket="attach", limit=30)
+    # One byte past the cap, so an oversized upload is refused without holding it all.
+    data = await file.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValidationError(f"Files can be up to {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+    row = await AttachmentService(session).create(
+        user=current_user, filename=file.filename or "file", data=data
+    )
+    audit_service.record(
+        session,
+        action=audit_service.AuditAction.UPLOAD,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        entity_type="ai_attachment",
+        entity_id=row.id,
+        details={"kind": row.kind, "size": row.size, "status": row.status},
+    )
+    await commit_before_responding(session)
+    return AIAttachmentResponse(**describe(row))
+
+
+@router.get("/attachments/{attachment_id}", response_model=AIAttachmentResponse, summary="Describe one of your attachments")
+async def get_attachment(attachment_id: str, current_user: CurrentUser, session: DBSession) -> AIAttachmentResponse:
+    row = await AttachmentService(session).get_owned(user=current_user, attachment_id=attachment_id)
+    return AIAttachmentResponse(**describe(row))
+
+
+@router.delete("/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove one of your attachments")
+async def delete_attachment(attachment_id: str, current_user: CurrentUser, session: DBSession) -> None:
+    await AttachmentService(session).delete(user=current_user, attachment_id=attachment_id)
+    await commit_before_responding(session)

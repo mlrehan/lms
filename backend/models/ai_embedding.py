@@ -66,6 +66,8 @@ class AIConversationMessage(Base, TimestampMixin, PublicIdMixin):
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user, assistant, system
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tool_calls: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Files attached to this (user) message: id, name, kind, size -- never their contents.
+    attachments: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     is_flagged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     user: Mapped["User"] = relationship("User", lazy="selectin")

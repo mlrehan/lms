@@ -331,6 +331,10 @@ def get_tool_registry() -> ToolRegistry:
         for tool in SUPERADMIN_TOOLS:
             _global_tool_registry.register(tool)
 
+        from backend.ai.tools.attachment_tools import read_attachment_tool
+
+        _global_tool_registry.register(read_attachment_tool)
+
         from backend.ai.tools.sql_change_tool import sql_change_tool
 
         _global_tool_registry.register(sql_change_tool)

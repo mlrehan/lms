@@ -51,6 +51,14 @@ def minimise_tool_calls(tool_calls: list[dict[str, Any]] | None) -> list[dict[st
     return kept
 
 
+def _attachment_refs(attachments: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    """What a message records about its files: identity and shape, never contents."""
+    if not attachments:
+        return None
+    keep = ("id", "filename", "kind", "size", "status")
+    return [{k: a.get(k) for k in keep} for a in attachments]
+
+
 def _cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(days=get_ai_settings().conversation_retention_days)
 
@@ -68,6 +76,7 @@ class ConversationStateManager:
         role: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> AIConversationMessage | None:
         """Persist a conversation message bound to the user, and expire old ones."""
         try:
@@ -86,6 +95,7 @@ class ConversationStateManager:
                     role=role,
                     content=content,
                     tool_calls=minimise_tool_calls(tool_calls),
+                    attachments=_attachment_refs(attachments),
                 )
                 self.session.add(msg)
                 await self.session.flush()
@@ -125,6 +135,7 @@ class ConversationStateManager:
                     "role": r.role,
                     "content": r.content,
                     "tool_calls": r.tool_calls,
+                    "attachments": r.attachments,
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                 }
                 for r in rows

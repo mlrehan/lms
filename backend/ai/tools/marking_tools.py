@@ -41,7 +41,11 @@ from backend.utils.enums import Roles
 logger = get_logger(__name__)
 
 _MAX_TEXT = 12_000
-_MAX_FILE_BYTES = 5 * 1024 * 1024
+# A submitted file is the work being marked, so it gets far more room than a
+# written answer: a notebook's outputs are the evidence, and cutting it at
+# 12,000 characters would hide most of them.
+_MAX_FILE_TEXT = 90_000
+_MAX_FILE_BYTES = 25 * 1024 * 1024
 _MAX_FEEDBACK = 4_000
 _MAX_PEERS = 10
 
@@ -75,12 +79,16 @@ def _mark(value: Any) -> Decimal:
 
 
 async def _attachment_text(row: Any) -> dict[str, Any]:
-    """An attached file's text, when it is a kind the indexer can read."""
-    from backend.ai.rag.extract import extract_text, is_supported
+    """A submitted file's text -- notebooks with their outputs, code, PDF, Word, Excel, text."""
+    from backend.ai.attachment_extract import AttachmentRejected, classify, extract
     from backend.storage import get_storage
 
     entry: dict[str, Any] = {"filename": row.filename, "type": row.mime_type, "size": row.size}
-    if not is_supported(row.mime_type):
+    try:
+        _, kind, _ = classify(row.filename or "")
+    except AttachmentRejected:
+        kind = None
+    if kind is None or kind == "IMAGE":
         entry["text"] = None
         entry["note"] = "This file type cannot be read here; open it on the marking screen."
         return entry
@@ -92,9 +100,14 @@ async def _attachment_text(row: Any) -> dict[str, Any]:
         chunks = []
         async for chunk in await get_storage().open_stream(row.path):
             chunks.append(chunk)
-        extracted = extract_text(b"".join(chunks), row.mime_type)
-        entry["text"], clipped = _clip(extracted.text)
-        entry["truncated"] = clipped or extracted.truncated
+        extracted = extract(row.filename, b"".join(chunks))
+        text = extracted.text or ""
+        entry["text"] = text[:_MAX_FILE_TEXT] or None
+        entry["truncated"] = len(text) > _MAX_FILE_TEXT or extracted.truncated
+        if extracted.details:
+            entry["details"] = extracted.details
+        if extracted.note:
+            entry["note"] = extracted.note
     except Exception as exc:  # noqa: BLE001 -- an unreadable file is reported, not fatal
         logger.warning("Could not read submission file %s: %s", row.public_id, exc)
         entry["text"] = None
@@ -174,7 +187,8 @@ read_submission_tool = ToolDefinition(
     name="read_submission",
     description=(
         "Read one assignment submission so it can be marked: the assignment's brief, rubric and maximum "
-        "score, the student's written answer and the text of readable attachments (PDF, Word, text). "
+        "score, the student's written answer and the text of submitted files (Jupyter notebooks with their "
+        "outputs, code, PDF, Word, Excel, CSV, text). "
         "Use the submission_id from get_pending_submissions."
     ),
     policy=ToolPolicy(

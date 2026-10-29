@@ -244,7 +244,8 @@ def test_conversation_history_endpoints():
         user = make_user(role_name=Roles.STUDENT.value)
 
         with patch("backend.api.v1.ai.ConversationStateManager.get_recent_history", new_callable=AsyncMock) as mock_get, \
-             patch("backend.api.v1.ai.ConversationStateManager.clear_history", new_callable=AsyncMock) as mock_clear:
+             patch("backend.api.v1.ai.ConversationStateManager.clear_history", new_callable=AsyncMock) as mock_clear, \
+             patch("backend.api.v1.ai.AttachmentService.purge_user", new_callable=AsyncMock) as mock_purge:
 
             mock_get.return_value = [
                 {"message_id": "m1", "role": "user", "content": "Hello", "tool_calls": None, "created_at": "2026-10-21T00:00:00Z"},
@@ -261,6 +262,7 @@ def test_conversation_history_endpoints():
             clear_resp = await clear_conversation_history(current_user=user, session=session)
             assert clear_resp.success is True
             assert clear_resp.deleted_count == 2
+            mock_purge.assert_awaited_once()  # erasing the conversation erases its files
 
     asyncio.run(run())
 

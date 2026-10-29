@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  AlertCircle,
   Bot,
   Eraser,
   Loader2,
-  Send,
   Sparkles,
+  Upload,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AIMessageList, type ChatMessage } from "./ai-message-list";
-import { VoiceInputButton } from "./voice-input-button";
+import { AIComposer } from "./ai-composer";
+import { useAIAttachments, type SentAttachment } from "./use-ai-attachments";
 import {
   ActionConfirmationDialog,
   type TicketDetails,
@@ -41,6 +41,7 @@ interface HistoryResponsePayload {
     role: "user" | "assistant" | "system";
     content: string;
     tool_calls?: Array<{ tool: string; result?: unknown }>;
+    attachments?: SentAttachment[] | null;
     created_at?: string;
   }>;
   total: number;
@@ -61,6 +62,9 @@ export function AIDrawer() {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const files = useAIAttachments();
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
 
   const ROLE_HIERARCHY = ["SUPER_ADMIN", "ADMIN", "CORPORATE_MANAGER", "TUTOR", "GUARDIAN", "STUDENT"];
   const primaryRole = ROLE_HIERARCHY.find((r) => roles.includes(r)) || roles[0] || "STUDENT";
@@ -99,6 +103,7 @@ export function AIDrawer() {
             content: m.content,
             agentRole: m.role === "assistant" ? primaryRole : undefined,
             toolCalls: m.tool_calls,
+            attachments: m.attachments ?? undefined,
             draftAssessments: drafts.length > 0 ? drafts : undefined,
             createdAt: m.created_at,
           };
@@ -138,14 +143,18 @@ export function AIDrawer() {
 
   const handleSend = async (textToSend?: string) => {
     const prompt = (textToSend ?? input).trim();
-    if (!prompt || loading) return;
+    // A suggestion click sends just its text; the composer sends the staged files too.
+    const sentFiles = textToSend === undefined ? files.readyAttachments : [];
+    if ((!prompt && sentFiles.length === 0) || loading || (textToSend === undefined && files.uploading)) return;
 
     setInput("");
+    if (textToSend === undefined) files.reset();
     const userMessageId = `user-${Date.now()}`;
     const userMsg: ChatMessage = {
       id: userMessageId,
       role: "user",
       content: prompt,
+      attachments: sentFiles.length ? sentFiles : undefined,
     };
 
     const assistantMessageId = `ai-${Date.now()}`;
@@ -172,6 +181,7 @@ export function AIDrawer() {
         body: JSON.stringify({
           prompt,
           stream: true,
+          attachment_ids: sentFiles.map((f) => f.id),
         }),
         credentials: "same-origin",
       });
@@ -394,12 +404,7 @@ export function AIDrawer() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
-  };
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
   const handleClearHistory = async () => {
     setClearing(true);
@@ -545,10 +550,39 @@ export function AIDrawer() {
       <aside
         className={cn(
           "fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-background border-l border-border-subtle shadow-2xl transition-transform duration-300 ease-out",
-          "sm:max-w-[460px] md:max-w-[500px]",
+          "sm:max-w-[460px] md:max-w-[560px]",
         )}
         aria-label="AI Assistant"
+        onDragEnter={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (hasFiles(e)) e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          if (!hasFiles(e)) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          files.addFiles(Array.from(e.dataTransfer.files));
+          textareaRef.current?.focus();
+        }}
       >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-primary/5 backdrop-blur-[1px]">
+            <Upload className="size-6 text-primary" aria-hidden="true" />
+            <p className="text-sm font-medium text-foreground">Drop files to attach</p>
+            <p className="text-2xs text-muted-foreground">PDF, Word, Excel, CSV, notebooks, code, images · up to 25 MB each</p>
+          </div>
+        )}
         {/* Header */}
         <header className="flex h-14 items-center justify-between border-b border-border-subtle px-4 bg-muted/20">
           <div className="flex items-center gap-2">
@@ -616,47 +650,20 @@ export function AIDrawer() {
           />
         )}
 
-        {/* Footer Input */}
-        <footer className="border-t border-border-subtle bg-background p-3 space-y-2">
-          <div className="relative rounded-xl border border-border-subtle bg-muted/30 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all p-1.5 flex items-end gap-1.5">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              disabled={loading}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={loading ? "AI Assistant is responding..." : `Ask anything as ${primaryRole.toLowerCase()}... (Enter to send)`}
-              className="w-full resize-none bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none max-h-28 min-h-[38px] scrollbar-thin disabled:opacity-60"
-              rows={1}
-            />
-
-            <div className="flex items-center gap-1 pb-0.5 shrink-0">
-              <VoiceInputButton
-                onTranscript={(transcript) => {
-                  setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
-                  textareaRef.current?.focus();
-                }}
-                disabled={loading}
-              />
-              <Button
-                type="button"
-                variant="primary"
-                size="icon"
-                disabled={!input.trim() || loading}
-                onClick={() => void handleSend()}
-                className="size-8 shrink-0"
-                aria-label="Send prompt"
-                title="Send"
-              >
-                {loading ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Send className="size-3.5" />
-                )}
-              </Button>
-            </div>
-          </div>
-
+        {/* Composer */}
+        <footer className="border-t border-border-subtle bg-background p-3 space-y-1.5">
+          <AIComposer
+            value={input}
+            onChange={setInput}
+            onSend={() => void handleSend()}
+            attachments={files.items}
+            onAddFiles={files.addFiles}
+            onRemoveAttachment={files.remove}
+            loading={loading}
+            uploading={files.uploading}
+            textareaRef={textareaRef}
+            placeholder={loading ? "The assistant is responding..." : "Message the assistant, or drop files here"}
+          />
           <div className="flex items-center justify-between px-1 text-[10px] text-muted-foreground">
             <span className="flex items-center gap-1">
               <Bot className="size-3 text-primary" />

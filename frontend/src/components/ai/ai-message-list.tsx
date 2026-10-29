@@ -14,6 +14,8 @@ import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import { AssessmentPreviewCard, type AssessmentDraftData } from "./assessment-preview-card";
 import type { TicketDetails } from "./action-confirmation-dialog";
+import { AttachmentIcon, formatBytes } from "./ai-composer";
+import type { SentAttachment } from "./use-ai-attachments";
 
 export interface ChatMessage {
   id: string;
@@ -23,6 +25,7 @@ export interface ChatMessage {
   draftAssessments?: AssessmentDraftData[];
   confirmationTicket?: TicketDetails | null;
   toolCalls?: Array<{ tool: string; result?: unknown }>;
+  attachments?: SentAttachment[];
   createdAt?: string;
   isStreaming?: boolean;
   statusText?: string;
@@ -386,7 +389,24 @@ export function AIMessageList({
               )}
 
               {isUser ? (
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <>
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <ul className={cn("flex flex-wrap gap-1.5", msg.content && "mb-2")} aria-label="Attached files">
+                      {msg.attachments.map((file) => (
+                        <li
+                          key={file.id}
+                          className="flex max-w-full items-center gap-1.5 rounded-md bg-primary-foreground/15 px-2 py-1"
+                          title={file.filename}
+                        >
+                          <AttachmentIcon kind={file.kind} filename={file.filename} className="size-3.5 shrink-0" />
+                          <span className="truncate text-2xs font-medium">{file.filename}</span>
+                          {file.size ? <span className="shrink-0 text-[10px] opacity-75">{formatBytes(file.size)}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {msg.content && <p className="whitespace-pre-wrap break-words">{msg.content}</p>}
+                </>
               ) : msg.content ? (
                 <div>
                   <MarkdownRenderer content={msg.content} />

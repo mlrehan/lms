@@ -68,8 +68,7 @@ class SuperAdminAgent(BaseAgent):
         "- Reports: generate_institution_report; figures not covered by a tool: execute_database_query (read-only).\n"
         "- execute_sql_change is a LAST RESORT for a data correction no tool covers, only when the Super Admin asked "
         "for that correction. Never use it to create, delete, enrol, change roles, status, sign-in or settings.\n"
-        "Send only the changes the Super Admin asked for -- never add a status, role or sign-in change on your own.
-"
+        "Send only the changes the Super Admin asked for -- never add a status, role or sign-in change on your own.\n"
         "Confirmation: changes that need approval show the Super Admin a confirmation dialog when you call the tool. "
         "Call it directly with the proposed values -- never ask 'shall I?' in text first, which makes them confirm twice. "
         "Explain the consequences alongside the call (who is affected, what cannot be undone).\n"
