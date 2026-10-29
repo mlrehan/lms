@@ -5188,6 +5188,32 @@ Driven in the browser as a real tutor, which is how most of it was found.
 Tests: `tests/integration/test_ai_teaching_context.py`,
 `tests/integration/test_ai_marking_tools.py` (real Postgres, mutation-checked).
 
+### The Super Admin's assistant: administration through the services
+
+Driven live as Super Admin: with no tool for the job it wrote SQL -- `INSERT
+INTO users` (no hash, no audit), `DELETE FROM user_roles`, `INSERT INTO
+enrollments` (no capacity lock or notification) -- and invented reasons for
+the refusals. The health tool replied "Healthy" unconditionally.
+
+* **`backend/ai/tools/superadmin_tools.py`** (all `allowed_roles=SUPER_ADMIN`,
+  each calling the console's own service): `find_users`, `create_user` (no
+  admin roles; random unseen password, sign-in disabled -- no password ever
+  passes through the chat), `get_security_overview`, `unlock_account`,
+  `revoke_user_sessions`, `search_audit_log`, `get_system_settings`,
+  `update_system_setting`, `manage_enrollment`. Writers are HIGH + confirmed,
+  with the target bound into the ticket; preconditions (schema rules, open
+  course, already enrolled) are checked at preview, so nothing impossible is
+  ever offered for confirmation.
+* `manage_user` also removes roles and switches sign-in (warning when the shared
+  default password is still in use); a value the account already has is dropped
+  rather than offered as a change.
+* `get_system_overview` reports facts and a `needs_attention` list, never a verdict.
+* `execute_sql_change` refuses service-owned writes and names the tool:
+  `users.status/can_login/lock columns`, enrolment creation and status,
+  `system_settings`.
+
+Tests: `tests/integration/test_ai_superadmin_tools.py` (17, mutation-checked).
+
 ### Known gaps and residual risks
 
 * **Five unit tests fail independently of this work** --

@@ -62,6 +62,20 @@ _KINDS = {exp.Insert: "INSERT", exp.Update: "UPDATE", exp.Delete: "DELETE"}
 # password hashing, token revocation and the guards on the last Super Admin.
 _USERS_UPDATE_ONLY = "users"
 
+# Columns whose change is an *act* with consequences a service carries out --
+# ending sessions, writing the audit row, notifying, holding a seat. Written
+# with SQL they change the data and skip the act, so each has a dedicated,
+# confirmed tool instead, and the refusal names it.
+_SERVICE_OWNED_COLUMNS: dict[str, dict[str, str]] = {
+    "users": {
+        **dict.fromkeys(("status", "can_login", "deleted_at", "is_deleted"), "manage_user"),
+        **dict.fromkeys(("is_locked", "locked_until", "failed_login_attempts"), "unlock_account"),
+    },
+    "enrollments": dict.fromkeys(("status", "batch_id", "student_id"), "manage_enrollment"),
+}
+# Whole tables with a dedicated tool for every legitimate write.
+_SERVICE_OWNED_TABLES: dict[str, str] = {"system_settings": "update_system_setting"}
+
 _WITHHELD_COLUMN_NAMES = frozenset(column for _, column in WITHHELD_COLUMNS)
 
 _STATEMENT_TIMEOUT_MS = 10_000
@@ -111,6 +125,16 @@ def validate_sql_change(raw: str) -> SqlChange:
         raise ValidationError(f"The table '{table}' can never be changed this way.")
     if table == _USERS_UPDATE_ONLY and kind != "UPDATE":
         raise ValidationError("Accounts are created and deleted on the Users screen, not with SQL.")
+    if table in _SERVICE_OWNED_TABLES:
+        raise ValidationError(f"Change '{table}' with {_SERVICE_OWNED_TABLES[table]}, not with SQL.")
+    if table == "enrollments" and kind != "UPDATE":
+        raise ValidationError("Enrolments are created and removed with manage_enrollment, not with SQL.")
+    owned = _SERVICE_OWNED_COLUMNS.get(table)
+    if owned and kind == "UPDATE":
+        for assignment in stmt.expressions:
+            column = assignment.this.name.lower() if isinstance(assignment, exp.EQ) else ""
+            if column in owned:
+                raise ValidationError(f"'{table}.{column}' is changed with {owned[column]}, not with SQL.")
 
     for referenced in stmt.find_all(exp.Table):
         if referenced.name.lower() in WITHHELD_TABLES:

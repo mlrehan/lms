@@ -224,68 +224,58 @@ async def handle_get_system_overview(
 
     session = context.session
 
-    # Count total users
-    total_users = (
-        await session.execute(
-            select(func.count(User.id)).where(User.status != UserStatus.DELETED)
-        )
-    ).scalar() or 0
+    from backend.services.security_service import SecurityService
 
-    # Count active users
-    active_users = (
-        await session.execute(
-            select(func.count(User.id)).where(User.status == UserStatus.ACTIVE)
-        )
-    ).scalar() or 0
+    # Live accounts only: soft-deleted rows keep their status column, and
+    # counting them inflated "active users" by every account ever removed.
+    live = (User.deleted_at.is_(None), User.status != UserStatus.DELETED)
+    by_status = dict(
+        (await session.execute(select(User.status, func.count(User.id)).where(*live).group_by(User.status))).all()
+    )
+    total_users = sum(by_status.values())
+    total_courses = (await session.execute(select(func.count(Course.id)).where(~Course.is_deleted))).scalar() or 0
+    total_batches = (await session.execute(select(func.count(Batch.id)))).scalar() or 0
+    security = await SecurityService(session).summary(hours=24)
 
-    # Count inactive users
-    inactive_users = (
-        await session.execute(
-            select(func.count(User.id)).where(User.status == UserStatus.INACTIVE)
-        )
-    ).scalar() or 0
+    runs = (
+        await session.execute(select(SyncPipelineRun).order_by(SyncPipelineRun.started_at.desc()).limit(10))
+    ).scalars().all()
+    latest = runs[0] if runs else None
+    last_completed = next((r for r in runs if r.status == "COMPLETED"), None)
 
-    # Count courses
-    total_courses = (
-        await session.execute(
-            select(func.count(Course.id)).where(~Course.is_deleted)
-        )
-    ).scalar() or 0
+    def describe(run: Any) -> str | None:
+        if run is None:
+            return None
+        when = run.started_at.strftime("%Y-%m-%d %H:%M UTC") if run.started_at else "unknown time"
+        return f"{run.status} ({when})" + (f": {run.failure_reason}" if run.failure_reason else "")
 
-    # Count batches
-    total_batches = (
-        await session.execute(select(func.count(Batch.id)))
-    ).scalar() or 0
-
-    # Last sync pipeline run
-    latest_run = (
-        await session.execute(
-            select(SyncPipelineRun)
-            .order_by(SyncPipelineRun.started_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    last_sync_info = "Never executed"
-    if latest_run:
-        status_str = latest_run.status
-        time_str = latest_run.started_at.strftime("%Y-%m-%d %H:%M UTC") if latest_run.started_at else "Unknown"
-        last_sync_info = f"{status_str} ({time_str})"
+    # Facts, not a verdict. The old reply said "Healthy (All services
+    # operational)" unconditionally -- a status nothing had checked. What can
+    # honestly be said is what was read, and what looks wrong.
+    attention: list[str] = []
+    if latest is not None and latest.status not in ("COMPLETED", "RUNNING"):
+        attention.append(f"The latest data sync did not complete: {describe(latest)}.")
+    if latest is None:
+        attention.append("No data sync has ever run.")
+    if security.accounts_locked_now:
+        attention.append(f"{security.accounts_locked_now} account(s) are locked out right now.")
+    if security.token_reuse_detections:
+        attention.append(f"{security.token_reuse_detections} refresh-token reuse detection(s) in the last 24 hours.")
+    if security.failed_logins >= 20:
+        attention.append(f"{security.failed_logins} failed sign-ins in the last 24 hours.")
 
     return {
-        "platform_health": "Healthy (All services operational)",
-        "total_users": total_users,
-        "active_users": active_users,
-        "inactive_users": inactive_users,
+        "database": "reachable (these figures were read from it just now)",
+        "users": {"total": total_users, **{str(k.value if hasattr(k, 'value') else k): v for k, v in by_status.items()}},
         "total_courses": total_courses,
         "total_batches": total_batches,
-        "last_sync": last_sync_info,
-        "message": (
-            f"Platform Health: Healthy. "
-            f"Total Users: {total_users} (Active: {active_users}, Inactive: {inactive_users}). "
-            f"Courses: {total_courses}, Batches: {total_batches}. "
-            f"Last Sync: {last_sync_info}."
-        ),
+        "active_sessions": security.active_sessions,
+        "failed_logins_24h": security.failed_logins,
+        "accounts_locked_now": security.accounts_locked_now,
+        "latest_sync": describe(latest) or "never run",
+        "last_completed_sync": describe(last_completed) or "none",
+        "needs_attention": attention or ["Nothing in these checks needs attention."],
+        "note": "These checks cover the database, accounts and data sync; they do not test external services.",
     }
 
 
@@ -297,7 +287,7 @@ async def handle_get_system_overview(
 async def _resolve_manage_user_change(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
-) -> tuple[User, str | None, UserStatus | None]:
+) -> tuple[User, str | None, UserStatus | None, str | None, bool | None]:
     """Validate a requested change completely, before anything is staged."""
     user = context.user
     _require_super_admin(user, "manage user roles and status")
@@ -338,21 +328,49 @@ async def _resolve_manage_user_change(
         if new_status is UserStatus.DELETED:
             raise ConflictError("Deleting an account is not a status change; use the Users screen.")
 
-    if new_role is None and new_status is None:
-        raise ConflictError("Nothing to change: give a new role, a new status, or both.")
-    return target_user, new_role, new_status
+    remove_role = (arguments.get("remove_role") or "").strip().upper() or None
+    if remove_role is not None:
+        if remove_role in _ROLES_NOT_GRANTABLE_BY_AI:
+            raise ConflictError(
+                f"The assistant does not remove the {remove_role} role. Change administrators on the Users screen."
+            )
+        held = {r.name for r in (target_user.roles or [])}
+        if remove_role not in held:
+            raise ConflictError(f"{_display_name(target_user)} does not hold the {remove_role} role.")
+        if held == {remove_role} and new_role is None:
+            raise ConflictError(
+                f"{remove_role} is {_display_name(target_user)}'s only role; give the role to replace it with."
+            )
+
+    can_login = arguments.get("can_login")
+    if not isinstance(can_login, bool) or can_login == bool(target_user.can_login):
+        # A value the account already has is not a change. Driven live, the
+        # model sent can_login=false on a role swap nobody asked to block, and
+        # the preview offered "block sign-in (and end their sessions)" as if it
+        # were part of the request.
+        can_login = None
+    if new_status is not None and new_status == target_user.status:
+        new_status = None
+
+    if new_role is None and new_status is None and remove_role is None and can_login is None:
+        raise ConflictError("Nothing to change: give a role to add or remove, a new status, or sign-in on/off.")
+    return target_user, new_role, new_status, remove_role, can_login
 
 
 async def preview_manage_user(
     arguments: dict[str, Any],
     context: ToolExecutionContext,
 ) -> ConfirmationPreview:
-    target, new_role, new_status = await _resolve_manage_user_change(arguments, context)
+    target, new_role, new_status, remove_role, can_login = await _resolve_manage_user_change(arguments, context)
     changes = []
     if new_role:
         changes.append(f"add the {new_role} role")
+    if remove_role:
+        changes.append(f"remove the {remove_role} role")
     if new_status:
         changes.append(f"set status to {new_status.value}")
+    if can_login is not None:
+        changes.append("allow sign-in" if can_login else "block sign-in (and end their sessions)")
     return ConfirmationPreview(
         summary=f"For {_display_name(target)} ({target.username}): {' and '.join(changes)}?",
         bound_parameters={"target_id": str(target.public_id)},
@@ -367,7 +385,7 @@ async def handle_manage_user(
     from backend.services.user_service import UserService
 
     user = context.user
-    target, new_role, new_status = await _resolve_manage_user_change(arguments, context)
+    target, new_role, new_status, remove_role, can_login = await _resolve_manage_user_change(arguments, context)
     bound_target = arguments.get(f"{BOUND_PREFIX}target_id")
     if bound_target is None or str(target.public_id) != str(bound_target):
         raise ConflictError("The account no longer matches the one confirmed; ask for the change again.")
@@ -375,17 +393,29 @@ async def handle_manage_user(
     users = UserService(context.session)
     if new_status is not None:
         target = await users.set_status(target.public_id, new_status, actor=user)
-    if new_role is not None:
+    if new_role is not None or remove_role is not None:
         current = [r.name for r in (target.roles or [])]
-        if new_role not in current:
-            target = await users.set_roles(target.public_id, [*current, new_role], actor=user)
+        wanted = [r for r in current if r != remove_role]
+        if new_role is not None and new_role not in wanted:
+            wanted.append(new_role)
+        if sorted(wanted) != sorted(current):
+            target = await users.set_roles(target.public_id, wanted, actor=user)
+    default_password = False
+    if can_login is not None:
+        target, default_password = await users.set_login_access(target.public_id, can_login, actor=user)
 
     return {
         "success": True,
         "user": target.username,
         "roles": sorted(r.name for r in (target.roles or [])),
         "status": target.status.value,
+        "can_login": bool(target.can_login),
         "message": "User updated.",
+        **(
+            {"warning": "Sign-in is allowed but the account still uses the shared default password; "
+                        "set a personal password on the Users screen."}
+            if can_login and default_password else {}
+        ),
     }
 
 
@@ -452,7 +482,10 @@ get_system_overview_tool = ToolDefinition(
 
 manage_user_tool = ToolDefinition(
     name="manage_user",
-    description="Add a non-administrative role to a user, or change their status. Requires the user's confirmation.",
+    description=(
+        "Change an account: add or remove a non-administrator role, set its status (ACTIVE, INACTIVE, SUSPENDED), "
+        "or allow/block sign-in. To clear a sign-in lockout use unlock_account instead. Confirmed first."
+    ),
     policy=ToolPolicy(
         name="manage_user",
         description="Manage user account",
@@ -475,6 +508,14 @@ manage_user_tool = ToolDefinition(
             "new_status": {
                 "type": "string",
                 "description": "Optional status to set (ACTIVE, INACTIVE, SUSPENDED).",
+            },
+            "remove_role": {
+                "type": "string",
+                "description": "Optional role to remove (not SUPER_ADMIN or ADMIN).",
+            },
+            "can_login": {
+                "type": "boolean",
+                "description": "Optional: true allows sign-in, false blocks it.",
             },
         },
         "required": ["user_identifier"],

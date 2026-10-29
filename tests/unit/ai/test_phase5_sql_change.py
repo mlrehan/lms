@@ -68,6 +68,12 @@ def test_ordinary_changes_pass(sql):
         ("INSERT INTO users (username) VALUES ('x')", "Users screen"),
         ("DELETE FROM users WHERE id = 5", "Users screen"),
         ("UPDATE users SET hashed_password = 'x' WHERE id = 5", "hashed_password"),
+        # Acts with consequences a service carries out have dedicated tools.
+        ("UPDATE users SET status = 'ACTIVE' WHERE id = 5", "manage_user"),
+        ("UPDATE users SET locked_until = NULL WHERE id = 5", "unlock_account"),
+        ("INSERT INTO enrollments (batch_id, student_id) VALUES (1, 2)", "manage_enrollment"),
+        ("UPDATE enrollments SET status = 'DROPPED' WHERE id = 1", "manage_enrollment"),
+        ("UPDATE system_settings SET value = '1' WHERE key = 'x'", "update_system_setting"),
         ("UPDATE courses SET title = (SELECT token FROM tokens LIMIT 1) WHERE id = 1", "tokens"),
         ("UPDATE courses SET title = (SELECT hashed_password FROM users LIMIT 1) WHERE id = 1", "hashed_password"),
         ("UPDATE courses SET title = pg_read_file('/etc/passwd') WHERE id = 1", "pg_read_file"),

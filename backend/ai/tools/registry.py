@@ -326,6 +326,11 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(record_exam_marks_tool)
         _global_tool_registry.register(get_exam_mark_sheet_tool)
 
+        from backend.ai.tools.superadmin_tools import SUPERADMIN_TOOLS
+
+        for tool in SUPERADMIN_TOOLS:
+            _global_tool_registry.register(tool)
+
         from backend.ai.tools.sql_change_tool import sql_change_tool
 
         _global_tool_registry.register(sql_change_tool)
