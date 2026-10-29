@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from backend.ai.attachments import MAX_FILE_BYTES, MAX_PER_MESSAGE, AttachmentService, describe, manifest_line
 from backend.ai.client import get_openai_client
 from backend.ai.config import get_ai_settings
+from backend.ai.links import describe_links
 from backend.ai.orchestrator import AIOrchestrator, create_role_agent
 from backend.ai.rate_limit import get_request_limiter
 from backend.ai.security import AISecurityError, SecurityError, SecurityPolicyEngine
@@ -289,6 +290,12 @@ async def chat_with_agent(
     client_ip = request.client.host if request.client else None
     request_id = request.headers.get("x-request-id")
 
+    # Links to this LMS name records the assistant can read; they are resolved
+    # here, as the caller, so a pasted URL is never answered with "I can't open
+    # links". The note goes to the model only -- the stored message is what the
+    # person typed.
+    model_prompt = sanitized_prompt + await describe_links(session, current_user, sanitized_prompt)
+
     # 3. Instantiate Role-Bound Agent
     agent = create_role_agent(
         user=current_user,
@@ -302,6 +309,7 @@ async def chat_with_agent(
         return _handle_chat_stream(
             agent=agent,
             prompt=sanitized_prompt,
+            model_prompt=model_prompt,
             history=formatted_history,
             current_user=current_user,
             request=request,
@@ -311,7 +319,7 @@ async def chat_with_agent(
 
     # Synchronous turn
     turn_response = await agent.execute_turn(
-        prompt=sanitized_prompt,
+        prompt=model_prompt,
         conversation_history=formatted_history,
         attachments=attachment_rows,
     )
@@ -384,6 +392,7 @@ def _handle_chat_stream(
     state_mgr: ConversationStateManager | None = None,
     attachments: list[Any] | None = None,
     attachment_refs: list[dict[str, Any]] | None = None,
+    model_prompt: str | None = None,
 ) -> StreamingResponse:
     """Stream AI agent response via Server-Sent Events (SSE)."""
 
@@ -396,7 +405,7 @@ def _handle_chat_stream(
             yield b": keep-alive\n\n"
 
             async for event in agent.execute_turn_stream(
-                prompt=prompt,
+                prompt=model_prompt or prompt,
                 conversation_history=history,
                 attachments=attachments,
             ):

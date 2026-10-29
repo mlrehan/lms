@@ -70,13 +70,14 @@ async def handle_get_student_academic_summary(
     stmt = (
         select(
             func.count(QuizAttempt.id).label("total_attempts"),
-            func.coalesce(func.avg(QuizAttempt.score), 0).label("average_score"),
+            func.avg(QuizAttempt.score).label("average_score"),
         )
         .where(QuizAttempt.student_id == student_id_int)
     )
     res = (await session.execute(stmt)).first()
     total_attempts = res[0] if res else 0
-    avg_score = float(res[1]) if res else 0.0
+    # No marked attempt means no average -- never 0%, which reads as "scored nothing".
+    avg_score = float(res[1]) if res and res[1] is not None else None
 
     # Query enrollments
     enrollment_stmt = (
@@ -93,8 +94,10 @@ async def handle_get_student_academic_summary(
         "student_username": visible_username(student_obj),
         "enrolled_cohorts_count": len(enrollments),
         "assessments_completed": total_attempts,
-        "average_assessment_score": round(avg_score, 1),
-        "academic_standing": "PASSING" if avg_score >= 70.0 or total_attempts == 0 else "NEEDS_SUPPORT",
+        "average_assessment_score": round(avg_score, 1) if avg_score is not None else None,
+        "academic_standing": (
+            "NOT_ASSESSED_YET" if avg_score is None else "PASSING" if avg_score >= 70.0 else "NEEDS_SUPPORT"
+        ),
     }
 
 
@@ -123,8 +126,8 @@ async def handle_get_corporate_training_progress(
             "team_metrics": {
                 "total_active_enrollments": 0,
                 "total_completed_modules": 0,
-                "overall_team_attendance_rate": 100.0,
-                "team_average_assessment_score": 0.0,
+                "overall_team_attendance_rate": None,
+                "team_average_assessment_score": None,
             },
         }
 
@@ -156,19 +159,20 @@ async def handle_get_corporate_training_progress(
         )).scalar_one() or 0
         total_sessions_all += att_cnt
         total_sessions_attended += pres_cnt
-        att_rate = round(pres_cnt / att_cnt * 100, 1) if att_cnt > 0 else 100.0
+        att_rate = round(pres_cnt / att_cnt * 100, 1) if att_cnt > 0 else None
 
-        # Assessment score average
+        # Assessment score average: None when nothing is marked. A real 0 counts --
+        # dropping it (as `> 0` used to) hid exactly the employee who most needs a look.
         avg_score = (await session.execute(
-            select(func.coalesce(func.avg(QuizAttempt.score), 0)).where(QuizAttempt.student_id == emp.id)
-        )).scalar_one() or 0.0
-        if avg_score > 0:
+            select(func.avg(QuizAttempt.score)).where(QuizAttempt.student_id == emp.id, QuizAttempt.score.is_not(None))
+        )).scalar_one()
+        if avg_score is not None:
             scores_collected.append(float(avg_score))
 
         skill_gaps = []
-        if att_rate < 80.0:
+        if att_rate is not None and att_rate < 80.0:
             skill_gaps.append(f"Low training attendance ({att_rate}%)")
-        if avg_score > 0 and float(avg_score) < 70.0:
+        if avg_score is not None and float(avg_score) < 70.0:
             skill_gaps.append(f"Assessment performance below passing benchmark ({round(float(avg_score), 1)}/100)")
         if confirmed_count == 0 and completed_count == 0:
             skill_gaps.append("No active training courses enrolled")
@@ -181,13 +185,13 @@ async def handle_get_corporate_training_progress(
             "active_courses": confirmed_count,
             "completed_courses": completed_count,
             "attendance_rate": att_rate,
-            "average_score": round(float(avg_score), 1),
+            "average_score": round(float(avg_score), 1) if avg_score is not None else None,
             "skill_gaps": skill_gaps if skill_gaps else ["On track - no gaps detected"],
             "training_status": "NEEDS_ATTENTION" if skill_gaps else "COMPLIANT",
         })
 
-    team_att_rate = round(total_sessions_attended / total_sessions_all * 100, 1) if total_sessions_all > 0 else 100.0
-    team_avg_score = round(sum(scores_collected) / len(scores_collected), 1) if scores_collected else 0.0
+    team_att_rate = round(total_sessions_attended / total_sessions_all * 100, 1) if total_sessions_all > 0 else None
+    team_avg_score = round(sum(scores_collected) / len(scores_collected), 1) if scores_collected else None
 
     return {
         "manager": visible_username(user),
@@ -306,7 +310,7 @@ async def handle_get_batch_student_performance_and_gaps(
             )
         )).scalar_one() or 0
 
-        att_pct = round((attended / sess_count * 100.0), 1) if sess_count > 0 else 100.0
+        att_pct = round((attended / sess_count * 100.0), 1) if sess_count > 0 else None
 
         quiz_avg = (await session.execute(
             select(func.avg(QuizAttempt.score))
@@ -316,9 +320,10 @@ async def handle_get_batch_student_performance_and_gaps(
 
         quiz_score = round(float(quiz_avg), 1) if quiz_avg is not None else None
 
-        needs_support = att_pct < 80.0 or (quiz_score is not None and quiz_score < 60.0)
+        low_attendance = att_pct is not None and att_pct < 80.0
+        needs_support = low_attendance or (quiz_score is not None and quiz_score < 60.0)
         reasons = []
-        if att_pct < 80.0:
+        if low_attendance:
             reasons.append(f"Low attendance ({att_pct}%)")
         if quiz_score is not None and quiz_score < 60.0:
             reasons.append(f"Low assessment score ({quiz_score}%)")
@@ -406,7 +411,7 @@ async def handle_generate_institution_report(
             "data": [
                 {
                     "group": r.label,
-                    "attendance_rate": float(r.metric) if r.metric else 0.0,
+                    "attendance_rate": float(r.metric) if r.metric is not None else None,
                     "counts": r.counts,
                 }
                 for r in res.rows[:15]
@@ -427,7 +432,7 @@ async def handle_generate_institution_report(
             "data": [
                 {
                     "group": r.label,
-                    "average_score": float(r.metric) if r.metric else 0.0,
+                    "average_score": float(r.metric) if r.metric is not None else None,
                     "counts": r.counts,
                 }
                 for r in res.rows[:15]
@@ -508,11 +513,11 @@ async def handle_get_guardian_dependents(
                 Attendance.status.in_([AttendanceStatus.PRESENT, AttendanceStatus.LATE]),
             )
         )).scalar_one() or 0
-        att_pct = round((att_present / att_total * 100), 1) if att_total > 0 else 100.0
+        att_pct = round((att_present / att_total * 100), 1) if att_total > 0 else None
 
         avg_score = (await session.execute(
-            select(func.coalesce(func.avg(QuizAttempt.score), 0)).where(QuizAttempt.student_id == student.id)
-        )).scalar_one() or 0.0
+            select(func.avg(QuizAttempt.score)).where(QuizAttempt.student_id == student.id, QuizAttempt.score.is_not(None))
+        )).scalar_one()
 
         dependents.append({
             "student_id": str(student.public_id),
@@ -523,8 +528,13 @@ async def handle_get_guardian_dependents(
             "is_primary": sg.is_primary,
             "active_enrollments": enr_count,
             "overall_attendance_rate": att_pct,
-            "average_assessment_score": round(float(avg_score), 1),
-            "academic_standing": "GOOD" if att_pct >= 80.0 and float(avg_score) >= 70.0 else "NEEDS_ATTENTION",
+            "average_assessment_score": round(float(avg_score), 1) if avg_score is not None else None,
+            "academic_standing": (
+                "NOT_ENOUGH_DATA" if att_pct is None and avg_score is None
+                else "NEEDS_ATTENTION" if (att_pct is not None and att_pct < 80.0)
+                or (avg_score is not None and float(avg_score) < 70.0)
+                else "GOOD"
+            ),
         })
 
     return {
@@ -560,6 +570,15 @@ get_guardian_dependents_tool = ToolDefinition(
 # =============================================================================
 # STUDENT ASSESSMENTS AND DEADLINES TOOL
 # =============================================================================
+
+
+def _reaches_batches(model: Any, batch_ids: list[int]) -> Any:
+    """An assessment set for one of these batches, by the same rule eligibility uses everywhere else."""
+    from sqlalchemy import exists
+
+    from backend.services.assessment_scope import covers_batch
+
+    return exists(select(Batch.id).where(Batch.id.in_(batch_ids), covers_batch(model)))
 
 
 async def handle_get_student_assessments_and_deadlines(
@@ -641,7 +660,9 @@ async def handle_get_student_assessments_and_deadlines(
         q_stmt = (
             select(Quiz)
             .where(
-                (Quiz.batch_id.in_(batch_ids)) | (Quiz.batch_id.is_(None)),
+                # The shared eligibility rule. "No batch" used to mean "everyone":
+                # every course-wide quiz in the institution reached every student.
+                _reaches_batches(Quiz, batch_ids),
                 Quiz.is_published.is_(True),
             )
             .order_by(Quiz.available_until.asc().nulls_last())
@@ -676,7 +697,7 @@ async def handle_get_student_assessments_and_deadlines(
                 "id": str(q.public_id),
                 "title": q.title,
                 "course": course_title,
-                "total_marks": float(q.total_marks) if q.total_marks is not None else 0.0,
+                "total_marks": float(q.total_marks) if q.total_marks is not None else None,
                 "passing_score": float(q.passing_score) if q.passing_score is not None else None,
                 "available_from": q.available_from.isoformat() if q.available_from else None,
                 "available_until": q.available_until.isoformat() if q.available_until else None,
@@ -689,7 +710,7 @@ async def handle_get_student_assessments_and_deadlines(
         asgn_stmt = (
             select(Assignment)
             .where(
-                (Assignment.batch_id.in_(batch_ids)) | (Assignment.batch_id.is_(None)),
+                _reaches_batches(Assignment, batch_ids),
                 Assignment.state == AssessmentState.PUBLISHED,
             )
             .order_by(Assignment.due_date.asc().nulls_last())
@@ -839,7 +860,7 @@ async def handle_get_student_enrolled_courses(
         .join(Batch, Batch.id == Enrollments.batch_id)
         .join(Course, Course.id == Batch.course_id)
         .where(Enrollments.student_id == student_id_int)
-        .order_by(Enrollments.created_at.desc())
+        .order_by(Enrollments.enrollment_date.desc())
     )
     rows = (await session.execute(stmt)).all()
 
@@ -848,15 +869,24 @@ async def handle_get_student_enrolled_courses(
         total_sessions = (await session.execute(
             select(func.count(BatchSession.id)).where(BatchSession.batch_id == batch.id, BatchSession.cancelled_at.is_(None))
         )).scalar_one() or 0
-        attended_sessions = (await session.execute(
-            select(func.count(Attendance.id))
+        # The rate is over the classes whose register recorded this student --
+        # never over every scheduled session, which counts classes that have not
+        # happened yet as absences. One rule for the whole platform:
+        # services/metrics.attendance_rate (late counts as attended, excused
+        # leaves the denominator, nothing recorded is None).
+        from backend.services.metrics import attendance_rate
+
+        by_status = dict((await session.execute(
+            select(Attendance.status, func.count(Attendance.id))
             .join(BatchSession, BatchSession.id == Attendance.session_id)
-            .where(
-                BatchSession.batch_id == batch.id,
-                Attendance.student_id == student_id_int,
-                Attendance.status.in_([AttendanceStatus.PRESENT, AttendanceStatus.LATE]),
-            )
-        )).scalar_one() or 0
+            .where(BatchSession.batch_id == batch.id, Attendance.student_id == student_id_int)
+            .group_by(Attendance.status)
+        )).all())
+        attended_sessions = by_status.get(AttendanceStatus.PRESENT, 0) + by_status.get(AttendanceStatus.LATE, 0)
+        rate = attendance_rate(
+            present=by_status.get(AttendanceStatus.PRESENT, 0), late=by_status.get(AttendanceStatus.LATE, 0),
+            absent=by_status.get(AttendanceStatus.ABSENT, 0), excused=by_status.get(AttendanceStatus.EXCUSED, 0),
+        )
 
         enrolled.append({
             "course_id": str(course.public_id),
@@ -870,7 +900,7 @@ async def handle_get_student_enrolled_courses(
             "training_time": f"{batch.training_start_time} - {batch.training_end_time}" if batch.training_start_time else None,
             "sessions_total": total_sessions,
             "sessions_attended": attended_sessions,
-            "attendance_rate": round(attended_sessions / total_sessions * 100, 1) if total_sessions > 0 else 100.0,
+            "attendance_rate": rate,
         })
 
     return {

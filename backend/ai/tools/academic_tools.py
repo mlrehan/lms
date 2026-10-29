@@ -466,6 +466,7 @@ async def handle_get_pending_submissions(
                 SubmissionState.SUBMITTED,
                 SubmissionState.LATE,
                 SubmissionState.UNDER_REVIEW,
+                SubmissionState.PENDING,
             ])
         )
         .order_by(AssignmentSubmission.submitted_at.asc())
@@ -624,7 +625,7 @@ async def handle_get_quiz_evaluation_summary(
     scores = [float(a.score) for a in attempts if a.score is not None]
     passed_count = sum(1 for a in attempts if a.is_passed)
     avg_score = round(sum(scores) / len(scores), 1) if scores else None
-    passing_rate = round((passed_count / len(attempts)) * 100.0, 1) if attempts else 0.0
+    passing_rate = round((passed_count / len(attempts)) * 100.0, 1) if attempts else None
 
     return {
         "quiz_id": str(quiz.public_id),

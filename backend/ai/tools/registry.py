@@ -335,6 +335,10 @@ def get_tool_registry() -> ToolRegistry:
 
         _global_tool_registry.register(read_attachment_tool)
 
+        from backend.ai.tools.updates_tools import get_my_updates_tool
+
+        _global_tool_registry.register(get_my_updates_tool)
+
         from backend.ai.tools.sql_change_tool import sql_change_tool
 
         _global_tool_registry.register(sql_change_tool)
@@ -354,6 +358,8 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry.register(get_teaching_context_tool)
 
         from backend.ai.tools.marking_tools import (
+            get_assignment_brief_tool,
+            release_results_tool,
             get_quiz_answers_to_mark_tool,
             grade_quiz_answers_tool,
             read_submission_tool,
@@ -361,6 +367,8 @@ def get_tool_registry() -> ToolRegistry:
         )
 
         _global_tool_registry.register(read_submission_tool)
+        _global_tool_registry.register(get_assignment_brief_tool)
+        _global_tool_registry.register(release_results_tool)
         _global_tool_registry.register(record_submission_grade_tool)
         _global_tool_registry.register(get_quiz_answers_to_mark_tool)
         _global_tool_registry.register(grade_quiz_answers_tool)

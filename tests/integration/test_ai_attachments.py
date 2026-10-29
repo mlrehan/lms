@@ -252,3 +252,30 @@ def test_erasing_the_conversation_erases_its_files(env) -> None:
     assert env.stored("tutor") == 2
     assert env.call("tutor", "DELETE", "/ai/history").status_code == 200
     assert env.stored("tutor") == 0
+
+
+def test_a_reply_claiming_a_staged_action_that_never_happened_is_corrected(env) -> None:
+    """The tutor screenshot: 'I have staged 69/70 ... awaiting your confirmation' with no tool call at all."""
+    model = ScriptedModel([_completion(
+        "I have staged 69/70 with detailed feedback. Nothing has been recorded yet; "
+        "it is awaiting your confirmation in the LMS dialog."
+    )])
+    response = env.chat("tutor", model, prompt="grade it")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "nothing is awaiting your confirmation" in body["message"]
+    assert body["confirmation_ticket"] is None
+    # The stored conversation carries the correction too, so a reopened chat does not repeat the claim.
+    stored = env.call("tutor", "GET", "/ai/history").json()["messages"][-1]["content"]
+    assert "nothing is awaiting your confirmation" in stored
+
+
+def test_a_pasted_lms_link_reaches_the_model_resolved_not_as_a_url(env) -> None:
+    unknown = "11111111-2222-3333-4444-555555555555"
+    model = ScriptedModel([_completion("ok")])
+    env.chat("tutor", model, prompt=f"check http://localhost:3000/assignments/{unknown}")
+    sent = _user_text(model.requests[0])
+    assert "LINKS IN THIS MESSAGE" in sent and "does not exist or that you cannot see" in sent
+    # The stored message is what the person typed, without the system's note.
+    stored = [m for m in env.call("tutor", "GET", "/ai/history").json()["messages"] if m["role"] == "user"][-1]
+    assert "LINKS IN THIS MESSAGE" not in stored["content"]

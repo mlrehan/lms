@@ -5251,8 +5251,27 @@ have at most 10000 characters". Now any role can attach files to a message.
   how to mark an attached file: brief and rubric from `read_submission`, read the
   whole file, give marks and evidence per criterion, say the file came from the
   chat rather than the LMS, then the confirmed `record_submission_grade`.
+* **`get_assignment_brief`** (tutor/admin, `assignment.grade`): finds an assignment
+  by title on a course the caller can see, and returns the brief, rubric,
+  max_score and its submissions. Before this, a brief could only be reached
+  through a *pending* submission, so work handed in by chat (the LMS submission
+  holding only a Colab link, or already marked) had no brief to mark against.
+  A title that matches nothing returns nothing rather than whatever is visible
+  (mutation-checked 2/2).
 * Erasing conversation memory deletes the attachments, and retention applies to
   them too.
+* **Driven live with the real model as the test tutor:**
+  - A notebook attached through the paperclip was marked per question with
+    evidence. It found the `NameError` cell and the cell that was never run,
+    and recorded nothing.
+  - A `.exe` was refused before upload, and the server refused a text file
+    renamed `.pdf`.
+  - The drop overlay appears while dragging and disappears on leave.
+  - The chip survives a reload.
+  - A 280,000-character pasted notebook became an attachment. The model
+    answered from its last cell, which is far outside the inline preview,
+    through `read_attachment` (shown in the stored turn).
+  - An image was read correctly (Responses `input_image`).
 * **Console:** `ai-composer.tsx` + `use-ai-attachments.ts`. Auto-growing input,
   paperclip, drag-and-drop over the drawer, paste of files, chips with upload
   progress and a reason when a file fails, remove (also deleted on the server),
@@ -5266,6 +5285,102 @@ have at most 10000 characters". Now any role can attach files to a message.
 * Limits: no OCR (a scanned PDF must be sent as images), images inside notebook
   outputs are named rather than shown, no web access (Colab/Drive links are not
   opened), and no virus scanning (files are never served back or executed).
+
+### Doing the work, not describing it: release, sync history, links, honest claims
+
+Three production conversations failed in ways that were architecture, not wording:
+
+1. **"Publish and release the result"**: no tool could release a mark, so the
+   tutor got manual instructions. The assistant also said it had staged 69/70
+   when no tool had staged anything.
+2. **A pasted LMS link** was answered with "I can't open web links", though it
+   named an assignment the assistant could read.
+3. **"Which batch did the sync insert?"** could not be answered: batches had no
+   creation time, and a sync run stored counts only.
+
+What changed:
+
+* **`release_results`** (`marking_tools.py`, HIGH, confirmed). Releases assignment
+  marks (all, or one student), quiz results, or exam results through the
+  services' own `publish_results`/`release_results`. Each kind checks the route's
+  own permission: `assignment.publish`, `quiz.grade`, and `grade.publish` for
+  exams, so a tutor is refused exam release just as the console refuses it.
+  Only GRADED work is offered, and the confirmed set of submissions is bound
+  into the ticket. `record_submission_grade` gained `release=true`, so grading
+  and releasing take one confirmation. The preview says the student will be
+  notified, and the release flag is bound so it cannot be switched on after
+  confirming.
+* **`get_pending_submissions`** now includes `PENDING`, matching the service's own
+  "awaiting marking" set.
+* **Sync history.** The academic sync records which courses, batches and
+  enrolments (per batch) each run created in `user_sync_runs.stats["created"]`,
+  up to 200 of each. `batches.created_at` was added by migration `b5f8d3c2e7a4`:
+  existing rows stay NULL, because their time was never recorded, and only new
+  rows get `now()`. **`get_sync_history`** (Super Admin, `course.sync`) reads
+  both and says plainly when a run predates the recording.
+* **Links to this LMS** (`backend/ai/links.py`). URLs on the site's own hosts
+  (CORS origins, `MAIL_APP_URL`, localhost, with and without `www.`) or bare
+  console paths are resolved **as the caller** through the screen's own scoped
+  `get()`. A record they cannot see reads exactly like a missing one, title
+  included. The note goes to the model only; the stored message is what was
+  typed. Outside links are reported as not opened.
+* **Claim check** (`backend/ai/claims.py`, applied to every final reply in
+  `agents/base.py`):
+  - "awaiting your confirmation" or "staged" with no staged ticket gets a
+    visible correction appended;
+  - "has been released/recorded/sent" while the action is only staged gets one
+    too;
+  - negated phrases are not claims.
+  The correction is stored with the reply.
+* **`get_my_updates`** (every role): own notifications, the announcement feed
+  and the inbox, each gated on the same read permission as its screen. A section
+  the role cannot read is listed as `skipped`, not empty. Nothing is marked read.
+* Every agent's prompt names its new tools. The shared prompt now says: use the
+  tool rather than describe the steps, never claim an action without a tool
+  result, and ask one question when something is ambiguous.
+* Tests (`test_ai_marking_tools.py` 32, `test_ai_attachments.py` 12,
+  `test_claims_and_links.py` 11, `test_lait_academic_sync.py` 23): 11/11
+  mutations caught. They include the screenshot's exact false-staging sentence
+  going through the real chat route, and a link to an unknown assignment.
+* **Production was not signed into.** Entering a password on the live site is
+  not done; the failures were reproduced from the code and the local copy.
+* **Driven live with the real model** (throwaway LIVEOPS course, batch and
+  assignment; throwaway tutor, student, guardian, corporate manager and Super
+  Admin; all deleted afterwards). Run through the API because the `next dev`
+  proxy route was answering 404 at the time.
+  - The tutor pasted the assignment link: it resolved to `get_assignment_brief`.
+  - "Grade Liva 18/20 and release it" staged ONE ticket whose summary said she
+    and her guardian would be notified. Confirming it moved the database from
+    SUBMITTED/no grade to PUBLISHED/18.00, and wrote `submission_graded` and
+    `ward_submission_graded`.
+  - An exam release was refused for the tutor.
+  - All three non-staff roles answered "anything new?" from their own
+    notifications only, and the manager was told announcements are not
+    available to the role.
+* **Five defects the live run found, all fixed and tested (mutation-checked):**
+  1. **Cross-course leak.** `get_student_assessments_and_deadlines` treated
+     `batch_id IS NULL` as "everyone", so every course-wide quiz in the
+     institution was listed to every student and their guardian. It now uses
+     `assessment_scope.covers_batch`, the shared eligibility rule.
+  2. **`get_student_enrolled_courses` had never worked for anyone.** It ordered
+     by `Enrollments.created_at`, which does not exist. An AST audit of every
+     `Model.attr` in `backend/ai` found no other case.
+  3. **Its attendance rate divided by every scheduled session**, future ones
+     included. It now uses `services/metrics.attendance_rate` over the
+     student's recorded marks.
+  4. **No data was reported as 100% attendance / 0% average** in about 20
+     places across `reporting_tools.py`, `attendance_tools.py` and
+     `academic_tools.py`. These are now `None` (`NOT_ASSESSED_YET`,
+     `NO_RECORDS`, `NOT_ENOUGH_DATA`). A real 0 score is no longer dropped
+     from team averages.
+  5. **`get_sync_history` let a hand-made batch be called "what the sync
+     inserted".** Each recent batch now carries `created_by`: the run that
+     listed it, or "not by any recorded sync run".
+* **Still divergent, recorded rather than hidden:** the other attendance figures
+  in the AI tools still count excused absences against the student, unlike the
+  console's `attendance_rate`. Fixing it means rewriting their counting
+  queries. Guardian and manager tools that take no student default to the
+  *first* linked student.
 
 ### Known gaps and residual risks
 

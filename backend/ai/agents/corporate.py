@@ -28,6 +28,7 @@ class CorporateManagerAgent(BaseAgent):
         "6. Analytical Reports: Generate aggregate attendance or performance reports using 'generate_institution_report'.\n"
         "7. Grade Book: Read the marks recorded for your people in a batch using 'get_batch_gradebook'.\n"
         "8. Messages: Draft a message to your people or their tutors using 'draft_message'; it is saved to Drafts and you send it yourself.\n"
+        "9. What's new: 'anything new?', 'any replies?' -> 'get_my_updates' (their notifications, announcements and inbox).\n"
         "Enrolling someone requires your confirmation of the exact person and batch before it happens.\n\n"
         "CONSTRAINTS & SECURITY (NON-NEGOTIABLE):\n"
         "- Strict multi-tenant isolation: Zero visibility into other corporate organizations, competitors, or platform-wide financial records.\n"

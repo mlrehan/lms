@@ -269,6 +269,8 @@ class LaitAcademicSyncService:
                         report.courses.warnings += 1
                     category = ac.choose_category(mapped.course_link, f.menu) if mapped.course_link and f.menu else None
                     outcome = await self._upsert_course(session, mapped, page, category, report, cache)
+                    if outcome == "created":
+                        report.note_created("courses", {"external_id": mapped.external_id, "title": mapped.title})
                 setattr(report.courses, outcome, getattr(report.courses, outcome) + 1)
             except _Skip as exc:
                 report.courses.skipped += 1
@@ -365,6 +367,11 @@ class LaitAcademicSyncService:
                 except _Skip as exc:
                     tutor_problem = str(exc)
                 batch_pk, outcome = await self._upsert_batch(session, mapped, course_id)
+                if outcome == "created":
+                    report.note_created("batches", {
+                        "batch_code": mapped.batch_code, "course": mapped.course_title,
+                        "start_date": mapped.start_date.isoformat() if mapped.start_date else None,
+                    })
                 await self._sessions(session, batch_pk, mapped, tutor_id, tutor_problem, report, external)
             setattr(report.batches, outcome, getattr(report.batches, outcome) + 1)
             return batch_pk
@@ -548,6 +555,8 @@ class LaitAcademicSyncService:
                     async with session.begin_nested():
                         outcome = await self._enrol(session, client, geo, batch[0], row, cache, report, dry_run, actor_id)
                     setattr(report.enrollments, outcome, getattr(report.enrollments, outcome) + 1)
+                    if outcome == "created":
+                        report.note_created_enrolment(code)
                 except _Skip as exc:
                     report.enrollments.skipped += 1
                     report.report.error("enrollment", external, str(exc))
@@ -729,6 +738,9 @@ class _Cache:
         return self.organizations[key]
 
 
+_CREATED_KEPT = 200
+
+
 @dataclass
 class _Report:
     courses: SourceStats = field(default_factory=SourceStats)
@@ -741,6 +753,19 @@ class _Report:
     pages_fetched: int = 0
     pages_missing: int = 0
     statuses: dict[str, int] = field(default_factory=dict)
+    # Which records this run created -- counts alone cannot answer "which batch
+    # did the last sync add?". Capped, because a first import can create
+    # thousands of enrolments and the run row is not the place for all of them.
+    created: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    enrolments_created_by_batch: dict[str, int] = field(default_factory=dict)
+
+    def note_created(self, kind: str, item: dict[str, Any]) -> None:
+        bucket = self.created.setdefault(kind, [])
+        if len(bucket) < _CREATED_KEPT:
+            bucket.append(item)
+
+    def note_created_enrolment(self, batch_code: str) -> None:
+        self.enrolments_created_by_batch[batch_code] = self.enrolments_created_by_batch.get(batch_code, 0) + 1
 
     def as_stats(self) -> dict[str, Any]:
         return {
@@ -749,4 +774,5 @@ class _Report:
             "categories_created": self.categories_created, "organizations_created": self.organizations_created,
             "course_pages": {"fetched": self.pages_fetched, "unavailable": self.pages_missing},
             "course_status": self.statuses, "errors_dropped": self.report.errors_dropped,
+            "created": {**self.created, "enrollments_by_batch": self.enrolments_created_by_batch},
         }

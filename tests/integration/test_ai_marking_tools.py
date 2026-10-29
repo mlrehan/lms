@@ -25,6 +25,9 @@ from sqlalchemy import select, text
 from backend.ai.tools.academic_tools import handle_create_assessment_draft, handle_create_assignment_draft
 from backend.ai.tools.attendance_tools import handle_mark_session_attendance, preview_mark_session_attendance
 from backend.ai.tools.marking_tools import (
+    handle_get_assignment_brief,
+    handle_release_results,
+    preview_release_results,
     handle_get_quiz_answers_to_mark,
     handle_grade_quiz_answers,
     handle_read_submission,
@@ -34,7 +37,7 @@ from backend.ai.tools.marking_tools import (
 )
 from backend.ai.tools.registry import BOUND_PREFIX, ToolExecutionContext
 from backend.core.config import get_settings
-from backend.core.errors import NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, NotFoundError, ValidationError
 from backend.db.manager import DatabaseManager
 from backend.models.assignment import Assignment, AssignmentSubmission
 from backend.models.batch import Batch, BatchSession
@@ -86,6 +89,7 @@ def env():  # noqa: ANN201
 
         people = {k: person(k, r) for k, r in (
             ("tutor", "TUTOR"), ("other", "TUTOR"), ("student", "STUDENT"), ("pupil", "STUDENT"), ("outsider", "STUDENT"),
+            ("admin", "SUPER_ADMIN"), ("manager", "CORPORATE_MANAGER"),
         )}
         course = Course(title=f"{tag} python", code=f"{tag}-PY", status=CourseStatus.PUBLISHED)
         course.batches, course.resources, course.tags, course.tutors = [], [], [], []
@@ -169,6 +173,7 @@ def env():  # noqa: ANN201
                     f"DELETE FROM attendances WHERE session_id IN {sessions}",
                     f"DELETE FROM gradebook_entries WHERE student_id IN {people}",
                     f"DELETE FROM notifications WHERE user_id IN {people}",
+                    "DELETE FROM user_sync_runs WHERE stats::text LIKE '%' || :c0 || '%'",
                     f"DELETE FROM quiz_answers WHERE attempt_id IN {attempts}",
                     f"DELETE FROM quiz_attempts WHERE id IN {attempts}",
                     f"DELETE FROM question_options WHERE question_id IN (SELECT id FROM questions WHERE quiz_id IN {quizzes})",
@@ -408,3 +413,246 @@ def test_reading_a_submission_shows_the_marks_already_given(env):  # noqa: ANN00
     assert [m["grade"] for m in seen["marked_so_far"]] == [14.0]
     assert seen["marked_so_far"][0]["answer_excerpt"] == ANSWER
     assert "student" not in seen["marked_so_far"][0]  # the standard, not who earned it
+
+
+def test_the_brief_is_found_by_title_with_the_submission_to_mark(env):  # noqa: ANN001
+    """Marking work attached in the chat needs the brief even when nothing is pending."""
+    result = env.call("tutor", lambda c: handle_get_assignment_brief({"title": f"{env.tag} lists"}, c))
+    assert result["success"] is True
+    assert result["brief"] == "Explain lists." and result["max_score"] == 20.0
+    assert [s["submission_id"] for s in result["submissions"]] == [env.work["submission"]]
+    # The title decides: one that names nothing finds nothing, rather than whatever is visible.
+    missing = env.call("tutor", lambda c: handle_get_assignment_brief({"title": f"{env.tag} no such work"}, c))
+    assert missing["success"] is False
+
+
+def test_another_tutor_cannot_find_the_brief(env):  # noqa: ANN001
+    result = env.call("other", lambda c: handle_get_assignment_brief({"title": f"{env.tag} lists"}, c))
+    assert result["success"] is False and "brief" not in result
+
+
+
+def _submission(env):  # noqa: ANN001, ANN202
+    async def check(s):  # noqa: ANN001, ANN202
+        return (await s.execute(select(AssignmentSubmission).where(
+            AssignmentSubmission.public_id == uuid.UUID(env.work["submission"])))).scalar_one()
+    return env.run(check)
+
+
+def _graded_notices(env):  # noqa: ANN001, ANN202
+    async def check(s):  # noqa: ANN001, ANN202
+        return (await s.execute(text(
+            "SELECT count(*) FROM notifications WHERE type = 'submission_graded' AND user_id = "
+            "(SELECT id FROM users WHERE username = :u)"), {"u": f"{env.tag}.student"})).scalar_one()
+    return env.run(check)
+
+
+def test_grade_and_release_in_one_confirmation_publishes_and_notifies(env):  # noqa: ANN001
+    """The tutor screenshot: 'publish and release the result, so the student gets notified'."""
+    args = {"submission_id": env.work["submission"], "grade": 18, "feedback": "Clear and complete.", "release": True}
+
+    async def go(c):  # noqa: ANN001, ANN202
+        preview = await preview_record_submission_grade(args, c)
+        assert "RELEASED" in preview.summary  # the person is told, before confirming, that it goes out
+        return await handle_record_submission_grade(_confirmed(preview, args), c)
+
+    result = env.call("tutor", go, commit=True)
+    assert result["released"] is True and result["state"] == "PUBLISHED"
+    assert _submission(env).state is SubmissionState.PUBLISHED
+    assert _graded_notices(env) == 1
+
+
+def test_release_cannot_be_switched_on_after_confirming_a_hidden_mark(env):  # noqa: ANN001
+    args = {"submission_id": env.work["submission"], "grade": 18, "feedback": "x"}
+
+    async def go(c):  # noqa: ANN001, ANN202
+        preview = await preview_record_submission_grade(args, c)
+        return await handle_record_submission_grade(_confirmed(preview, args | {"release": True}), c)
+
+    with pytest.raises(ValidationError):
+        env.call("tutor", go)
+
+
+def test_release_results_releases_only_marked_work_and_notifies(env):  # noqa: ANN001
+    grade = {"submission_id": env.work["submission"], "grade": 12, "feedback": "Needs an example."}
+
+    async def mark(c):  # noqa: ANN001, ANN202
+        preview = await preview_record_submission_grade(grade, c)
+        return await handle_record_submission_grade(_confirmed(preview, grade), c)
+
+    env.call("tutor", mark, commit=True)
+    assert _submission(env).state is SubmissionState.GRADED and _graded_notices(env) == 0
+
+    args = {"kind": "assignment", "title": f"{env.tag} lists"}
+
+    async def release(c):  # noqa: ANN001, ANN202
+        preview = await preview_release_results(args, c)
+        assert "Student Person" in preview.summary and preview.affected_records_count == 1
+        return await handle_release_results(_confirmed(preview, args), c)
+
+    result = env.call("tutor", release, commit=True)
+    assert result["released"] == 1
+    assert _submission(env).state is SubmissionState.PUBLISHED
+    assert _graded_notices(env) == 1
+
+
+def test_nothing_marked_means_nothing_offered_for_release(env):  # noqa: ANN001
+    with pytest.raises(ValidationError, match="Nothing to release"):
+        env.call("tutor", lambda c: preview_release_results({"kind": "assignment", "title": f"{env.tag} lists"}, c))
+
+
+def test_another_tutor_cannot_release_it(env):  # noqa: ANN001
+    with pytest.raises(NotFoundError):
+        env.call("other", lambda c: preview_release_results({"kind": "assignment", "title": f"{env.tag} lists"}, c))
+
+
+def test_a_tutor_cannot_release_exam_results(env):  # noqa: ANN001
+    """Exam results are released by the academic office (grade.publish), as on the console."""
+    with pytest.raises(AuthorizationError):
+        env.call("tutor", lambda c: preview_release_results({"kind": "exam", "title": "anything"}, c))
+
+
+def test_a_student_cannot_release_anything(env):  # noqa: ANN001
+    with pytest.raises(AuthorizationError):
+        env.call("student", lambda c: preview_release_results({"kind": "assignment", "title": f"{env.tag} lists"}, c))
+
+
+
+# =============================================================================
+# Operational tools: sync history, "what's new", links to this LMS
+# =============================================================================
+
+
+def test_the_last_sync_says_which_batch_it_created(env):  # noqa: ANN001
+    """The Super Admin screenshot: 'after syncing which batch has been inserted right now?'."""
+    from backend.ai.tools.superadmin_tools import handle_get_sync_history
+    from backend.models.user_sync import UserSyncRun
+
+    async def plant(s):  # noqa: ANN001, ANN202
+        s.add(UserSyncRun(kind="ACADEMIC", trigger_type="MANUAL", dry_run=False, status="SUCCEEDED",
+                          started_at=datetime.now(UTC) + timedelta(minutes=1),
+                          stats={"batches": {"created": 1}, "created": {"batches": [
+                              {"batch_code": f"{env.tag}-A", "course": f"{env.tag} python"}]}}))
+    env.run(plant)
+
+    result = env.call("admin", lambda c: handle_get_sync_history({"limit": 1}, c))
+    latest = result["runs"][0]
+    assert latest["created_recorded"] is True
+    assert latest["created"]["batches"][0]["batch_code"] == f"{env.tag}-A"
+    # And independently of any run: the batch carries its own creation time.
+    assert f"{env.tag}-A" in [b["batch_code"] for b in result["batches_created_recently"]]
+    ours = next(b for b in result["batches_created_recently"] if b["batch_code"] == f"{env.tag}-A")
+    assert ours["created_by"].startswith("the sync run")
+
+
+def test_a_batch_no_sync_created_is_not_credited_to_a_sync(env):  # noqa: ANN001
+    """Live finding: a batch made by hand was presented as 'the batch the sync inserted'."""
+    from backend.ai.tools.superadmin_tools import handle_get_sync_history
+
+    result = env.call("admin", lambda c: handle_get_sync_history({}, c))
+    ours = next(b for b in result["batches_created_recently"] if b["batch_code"] == f"{env.tag}-A")
+    assert ours["created_by"].startswith("not by any recorded sync run")
+
+
+def test_only_the_super_admin_is_offered_sync_history(env):  # noqa: ANN001
+    from backend.ai.tools.registry import get_tool_registry
+
+    async def go(c):  # noqa: ANN001, ANN202
+        return [t.name for t in get_tool_registry().list_tools_for_caller(c.user)]
+    assert "get_sync_history" in env.call("admin", go)
+    assert "get_sync_history" not in env.call("tutor", go)
+
+
+def test_whats_new_reads_only_your_own_notifications(env):  # noqa: ANN001
+    from backend.ai.tools.updates_tools import handle_get_my_updates
+    from backend.models.notification import Notification
+    from backend.utils.enums import NotificationChannel
+
+    async def plant(s):  # noqa: ANN001, ANN202
+        s.add(Notification(user_id=env.ids["student"], channel=NotificationChannel.SYSTEM, type="message_received", title=f"{env.tag} for student",
+                           body="You have a new message.", sent_at=datetime.now(UTC)))
+    env.run(plant)
+
+    mine = env.call("student", lambda c: handle_get_my_updates({}, c))
+    theirs = env.call("pupil", lambda c: handle_get_my_updates({}, c))
+    assert f"{env.tag} for student" in [n["title"] for n in mine["notifications"]["latest"]]
+    assert f"{env.tag} for student" not in [n["title"] for n in theirs["notifications"]["latest"]]
+
+
+def test_a_section_a_role_cannot_read_is_skipped_not_empty(env):  # noqa: ANN001
+    from backend.ai.tools.updates_tools import handle_get_my_updates
+
+    result = env.call("manager", lambda c: handle_get_my_updates({}, c))
+    assert "announcements" in result["skipped"] and "announcements" not in result  # managers lack announcement.read
+
+
+def test_a_pasted_link_to_your_own_assignment_is_resolved(env):  # noqa: ANN001
+    """The tutor screenshot: 'go to this link and check?' -- the link named an LMS record."""
+    from backend.ai.links import describe_links
+    from backend.models.assignment import Assignment
+
+    async def asg(s):  # noqa: ANN001, ANN202
+        return (await s.execute(select(Assignment.public_id).where(Assignment.title == f"{env.tag} lists"))).scalar_one()
+    aid = env.run(asg)
+    text_in = f"go to this link and check? http://localhost:3000/assignments/{aid}"
+
+    note = env.call("tutor", lambda c: describe_links(c.session, c.user, text_in))
+    assert f"'{env.tag} lists'" in note and "You CAN read it" in note
+
+    # Another tutor learns nothing from the same link, not even the title.
+    other = env.call("other", lambda c: describe_links(c.session, c.user, text_in))
+    assert f"{env.tag} lists" not in other and "cannot see" in other
+
+
+def test_an_outside_link_is_reported_as_not_opened(env):  # noqa: ANN001
+    from backend.ai.links import describe_links
+
+    note = env.call("tutor", lambda c: describe_links(c.session, c.user, "see https://colab.research.google.com/drive/x"))
+    assert "no web access" in note
+
+
+# =============================================================================
+# What a student, guardian or manager is told about one student
+# =============================================================================
+
+
+def _as_student_view(env, who, fn):  # noqa: ANN001, ANN202
+    return env.call(who, lambda c: fn({}, c))
+
+
+def test_assessments_are_only_those_set_for_the_students_own_courses(env):  # noqa: ANN001
+    """Live finding: every course-wide quiz in the institution was listed to every student."""
+    from backend.ai.tools.reporting_tools import handle_get_student_assessments_and_deadlines
+    from backend.models.quiz import Quiz
+
+    async def foreign(s):  # noqa: ANN001, ANN202
+        other = Course(title=f"{env.tag} history", code=f"{env.tag}-HI", status=CourseStatus.PUBLISHED)
+        other.batches, other.resources, other.tags, other.tutors = [], [], [], []
+        s.add(other)
+        await s.flush()
+        s.add(Quiz(course_id=other.id, title=f"{env.tag} someone else's quiz", scope=AssessmentScope.COURSE,
+                   is_published=True, passing_score=Decimal("50")))
+    env.run(foreign)
+
+    titles = [a["title"] for a in _as_student_view(env, "student", handle_get_student_assessments_and_deadlines)["assessments"]]
+    assert f"{env.tag} lists" in titles and f"{env.tag} quiz" in titles
+    assert f"{env.tag} someone else's quiz" not in titles
+
+
+def test_enrolled_courses_can_be_read_at_all(env):  # noqa: ANN001
+    """Live finding: the tool sorted by a column that does not exist, so every call failed."""
+    from backend.ai.tools.reporting_tools import handle_get_student_enrolled_courses
+
+    result = _as_student_view(env, "student", handle_get_student_enrolled_courses)
+    assert f"{env.tag}-A" in str(result)
+
+
+def test_no_records_is_reported_as_none_not_100_or_0(env):  # noqa: ANN001
+    """Live finding: a student who never attended a class was reported at 100% attendance and a 0% average."""
+    from backend.ai.tools.reporting_tools import handle_get_student_academic_summary, handle_get_student_enrolled_courses
+
+    summary = _as_student_view(env, "pupil", handle_get_student_academic_summary)
+    assert summary["average_assessment_score"] is None and summary["academic_standing"] == "NOT_ASSESSED_YET"
+    courses = _as_student_view(env, "pupil", handle_get_student_enrolled_courses)
+    rates = [c.get("attendance_rate") for c in courses.get("courses", courses.get("enrollments", []))]
+    assert rates and all(r is None for r in rates)

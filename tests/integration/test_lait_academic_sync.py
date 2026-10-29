@@ -217,6 +217,14 @@ def test_a_full_sync_builds_course_batch_sessions_and_enrolments(env) -> None:
     assert b.capacity == 25 and b.number_of_sessions == 1 and b.duration_hours == 6 and b.total_enrollments == 2
     assert b.notes.startswith("Auto: ") and str(e.n + 1) in b.notes
 
+    # The run records WHICH records it created, so "which batch did the last
+    # sync add?" has an answer -- and the batch carries its creation time.
+    created = s["created"]
+    assert [x["batch_code"] for x in created["batches"]] == [b.batch_code]
+    assert [x["title"] for x in created["courses"]] == [c.title]
+    assert created["enrollments_by_batch"] == {b.batch_code: 2}
+    assert b.created_at is not None
+
 
 def test_session_times_are_stored_in_utc(env) -> None:
     e = env
@@ -313,6 +321,7 @@ def test_a_second_run_changes_nothing(env) -> None:
     assert (s["courses"]["created"], s["batches"]["created"], s["sessions"]["created"], s["enrollments"]["created"]) == (0, 0, 0, 0)
     assert (s["courses"]["unchanged"], s["batches"]["unchanged"], s["enrollments"]["unchanged"]) == (1, 1, 2)
     assert _counts(e) == before
+    assert s["created"] == {"enrollments_by_batch": {}}  # a run that created nothing lists nothing
 
 
 def test_a_dry_run_persists_nothing(env) -> None:

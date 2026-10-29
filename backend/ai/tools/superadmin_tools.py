@@ -617,7 +617,113 @@ manage_enrollment_tool = ToolDefinition(
 )
 
 
+# =============================================================================
+# What synchronisation changed
+# =============================================================================
+
+
+async def handle_get_sync_history(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    """Recent LAIT synchronisation runs and what each one created.
+
+    Answers "which batch did the last sync add?" from the run's own record of
+    the rows it created, and lists batches by their creation time. Batches
+    that predate the creation-time column have none, and are not guessed at.
+    """
+    from backend.models.course import Course
+    from backend.models.user_sync import UserSyncRun
+
+    limit = max(1, min(int(arguments.get("limit") or 5), 20))
+    days = max(1, min(int(arguments.get("days") or 7), 90))
+    runs = (await context.session.execute(
+        select(UserSyncRun).order_by(UserSyncRun.started_at.desc()).limit(limit)
+    )).scalars().all()
+
+    def describe_run(run: Any) -> dict[str, Any]:
+        stats = run.stats or {}
+        counts = {k: stats.get(k) for k in ("courses", "batches", "sessions", "enrollments", "users") if k in stats}
+        if run.kind == "USERS":
+            counts = {k: v for k, v in stats.items() if isinstance(v, (int, dict)) and k != "created"}
+        return {
+            "kind": run.kind,
+            "status": run.status,
+            "dry_run": bool(run.dry_run),
+            "trigger": run.trigger_type,
+            "started_at": _iso(run.started_at),
+            "finished_at": _iso(run.finished_at),
+            "counts": counts,
+            # Present only for runs made after the sync began recording them.
+            "created": stats.get("created"),
+            "created_recorded": "created" in stats,
+            "error_count": len(run.errors or []),
+            "failure_reason": run.failure_reason,
+        }
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    recent = (await context.session.execute(
+        select(Batch.batch_code, Batch.created_at, Batch.start_date, Course.title)
+        .join(Course, Course.id == Batch.course_id)
+        .where(Batch.created_at.is_not(None), Batch.created_at >= since)
+        .order_by(Batch.created_at.desc())
+        .limit(50)
+    )).all()
+    # Which run created each recent batch, from the runs' own records. A batch no
+    # recorded run lists was made some other way (by hand, through Google, or by
+    # a run from before creations were recorded) -- and must not be presented as
+    # "what the sync inserted".
+    created_by: dict[str, Any] = {}
+    for run in (await context.session.execute(
+        select(UserSyncRun).where(UserSyncRun.kind == "ACADEMIC", UserSyncRun.started_at >= since,
+                                  UserSyncRun.dry_run.is_(False))
+    )).scalars():
+        for item in ((run.stats or {}).get("created") or {}).get("batches") or []:
+            created_by.setdefault(item.get("batch_code"), run.started_at)
+    undated = (await context.session.execute(
+        select(func.count()).select_from(Batch).where(Batch.created_at.is_(None))
+    )).scalar_one()
+    return {
+        "success": True,
+        "runs": [describe_run(r) for r in runs],
+        "batches_created_recently": [
+            {
+                "batch_code": b, "course": t, "created_at": _iso(c), "start_date": _iso(sd),
+                "created_by": (f"the sync run started {_iso(created_by[b])}" if b in created_by
+                               else "not by any recorded sync run (made by hand, from Google, or before recording began)"),
+            }
+            for b, c, sd, t in recent
+        ],
+        "window_days": days,
+        "batches_without_creation_time": undated,
+        "note": (
+            "A run's 'created' lists the records that run inserted (up to 200 of each). Runs made before this was "
+            "recorded show created_recorded=false. A dry run created nothing: its lists are what it WOULD have created. "
+            "Batches created before creation times were recorded have no created_at and cannot be dated. "
+            "Only call a batch 'inserted by the sync' when its created_by names a sync run."
+        ),
+    }
+
+
+get_sync_history_tool = ToolDefinition(
+    name="get_sync_history",
+    description=(
+        "Recent LAIT synchronisation runs (users and academic): status, counts, and exactly which courses, batches "
+        "and enrolments each run created; plus batches created in the last N days. Use for 'what did the last sync "
+        "add/change?' or 'which batch was inserted?'."
+    ),
+    policy=ToolPolicy(name="get_sync_history", description="Read synchronisation history",
+                      required_permissions=("course.sync",), allowed_roles=_SA, risk_level=RiskLevel.LOW),
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "description": "How many recent runs (default 5, max 20)"},
+            "days": {"type": "integer", "description": "Window for recently created batches (default 7)"},
+        },
+    },
+    handler=handle_get_sync_history,
+)
+
+
 SUPERADMIN_TOOLS = (
+    get_sync_history_tool,
     find_users_tool,
     create_user_tool,
     get_security_overview_tool,

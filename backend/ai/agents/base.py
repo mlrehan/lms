@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.client import OpenAIClient, get_openai_client
+from backend.ai.claims import verify_claims
 from backend.ai.security import SecurityPolicyEngine
 from backend.ai.tools.registry import (
     ToolExecutionContext,
@@ -107,6 +108,11 @@ class BaseAgent:
             f"was actually shown or read: when a file was shown in part, read the rest before relying on it; a file "
             f"marked as having no readable text, and any web link, has not been inspected -- say so. You cannot open "
             f"URLs.\n"
+            f"Doing, not describing: when the user asks you to do something, find the tool that does it and use it. "
+            f"Give manual instructions only when no tool can do it -- and then say plainly that you cannot do it "
+            f"yourself and why. Never say an action was staged, done, sent or released unless a tool result in this "
+            f"conversation shows it. When a request is ambiguous (two matching records, a missing value), ask one "
+            f"short question instead of guessing.\n"
         )
         # The SQL instructions are given only to callers who are offered the SQL
         # tools. Telling every role it "possesses direct database query
@@ -386,6 +392,7 @@ class BaseAgent:
                 elif not full_text:
                     full_text = "Task completed."
 
+                full_text = verify_claims(full_text, staged=confirmation_needed is not None)
                 # Stream the text deltas smoothly
                 words = full_text.split(" ")
                 chunk: list[str] = []
@@ -537,6 +544,7 @@ class BaseAgent:
             full_text = self.synthesize_tool_results_fallback(prompt, tools_executed)
         elif not full_text:
             full_text = "Task completed."
+        full_text = verify_claims(full_text, staged=confirmation_needed is not None)
         words = full_text.split(" ")
         chunk = []
         for word in words:

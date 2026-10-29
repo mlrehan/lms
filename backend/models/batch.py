@@ -1,5 +1,7 @@
 from datetime import date, datetime, time
 
+import sqlalchemy as sa
+
 from sqlalchemy import (Integer, String, ForeignKey, Date,
                         Enum as SQLEnum, text, Text, Index, Time, Numeric)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,6 +28,13 @@ class Batch(Base, PublicIdMixin):
     start_date: Mapped[Optional[date]] = utc_date_column(default=False)
     end_date: Mapped[Optional[date]] = utc_date_column(default=False)
     is_active: Mapped[bool] = bool_column(default=True)
+    # When the row was inserted. NULL for batches that existed before the
+    # column did: their creation time was never recorded, and "unknown" is the
+    # truth -- backfilling the migration's own timestamp would claim every old
+    # batch was created the day it ran.
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True, server_default=sa.func.now()
+    )
 
     # How the batch is scheduled. These say on which weekdays classes are held and when, so sessions can be generated
     # (services/session_planner.py) instead of typed in one by one. `schedule_timezone` is the zone the clock times

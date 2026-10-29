@@ -86,13 +86,14 @@ class AssignmentService:
         *,
         actor: User,
         course_public_id: uuid.UUID | None = None,
+        query: str | None = None,
     ) -> tuple[Sequence[Assignment], int]:
         course_id = None
         if course_public_id is not None:
             course_id = (await self.courses.get(course_public_id, actor=actor)).id
 
         scope = await self.scopes.visible_course_ids(actor)
-        return await self.assignments.search(params, scope=scope, course_id=course_id)
+        return await self.assignments.search(params, scope=scope, course_id=course_id, query=query)
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Assignment:
         row = await self.assignments.get_by_public_id_full(public_id)

@@ -241,7 +241,7 @@ async def handle_get_attendance_summary(
             w_pres = counts.get(AttendanceStatus.PRESENT.value, 0)
             total_all += w_tot
             present_all += w_pres
-            pct = round((w_pres / w_tot * 100), 1) if w_tot > 0 else 100.0
+            pct = round((w_pres / w_tot * 100), 1) if w_tot > 0 else None
             ward_summaries.append({
                 "student_id": str(w.public_id),
                 "name": f"{w.first_name or ''} {w.last_name or ''}".strip() or "Unnamed account",
@@ -252,16 +252,16 @@ async def handle_get_attendance_summary(
                 "late_count": counts.get(AttendanceStatus.LATE.value, 0),
                 "excused_count": counts.get(AttendanceStatus.EXCUSED.value, 0),
                 "attendance_rate": pct,
-                "standing": "GOOD" if (w_tot == 0 or (w_pres / w_tot) >= 0.8) else "AT_RISK",
+                "standing": "NO_RECORDS" if w_tot == 0 else "GOOD" if (w_pres / w_tot) >= 0.8 else "AT_RISK",
             })
-        ovr_rate = round((present_all / total_all * 100), 1) if total_all > 0 else 100.0
+        ovr_rate = round((present_all / total_all * 100), 1) if total_all > 0 else None
         return {
             "scope": "GUARDIAN_WARDS",
             "ward_count": len(ward_summaries),
             "total_classes_across_wards": total_all,
             "overall_attendance_rate": ovr_rate,
             "wards": ward_summaries,
-            "summary": f"Retrieved attendance for {len(ward_summaries)} dependent(s). Overall attendance rate: {ovr_rate}%.",
+            "summary": f"Retrieved attendance for {len(ward_summaries)} dependent(s). Overall attendance rate: {f"{ovr_rate}%" if ovr_rate is not None else "no attendance recorded yet"}.",
         }
     elif Roles.CORPORATE_MANAGER.value.upper() in user_roles:
         # Default to corporate managed employees
@@ -293,7 +293,7 @@ async def handle_get_attendance_summary(
             e_pres = counts.get(AttendanceStatus.PRESENT.value, 0)
             total_all += e_tot
             present_all += e_pres
-            pct = round((e_pres / e_tot * 100), 1) if e_tot > 0 else 100.0
+            pct = round((e_pres / e_tot * 100), 1) if e_tot > 0 else None
             emp_summaries.append({
                 "student_id": str(emp.public_id),
                 "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip() or "Unnamed account",
@@ -304,14 +304,14 @@ async def handle_get_attendance_summary(
                 "late_count": counts.get(AttendanceStatus.LATE.value, 0),
                 "attendance_rate": pct,
             })
-        ovr_rate = round((present_all / total_all * 100), 1) if total_all > 0 else 100.0
+        ovr_rate = round((present_all / total_all * 100), 1) if total_all > 0 else None
         return {
             "scope": "CORPORATE_EMPLOYEES",
             "employee_count": len(emp_summaries),
             "total_classes_across_team": total_all,
             "team_attendance_rate": ovr_rate,
             "employees": emp_summaries,
-            "summary": f"Retrieved attendance for {len(emp_summaries)} team member(s). Team attendance rate: {ovr_rate}%.",
+            "summary": f"Retrieved attendance for {len(emp_summaries)} team member(s). Team attendance rate: {f"{ovr_rate}%" if ovr_rate is not None else "no attendance recorded yet"}.",
         }
 
     if not student_id_int:
@@ -337,7 +337,7 @@ async def handle_get_attendance_summary(
             "late_count": counts.get(AttendanceStatus.LATE.value, 0),
             "absent_count": counts.get(AttendanceStatus.ABSENT.value, 0),
             "excused_count": counts.get(AttendanceStatus.EXCUSED.value, 0),
-            "overall_attendance_rate": round((present / total * 100), 1) if total > 0 else 100.0,
+            "overall_attendance_rate": round((present / total * 100), 1) if total > 0 else None,
         }
 
     # Specific student record
@@ -366,8 +366,8 @@ async def handle_get_attendance_summary(
         "late_count": counts.get(AttendanceStatus.LATE.value, 0),
         "absent_count": counts.get(AttendanceStatus.ABSENT.value, 0),
         "excused_count": counts.get(AttendanceStatus.EXCUSED.value, 0),
-        "attendance_percentage": round((present / total * 100), 1) if total > 0 else 100.0,
-        "standing": "GOOD" if (total == 0 or (present / total) >= 0.8) else "AT_RISK",
+        "attendance_percentage": round((present / total * 100), 1) if total > 0 else None,
+        "standing": "NO_RECORDS" if total == 0 else "GOOD" if (present / total) >= 0.8 else "AT_RISK",
     }
 
 
