@@ -654,6 +654,9 @@ async def handle_get_student_assessments_and_deadlines(
 
     assessments_list = []
     now_utc = datetime.now(UTC)
+    held = SecurityPolicyEngine.caller_permissions(context.user)
+    marker = "assignment.grade" in held
+    quiz_marker = "quiz.grade" in held
 
     if batch_ids:
         # 1. Quizzes
@@ -676,6 +679,9 @@ async def handle_get_student_assessments_and_deadlines(
             ).order_by(QuizAttempt.score.desc().nulls_last())
             attempt = (await session.execute(att_stmt)).scalars().first()
 
+            score_visible = bool(attempt) and (
+                quiz_marker or q.show_result_immediately or q.results_released_at is not None
+            )
             status = "UPCOMING"
             if attempt and attempt.finished_at:
                 status = "COMPLETED"
@@ -702,8 +708,11 @@ async def handle_get_student_assessments_and_deadlines(
                 "available_from": q.available_from.isoformat() if q.available_from else None,
                 "available_until": q.available_until.isoformat() if q.available_until else None,
                 "status": status,
-                "score_obtained": float(attempt.score) if attempt and attempt.score is not None else None,
-                "is_passed": attempt.is_passed if attempt else None,
+                # The quiz's own release rule, the same one the quiz screens ask:
+                # a score withheld from the student is withheld here too.
+                "score_obtained": float(attempt.score) if score_visible and attempt.score is not None else None,
+                "is_passed": attempt.is_passed if score_visible else None,
+                "result_released": score_visible if attempt else None,
             })
 
         # 2. Assignments
@@ -724,9 +733,17 @@ async def handle_get_student_assessments_and_deadlines(
             )
             submission = (await session.execute(sub_stmt)).scalar_one_or_none()
 
+            # A mark is the student's (and their care circle's) only once it is
+            # released; before that a non-marker is told it is marked, not what
+            # it is -- the same rule the submissions screen applies.
+            released = bool(submission and submission.state.is_visible_to_student)
+            show_mark = bool(submission) and (marker or released)
             status = "PENDING"
             if submission:
-                status = "GRADED" if submission.grade is not None else "SUBMITTED"
+                if submission.grade is None:
+                    status = "SUBMITTED"
+                else:
+                    status = "GRADED" if show_mark else "MARKED_NOT_RELEASED"
             elif a.due_date and a.due_date < now_utc:
                 status = "OVERDUE"
 
@@ -749,8 +766,8 @@ async def handle_get_student_assessments_and_deadlines(
                 "passing_score": float(a.passing_score) if a.passing_score else None,
                 "due_date": a.due_date.isoformat() if a.due_date else None,
                 "status": status,
-                "grade_obtained": float(submission.grade) if submission and submission.grade is not None else None,
-                "feedback": submission.feedback if submission else None,
+                "grade_obtained": float(submission.grade) if show_mark and submission.grade is not None else None,
+                "feedback": submission.feedback if show_mark else None,
             })
 
     return {

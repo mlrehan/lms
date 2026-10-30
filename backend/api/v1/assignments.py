@@ -35,6 +35,8 @@ from backend.api.v1.resources import _stream
 from backend.schemas.base import Page, PageParams
 from backend.services.assessment_scope import AssessmentTarget, describe as describe_scope
 from backend.services.assignment_service import AssignmentService
+from backend.models.identity.user import User
+from backend.utils.enums import SubmissionState
 
 router = APIRouter(tags=["Assignments"])
 
@@ -112,8 +114,13 @@ def _file_response(f: AssignmentSubmissionFile) -> SubmissionFileResponse:
     )
 
 
+def _marks(actor: "User") -> bool:
+    """Whether the caller marks work. Only they see a mark before it is released."""
+    return perm(Module.ASSIGNMENT, Action.GRADE) in resolve_permissions(actor)
+
+
 async def _with_files(
-    service: AssignmentService, s: AssignmentSubmission, *, staff: bool = True
+    service: AssignmentService, s: AssignmentSubmission, *, staff: bool
 ) -> SubmissionResponse:
     """One submission, with whatever is attached to it."""
     files = await service.files_for_submissions([s.id])
@@ -123,16 +130,25 @@ async def _with_files(
 def _submission_response(
     s: AssignmentSubmission,
     *,
-    staff: bool = True,
+    staff: bool,
     files: Sequence[AssignmentSubmissionFile] = (),
 ) -> SubmissionResponse:
     """One submission.
 
-    `staff=False` omits the override trail. Why a mark was changed is a
-    conversation for the tutor to have with the student, not a field the
-    student discovers in an API response -- §24 says audit detail is not for
-    them.
+    `staff` means the caller marks work. Anyone else -- the student, their
+    guardian, their corporate manager -- gets two things withheld:
+
+    * **the override trail.** Why a mark was changed is a conversation for the
+      tutor to have with the student, not a field the student discovers in an
+      API response -- §24 says audit detail is not for them;
+    * **every part of an unreleased mark.** Releasing is the step that shows a
+      mark (§14). This mapper used to return grade and feedback whatever the
+      state, so "Graded, not released" was a badge, not a fact: a student
+      re-marked from 17 to 18 read the 18 before anybody released it. The
+      state still says GRADED -- that the work is marked is not the secret,
+      the mark is. Required, not defaulted, so a new caller has to decide.
     """
+    hidden = not staff and not s.state.is_visible_to_student
     return SubmissionResponse(
         public_id=s.public_id,
         assignment_id=s.assignment.public_id,
@@ -142,15 +158,15 @@ def _submission_response(
         submitted_at=s.submitted_at,
         files=[_file_response(f) for f in files],
         content=s.content,
-        grade=s.grade,
-        feedback=s.feedback,
-        graded_at=s.graded_at,
-        graded_by_username=visible_username(s.grader) if s.grader else None,
+        grade=None if hidden else s.grade,
+        feedback=None if hidden else s.feedback,
+        graded_at=None if hidden else s.graded_at,
+        graded_by_username=visible_username(s.grader) if s.grader and not hidden else None,
         is_late=bool(s.submitted_at and s.assignment.due_date and s.submitted_at > s.assignment.due_date),
         state=s.state,
         attempt_number=s.attempt_number,
-        raw_grade=s.raw_grade,
-        late_penalty_applied=s.late_penalty_applied,
+        raw_grade=None if hidden else s.raw_grade,
+        late_penalty_applied=None if hidden else s.late_penalty_applied,
         published_at=s.published_at,
         override_reason=s.override_reason if staff else None,
         overridden_at=s.overridden_at if staff else None,
@@ -290,7 +306,7 @@ async def submit_assignment(
     marked work would silently invalidate the grade beside it.
     """
     service = AssignmentService(session)
-    return await _with_files(service, await service.submit(assignment_id, payload, actor=actor))
+    return await _with_files(service, await service.submit(assignment_id, payload, actor=actor), staff=_marks(actor))
 
 
 @router.get(
@@ -305,6 +321,10 @@ async def list_submissions(
     assignment_id: Annotated[uuid.UUID | None, Query()] = None,
     student_id: Annotated[uuid.UUID | None, Query()] = None,
     graded: Annotated[bool | None, Query(description="Filter to graded or ungraded work.")] = None,
+    state: Annotated[
+        SubmissionState | None,
+        Query(description="Filter to one state, e.g. GRADED (marked, not yet released) or PUBLISHED (released)."),
+    ] = None,
 ) -> Page[SubmissionResponse]:
     """Scoped like enrollments: a Tutor sees submissions for courses they
     teach; a Guardian or Corporate Manager sees those of the people in their
@@ -315,10 +335,12 @@ async def list_submissions(
         assignment_public_id=assignment_id,
         student_public_id=student_id,
         graded=graded,
+        state=state,
     )
     files = await AssignmentService(session).files_for_submissions([s.id for s in rows])
+    staff = _marks(actor)
     return Page.build(
-        [_submission_response(s, files=files.get(s.id, [])) for s in rows],
+        [_submission_response(s, staff=staff, files=files.get(s.id, [])) for s in rows],
         total=total,
         params=params,
     )
@@ -421,7 +443,7 @@ async def get_submission(
     ],
 ) -> SubmissionResponse:
     service = AssignmentService(session)
-    return await _with_files(service, await service.get_submission(submission_id, actor=actor))
+    return await _with_files(service, await service.get_submission(submission_id, actor=actor), staff=_marks(actor))
 
 
 @router.put(
@@ -439,7 +461,7 @@ async def grade_submission(
 ) -> SubmissionResponse:
     """The grade cannot exceed the assignment's `max_score`."""
     service = AssignmentService(session)
-    return await _with_files(service, await service.grade(submission_id, payload, actor=actor))
+    return await _with_files(service, await service.grade(submission_id, payload, actor=actor), staff=True)
 
 # =============================================================================
 # RESULT LIFECYCLE (spec §14)
@@ -526,5 +548,6 @@ async def set_submission_state(
     return _submission_response(
         await AssignmentService(session).set_submission_state(
             submission_id, actor=actor, state=payload.state, reason=payload.reason
-        )
+        ),
+        staff=True,
     )

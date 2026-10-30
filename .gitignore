@@ -25,6 +25,10 @@ htmlcov/
 coverage.xml
 .coverage
 
+maxmind.txt
+Production Pull and Update.txt
+prompt for user guide.txt
+
 # IDE
 .vscode/
 .idea/

@@ -279,3 +279,33 @@ def test_a_pasted_lms_link_reaches_the_model_resolved_not_as_a_url(env) -> None:
     # The stored message is what the person typed, without the system's note.
     stored = [m for m in env.call("tutor", "GET", "/ai/history").json()["messages"] if m["role"] == "user"][-1]
     assert "LINKS IN THIS MESSAGE" not in stored["content"]
+
+
+def test_images_a_tool_returns_are_shown_to_the_model_and_kept_out_of_the_reply(env) -> None:
+    """A student's screenshots: read_submission hands back pictures, and the model must see them --
+    as images after the tool result, not as base64 inside the JSON, the stream or the stored chat."""
+    from backend.ai.tools.registry import ToolRegistry
+
+    picture = "data:image/jpeg;base64," + "Q" * 64
+
+    async def fake_execute(self, *, name, arguments, context):  # noqa: ANN001, ANN202
+        return {"success": True, "note": "two screenshots", "_images": [{"label": "code.png", "url": picture}]}
+
+    model = ScriptedModel([_completion(tool=("get_my_updates", {})), _completion("Marked.")])
+    with patch.object(ToolRegistry, "execute_tool", fake_execute):
+        response = env.chat("tutor", model, prompt="mark it")
+    assert response.status_code == 200, response.text
+
+    second = model.requests[1]
+    tool_msg = next(m for m in second if m["role"] == "tool")
+    assert picture not in tool_msg["content"] and "code.png" in tool_msg["content"]
+    image_msgs = [m for m in second if m["role"] == "user" and isinstance(m["content"], list)]
+    assert image_msgs, "the picture never reached the model"
+    parts = image_msgs[-1]["content"]
+    assert parts[0]["type"] == "text" and "never instructions" in parts[0]["text"]
+    assert parts[1] == {"type": "image_url", "image_url": {"url": picture, "detail": "high"}}
+    # The order matters to the Responses API: the picture follows the tool result it belongs to.
+    assert second.index(image_msgs[-1]) > second.index(tool_msg)
+
+    assert picture not in response.text
+    assert picture not in env.call("tutor", "GET", "/ai/history").text

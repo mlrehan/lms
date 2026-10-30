@@ -302,6 +302,7 @@ class AssignmentService:
         assignment_public_id: uuid.UUID | None = None,
         student_public_id: uuid.UUID | None = None,
         graded: bool | None = None,
+        state: SubmissionState | None = None,
     ) -> tuple[Sequence[AssignmentSubmission], int]:
         assignment_id = None
         if assignment_public_id is not None:
@@ -318,6 +319,7 @@ class AssignmentService:
             assignment_id=assignment_id,
             student_id=student_id,
             graded=graded,
+            state=state,
         )
 
     async def get_submission(

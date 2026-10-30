@@ -5376,6 +5376,34 @@ What changed:
   5. **`get_sync_history` let a hand-made batch be called "what the sync
      inserted".** Each recent batch now carries `created_by`: the run that
      listed it, or "not by any recorded sync run".
+* **Release, made real and visible (follow-up pass).**
+  - **Leak fixed:** `_submission_response` returned grade and feedback whatever
+    the state, so a student (and guardian/manager) read an unreleased mark via
+    `/submissions`; "Graded, not released" was only a badge. `staff` is now a
+    required argument (= holds `assignment.grade`); non-markers get grade,
+    feedback, raw grade, penalty, graded_at/by withheld until PUBLISHED, and
+    never the override trail. The AI tool `get_student_assessments_and_deadlines`
+    applied the same leak (and showed unreleased quiz scores); fixed the same way.
+  - `GET /submissions?state=` filter. The assignment page shows "N marked results
+    not released", a counted "Release N results" button, a per-row **Release**,
+    **Record and release** in the grade dialog, "Released to student" as the
+    badge, and a re-grade dialog prefilled with the current mark. Re-grading a
+    released mark sets it back to GRADED (hidden) -- the dialog and the AI
+    preview both say so.
+  - Screenshots handed in are shown to the model: `read_submission` returns
+    `_images`; `agents/base.py` pops them out of the JSON/stream/history and adds
+    them as an image message after the tool results (max 12 per submission).
+  - `get_assignment_brief` gives each submission a `status`
+    (RELEASED / MARKED_NOT_RELEASED / AWAITING_MARKING) with dates;
+    `release_results` refusals name each student's reason ("already released
+    17 on <date>"). The tutor prompt has a scenario playbook (per-question
+    briefs, text + screenshots, link-only, released re-marks, several at once).
+  - Driven live against the real model on a throwaway course (deleted after):
+    status table, per-question marking of text + screenshots then record +
+    release in one confirmation, link-only answered with "download the .ipynb
+    and attach it", and a released mark changed 17 -> 19 with a reason and
+    re-released. The console changes were typechecked/linted/built but **not
+    clicked in a browser** (signing in needs a password the agent may not read).
 * **Still divergent, recorded rather than hidden:** the other attendance figures
   in the AI tools still count excused absences against the student, unlike the
   console's `attendance_rate`. Fixing it means rewriting their counting

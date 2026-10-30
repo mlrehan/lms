@@ -497,8 +497,9 @@ def test_release_results_releases_only_marked_work_and_notifies(env):  # noqa: A
 
 
 def test_nothing_marked_means_nothing_offered_for_release(env):  # noqa: ANN001
-    with pytest.raises(ValidationError, match="Nothing to release"):
+    with pytest.raises(ValidationError, match="Nothing is waiting to be released") as refused:
         env.call("tutor", lambda c: preview_release_results({"kind": "assignment", "title": f"{env.tag} lists"}, c))
+    assert "Student Person: not marked yet" in str(refused.value)
 
 
 def test_another_tutor_cannot_release_it(env):  # noqa: ANN001
@@ -656,3 +657,88 @@ def test_no_records_is_reported_as_none_not_100_or_0(env):  # noqa: ANN001
     courses = _as_student_view(env, "pupil", handle_get_student_enrolled_courses)
     rates = [c.get("attendance_rate") for c in courses.get("courses", courses.get("enrollments", []))]
     assert rates and all(r is None for r in rates)
+
+
+def _grade(env, *, release: bool) -> None:
+    args = {"submission_id": env.work["submission"], "grade": 17, "feedback": "Clear.", "release": release}
+
+    async def go(c):  # noqa: ANN001, ANN202
+        preview = await preview_record_submission_grade(args, c)
+        return await handle_record_submission_grade(_confirmed(preview, args), c)
+    env.call("tutor", go, commit=True)
+
+
+def test_releasing_an_already_released_mark_says_so_with_the_mark(env):  # noqa: ANN001
+    """Production screenshot: 'no pending assignment submission' for work released the day before."""
+    _grade(env, release=True)
+    with pytest.raises(ValidationError) as refused:
+        env.call("tutor", lambda c: preview_release_results(
+            {"kind": "assignment", "title": f"{env.tag} lists", "student_name": "Student"}, c))
+    message = str(refused.value)
+    assert "already released" in message and "17" in message and "Student Person" in message
+
+
+def test_the_brief_says_whether_each_mark_is_released(env):  # noqa: ANN001
+    _grade(env, release=False)
+    brief = env.call("tutor", lambda c: handle_get_assignment_brief({"title": f"{env.tag} lists"}, c))
+    row = brief["submissions"][0]
+    assert row["status"] == "MARKED_NOT_RELEASED" and row["released_at"] is None
+    _grade(env, release=True)
+    row = env.call("tutor", lambda c: handle_get_assignment_brief({"title": f"{env.tag} lists"}, c))["submissions"][0]
+    assert row["status"] == "RELEASED" and row["released_at"]
+
+
+def test_an_unreleased_mark_is_not_told_to_the_student_by_the_assistant(env):  # noqa: ANN001
+    from backend.ai.tools.reporting_tools import handle_get_student_assessments_and_deadlines
+
+    def mine():  # noqa: ANN202
+        view = _as_student_view(env, "student", handle_get_student_assessments_and_deadlines)
+        return next(a for a in view["assessments"] if a["title"] == f"{env.tag} lists")
+
+    _grade(env, release=False)
+    row = mine()
+    assert row["status"] == "MARKED_NOT_RELEASED" and row["grade_obtained"] is None and row["feedback"] is None
+    _grade(env, release=True)
+    row = mine()
+    assert row["status"] == "GRADED" and row["grade_obtained"] == 17.0
+
+
+def test_screenshots_handed_in_are_given_to_the_model_as_images(env):  # noqa: ANN001
+    import io
+
+    from PIL import Image
+    from starlette.datastructures import Headers, UploadFile
+
+    from backend.storage import get_storage
+
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 20), (200, 30, 30)).save(buf, format="PNG")
+    keys = []
+
+    async def hand_in(s):  # noqa: ANN001, ANN202
+        tutor, pupil = await s.get(User, env.ids["tutor"]), await s.get(User, env.ids["pupil"])
+        service = AssignmentService(s)
+        asg = await service.create(env.ids["course"], AssignmentCreateRequest(
+            title=f"{env.tag} screenshots", description="Paste screenshots.", due_date=datetime.now(UTC) + timedelta(days=3),
+            max_score=Decimal("20"), submission_type=SubmissionType.FILE_UPLOAD,
+            scope=AssessmentScope.BATCH, batch_id=env.ids["batch"],
+        ), actor=tutor)
+        upload = UploadFile(io.BytesIO(buf.getvalue()), filename="Screenshot 1.png",
+                            headers=Headers({"content-type": "image/png"}))
+        f = await service.attach_file(asg.public_id, upload=upload, actor=pupil)
+        keys.append(f.path)
+        sub = await service.submit(asg.public_id, SubmitAssignmentRequest(content=None), actor=pupil)
+        return str(sub.public_id)
+
+    submission = env.run(hand_in)
+    try:
+        read = env.call("tutor", lambda c: handle_read_submission({"submission_id": submission}, c))
+        assert [i["label"] for i in read["_images"]] == ["Screenshot 1.png"]
+        assert read["_images"][0]["url"].startswith("data:image/jpeg;base64,")
+        assert "_image" not in read["attachments"][0] and "image" in read["attachments"][0]["note"]
+    finally:
+        async def drop(s):  # noqa: ANN001, ANN202
+            await s.execute(text("DELETE FROM assignment_submission_files WHERE path = ANY(:k)"), {"k": keys})
+        env.run(drop)
+        for key in keys:
+            env.run(lambda s, k=key: get_storage().delete(k))

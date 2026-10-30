@@ -13,7 +13,7 @@ from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
-from backend.utils.enums import EnrollmentStatus
+from backend.utils.enums import EnrollmentStatus, SubmissionState
 
 if TYPE_CHECKING:
     from backend.services.scope import Scope, WorkVisibility
@@ -121,6 +121,7 @@ class SubmissionRepository(BaseRepository[AssignmentSubmission]):
         assignment_id: int | None = None,
         student_id: int | None = None,
         graded: bool | None = None,
+        state: SubmissionState | None = None,
     ) -> tuple[Sequence[AssignmentSubmission], int]:
         # The course side of the visibility check needs the assignment's
         # course, which lives one join away.
@@ -141,6 +142,11 @@ class SubmissionRepository(BaseRepository[AssignmentSubmission]):
             stmt = stmt.where(AssignmentSubmission.grade.is_not(None))
         elif graded is False:
             stmt = stmt.where(AssignmentSubmission.grade.is_(None))
+        if state is not None:
+            # "Graded" alone cannot say whether the student has seen the mark;
+            # releasing is a separate step, and the screen has to count what
+            # is still waiting for it.
+            stmt = stmt.where(AssignmentSubmission.state == state)
 
         stmt = stmt.order_by(AssignmentSubmission.submitted_at.desc())
         return await self.paginate(stmt, params)  # type: ignore[return-value]

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { use, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Paperclip, Send, Trash2 } from "lucide-react";
+import { Download, Eye, Paperclip, Send, Trash2 } from "lucide-react";
 import { api, apiPath, segment } from "@/lib/api/client";
 import type {
   AssignmentResponse,
@@ -47,7 +47,9 @@ const STATE_LABELS: Record<string, { label: string; tone: "neutral" | "success" 
   LATE: { label: "Late", tone: "warning" },
   UNDER_REVIEW: { label: "Under review", tone: "neutral" },
   GRADED: { label: "Graded, not released", tone: "warning" },
-  PUBLISHED: { label: "Published", tone: "success" },
+  // "Published" read to tutors as "the assignment is published", not "the
+  // student can now see this mark". Say what it means.
+  PUBLISHED: { label: "Released to student", tone: "success" },
   ABSENT: { label: "Absent", tone: "danger" },
   EXEMPTED: { label: "Exempted", tone: "neutral" },
   RESUBMISSION_REQUIRED: { label: "Resubmission asked", tone: "warning" },
@@ -61,32 +63,57 @@ function SubmissionStateBadge({ state }: { state?: string | null }) {
 
 function GradeDialog({
   submission,
+  assignmentId,
   maxScore,
+  canRelease,
   onClose,
 }: {
   submission: SubmissionResponse | null;
+  assignmentId: string;
   maxScore: string;
+  canRelease: boolean;
   onClose: () => void;
 }) {
-  const [grade, setGrade] = useState("");
-  const [feedback, setFeedback] = useState("");
+  // Re-grading starts from the mark and feedback already given -- a tutor
+  // correcting one number should not have to retype the paragraph beside it.
+  // The dialog is keyed by submission, so this initialiser runs per student.
+  const [grade, setGrade] = useState(submission?.grade != null ? String(Number(submission.grade)) : "");
+  const [feedback, setFeedback] = useState(submission?.feedback ?? "");
   const [reason, setReason] = useState("");
 
   // Changing a mark that has already been given needs a reason (§24). The API
   // refuses without one; asking here means the tutor is not told off after
   // typing everything else.
   const isChange = submission?.grade !== null && submission?.grade !== undefined;
+  const wasReleased = submission?.state === "PUBLISHED";
 
-  const save = useApiMutation<SubmissionResponse, { grade: string; feedback: string }>({
-    mutationFn: (values) =>
-      api.put<SubmissionResponse>(`/submissions/${segment(submission!.public_id)}/grade`, {
+  // Marking and releasing stay two server calls -- two permissions, two audit
+  // rows -- but for the one student in front of the tutor they can be one
+  // click. The release names this student only, so nobody else's mark goes
+  // out with it.
+  const save = useApiMutation<
+    { released: boolean },
+    { grade: string; feedback: string; release: boolean }
+  >({
+    mutationFn: async (values) => {
+      await api.put<SubmissionResponse>(`/submissions/${segment(submission!.public_id)}/grade`, {
         body: {
           grade: Number(values.grade),
           feedback: values.feedback || null,
           override_reason: isChange ? reason : null,
         },
-      }),
-    success: "Grade recorded. Publish it when you are ready for the student to see it.",
+      });
+      if (!values.release) return { released: false };
+      await api.post<{ published: number }>(
+        `/assignments/${segment(assignmentId)}/publish-results`,
+        { body: { student_ids: [submission!.student_id] } },
+      );
+      return { released: true };
+    },
+    success: (result) =>
+      result.released
+        ? "Grade recorded and released. The student and their guardians have been notified."
+        : "Grade recorded. It is not visible to the student until you release it.",
     invalidate: [["submissions"], ["assignments"], ["gradebook"], ["dashboard"]],
     onSuccess: () => {
       setGrade("");
@@ -122,7 +149,7 @@ function GradeDialog({
         {/* The marker has to be able to open what was handed in; before this
             there was nothing to open. */}
         <div className="mb-3">
-          <AttachedFiles files={submission?.files ?? []} label="Submitted files" />
+          <AttachedFiles files={submission?.files ?? []} label="Submitted files" preview />
         </div>
         <div className="space-y-4">
           <Field label="Score" required>
@@ -155,8 +182,9 @@ function GradeDialog({
             </Field>
           ) : null}
           <p className="rounded-lg border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
-            Recording a mark does not show it to the student. Publish the
-            assignment&rsquo;s results when you are ready to release them.
+            {wasReleased
+              ? "This mark has already been released. Changing it hides it from the student again until it is released."
+              : "Record grade keeps the mark private. Record and release shows it to the student and notifies them and their guardians."}
           </p>
         </div>
         <DialogFooter>
@@ -164,12 +192,23 @@ function GradeDialog({
             Cancel
           </Button>
           <Button
-            loading={save.isPending}
-            disabled={grade === "" || (isChange && reason.trim().length < 3)}
-            onClick={() => save.mutate({ grade, feedback })}
+            variant={canRelease ? "secondary" : "primary"}
+            loading={save.isPending && !save.variables?.release}
+            disabled={save.isPending || grade === "" || (isChange && reason.trim().length < 3)}
+            onClick={() => save.mutate({ grade, feedback, release: false })}
           >
             Record grade
           </Button>
+          {canRelease ? (
+            <Button
+              loading={save.isPending && save.variables?.release === true}
+              disabled={save.isPending || grade === "" || (isChange && reason.trim().length < 3)}
+              onClick={() => save.mutate({ grade, feedback, release: true })}
+            >
+              <Send aria-hidden />
+              Record and release
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -187,14 +226,61 @@ function GradeDialog({
 function AttachedFiles({
   files,
   label = "Attached files",
+  preview = false,
 }: {
   files: SubmissionFileResponse[];
   label?: string;
+  /** Show images in place. Work is often handed in as nine screenshots, and
+   *  marking it should not mean downloading nine files first. */
+  preview?: boolean;
 }) {
+  const [zoomed, setZoomed] = useState<string | null>(null);
   if (files.length === 0) return null;
+  // An <img> renders bytes and runs nothing, and ignores the download
+  // disposition, so the same re-authorising URL serves the preview.
+  const images = preview ? files.filter((f) => (f.mime_type ?? "").startsWith("image/")) : [];
+  const open = images.find((f) => f.public_id === zoomed);
   return (
     <div className="space-y-1">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      {open ? (
+        <figure className="space-y-1">
+          <button
+            type="button"
+            className="block w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-muted"
+            onClick={() => setZoomed(null)}
+            aria-label={`Close ${open.filename}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- an authenticated API stream, not a static asset */}
+            <img src={apiPath(open.download_url)} alt={open.filename} className="mx-auto max-h-[60svh] w-auto" />
+          </button>
+          <figcaption className="truncate text-2xs text-muted-foreground">
+            {open.filename} &middot; click to close
+          </figcaption>
+        </figure>
+      ) : null}
+      {images.length > 0 ? (
+        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+          {images.map((file, index) => (
+            <button
+              key={file.public_id}
+              type="button"
+              onClick={() => setZoomed(file.public_id === zoomed ? null : file.public_id)}
+              className={`overflow-hidden rounded-md border ${file.public_id === zoomed ? "border-accent" : "border-border-subtle"} bg-surface-muted hover:border-accent`}
+              title={file.filename}
+              aria-label={`View ${file.filename}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- an authenticated API stream, not a static asset */}
+              <img
+                src={apiPath(file.download_url)}
+                alt={`Screenshot ${index + 1}`}
+                loading="lazy"
+                className="aspect-video w-full object-cover object-left-top"
+              />
+            </button>
+          ))}
+        </div>
+      ) : null}
       <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
         {files.map((file) => (
           <li key={file.public_id} className="flex items-center gap-2 px-3 py-1.5">
@@ -401,35 +487,53 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
   const { permissions } = useSession();
   const timeZone = useDisplayTimeZone();
   const { limit, offset, setPage } = useListState(25);
-  const [graded, setGraded] = useState("");
+  const [view, setView] = useState("");
   const [grading, setGrading] = useState<SubmissionResponse | null>(null);
+  const canRelease = permissions.has("assignment.publish");
 
   const { data, isPending, error, refetch } = useQuery({
-    queryKey: ["submissions", assignment.public_id, graded, limit, offset],
+    queryKey: ["submissions", assignment.public_id, view, limit, offset],
     queryFn: () =>
       api.get<PageSubmissionResponse>("/submissions", {
         query: {
           assignment_id: assignment.public_id,
-          graded: graded === "" ? undefined : graded === "true",
+          graded: view === "ungraded" ? false : undefined,
+          state: view === "GRADED" || view === "PUBLISHED" ? view : undefined,
           limit,
           offset,
         },
       }),
   });
 
+  // How many marks are recorded and still invisible to their students. The
+  // release step only makes sense to a tutor who can see it is waiting.
+  const waiting = useQuery({
+    queryKey: ["submissions", assignment.public_id, "awaiting-release"],
+    enabled: canRelease,
+    queryFn: () =>
+      api.get<PageSubmissionResponse>("/submissions", {
+        query: { assignment_id: assignment.public_id, state: "GRADED", limit: 1, offset: 0 },
+      }),
+  });
+  const awaitingRelease = waiting.data?.total ?? 0;
+
   const [confirmPublish, setConfirmPublish] = useState(false);
-  const publish = useApiMutation<{ published: number }, void>({
-    mutationFn: () =>
+  const [releaseOne, setReleaseOne] = useState<SubmissionResponse | null>(null);
+  const publish = useApiMutation<{ published: number }, { studentId?: string }>({
+    mutationFn: ({ studentId }) =>
       api.post<{ published: number }>(
         `/assignments/${segment(assignment.public_id)}/publish-results`,
-        { body: {} },
+        { body: studentId ? { student_ids: [studentId] } : {} },
       ),
     success: (result) =>
       result.published === 0
-        ? "Nothing to publish — no submissions are graded yet."
-        : `${result.published} result(s) published.`,
+        ? "Nothing was released: no marked result is waiting."
+        : `${result.published} result${result.published === 1 ? "" : "s"} released. Students and their guardians have been notified.`,
     invalidate: [["submissions"], ["assignments"], ["gradebook"], ["dashboard"]],
-    onSuccess: () => setConfirmPublish(false),
+    onSuccess: () => {
+      setConfirmPublish(false);
+      setReleaseOne(null);
+    },
   });
 
   const columns: Column<SubmissionResponse>[] = [
@@ -524,12 +628,21 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
       key: "actions",
       header: <span className="sr-only">Actions</span>,
       align: "right",
-      cell: (row) =>
-        permissions.has("assignment.grade") ? (
-          <Button variant="secondary" size="sm" onClick={() => setGrading(row)}>
-            {row.grade === null || row.grade === undefined ? "Grade" : "Re-grade"}
-          </Button>
-        ) : null,
+      cell: (row) => (
+        <span className="inline-flex items-center gap-1.5">
+          {canRelease && row.state === "GRADED" ? (
+            <Button size="sm" onClick={() => setReleaseOne(row)}>
+              <Eye aria-hidden />
+              Release
+            </Button>
+          ) : null}
+          {permissions.has("assignment.grade") ? (
+            <Button variant="secondary" size="sm" onClick={() => setGrading(row)}>
+              {row.grade === null || row.grade === undefined ? "Grade" : "Re-grade"}
+            </Button>
+          ) : null}
+        </span>
+      ),
     },
   ];
 
@@ -544,38 +657,78 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
               over a week and releasing them together is the normal workflow;
               releasing each as it is marked tells the first student days
               before the last. */}
-          {permissions.has("assignment.publish") ? (
+          {canRelease ? (
             <Button
-              variant="secondary"
+              variant={awaitingRelease > 0 ? "primary" : "secondary"}
               size="sm"
-              loading={publish.isPending}
+              loading={publish.isPending && !releaseOne}
+              disabled={awaitingRelease === 0}
+              title={awaitingRelease === 0 ? "No marked result is waiting to be released." : undefined}
               onClick={() => setConfirmPublish(true)}
             >
-              Publish results
+              <Send aria-hidden />
+              {awaitingRelease > 0
+                ? `Release ${awaitingRelease} result${awaitingRelease === 1 ? "" : "s"}`
+                : "Nothing to release"}
             </Button>
           ) : null}
           <Select
             className="w-auto"
-            aria-label="Filter by grading state"
-            value={(graded) || null}
+            aria-label="Filter submissions"
+            value={view || null}
             onValueChange={(next) => {
-              setGraded((next ?? ""));
+              setView(next ?? "");
               setPage({ limit, offset: 0 });
             }}
-           placeholder="All submissions" clearable options={[{ value: "false", label: "Awaiting grading" }, { value: "true", label: "Graded" }]} />
+            placeholder="All submissions"
+            clearable
+            options={[
+              { value: "ungraded", label: "Awaiting grading" },
+              { value: "GRADED", label: "Graded, not released" },
+              { value: "PUBLISHED", label: "Released to student" },
+            ]}
+          />
           </span>
         }
       />
+      {canRelease && awaitingRelease > 0 ? (
+        // The release step is easy to miss when it is one button among
+        // several; a mark the tutor believes the student has seen, and the
+        // student has not, is the failure this banner exists to prevent.
+        <div className="mx-4 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
+          <span className="text-warning">
+            {awaitingRelease} marked result{awaitingRelease === 1 ? " is" : "s are"} not released yet.
+            Students and guardians cannot see {awaitingRelease === 1 ? "it" : "them"} until you release.
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => setView("GRADED")}>
+            Show {awaitingRelease === 1 ? "it" : "them"}
+          </Button>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={confirmPublish}
         onOpenChange={setConfirmPublish}
-        title="Publish these results?"
+        title={`Release ${awaitingRelease} result${awaitingRelease === 1 ? "" : "s"}?`}
         // A high-impact action gets a confirmation (§27): once a mark is
         // released the student and their guardian have seen it, and there is
         // no taking that back.
-        description="Every graded submission becomes visible to its student, and they are notified. Submissions that are not yet graded are left alone."
-        confirmLabel="Publish"
-        onConfirm={() => publish.mutate()}
+        description="Every marked submission that is not released yet becomes visible to its student, and they and their guardians are notified. Work that is not marked yet is left alone."
+        confirmLabel="Release results"
+        pending={publish.isPending}
+        onConfirm={() => publish.mutate({})}
+      />
+      <ConfirmDialog
+        open={releaseOne !== null}
+        onOpenChange={(open) => {
+          if (!open) setReleaseOne(null);
+        }}
+        title={releaseOne?.student_username ? `Release ${releaseOne.student_username}’s result?` : "Release this result?"}
+        description={`${releaseOne?.grade ?? ""} / ${assignment.max_score} becomes visible to this student only, and they and their guardians are notified.`}
+        confirmLabel="Release"
+        pending={publish.isPending}
+        onConfirm={() => {
+          if (releaseOne) publish.mutate({ studentId: releaseOne.student_id });
+        }}
       />
       {isPending ? (
         <LoadingState />
@@ -601,8 +754,11 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
       )}
 
       <GradeDialog
+        key={grading?.public_id ?? "closed"}
         submission={grading}
+        assignmentId={assignment.public_id}
         maxScore={assignment.max_score}
+        canRelease={canRelease}
         onClose={() => setGrading(null)}
       />
     </Card>
