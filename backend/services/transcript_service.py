@@ -217,10 +217,17 @@ class TranscriptService:
 
         # The marks behind the percentage, summed across every counted
         # component, so the document can state "620 of 700" as well as "88.6%".
+        # Started at a Decimal zero: `sum()` over nothing returns the int 0, and a
+        # student whose components exist but none is counted yet (nothing marked)
+        # made `.quantize` raise -- failing transcript generation for the whole
+        # batch, on the console as well as through the assistant.
         earned = sum(
-            ((c.percentage or _ZERO) * c.weight_percentage / Decimal("100"))
-            for c in p.components
-            if c.counted
+            (
+                (c.percentage or _ZERO) * c.weight_percentage / Decimal("100")
+                for c in p.components
+                if c.counted
+            ),
+            _ZERO,
         )
         row.total_marks_earned = earned.quantize(Decimal("0.01")) if p.components else None
         row.total_marks_possible = p.assessed_weight

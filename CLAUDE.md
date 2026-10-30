@@ -5428,6 +5428,26 @@ What changed:
     case that rule exists for, and it now has a test. Driven live with the real model on a
     throwaway course (deleted after): all five worked; "exempt X" asked for a reason; naming a
     guardian in a class-performance grid refused the whole grid.
+* **The academic office's work** (`backend/ai/tools/admin_actions.py`, 7 tools, Super Admin
+  only, HIGH + confirmed, each through the console route's service and permission):
+  `sync_gradebook`, `generate_transcripts`, `finalise_transcripts` (names every student it
+  cannot certify and why), `link_person` (guardian or manager, link/unlink; the preview says it
+  grants read access), `create_course` (DRAFT; duplicate title/code refused before confirming),
+  `create_batch`, `assign_course_tutors` (add/remove merged into the current set, never
+  replacing it). Super Admin only because `_find_user` matches on email address -- offered to
+  an Administrator it would confirm addresses exist; the role is also checked in the handler,
+  since a Tutor holds `grade.update`. Not covered: organisations and course images.
+  - **Real bug found:** `TranscriptService.generate` summed counted components with `sum()`,
+    which returns the int 0 when none is counted; `.quantize` then raised and **"Generate
+    transcripts" failed for the whole batch on the console too** whenever one student had
+    nothing counted. Now `sum(..., _ZERO)`.
+  - **Live finding: the model over-asks.** It refused to create a course without a duration and
+    a batch without a session count, and re-ran a grade book sync before transcripts. The prompt
+    now says to ask only for required fields, and the tool descriptions name what is optional
+    and that transcripts need no sync first.
+  - `tests/integration/test_ai_admin_actions.py` (13), mutation-checked 5/5. Driven live on a
+    throwaway course (deleted after): course, batch and tutor created; link/unlink; sync;
+    transcripts generated; finalising named the student with no final percentage.
 * **Still divergent, recorded rather than hidden:** the other attendance figures
   in the AI tools still count excused absences against the student, unlike the
   console's `attendance_rate`. Fixing it means rewriting their counting
