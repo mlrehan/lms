@@ -47,3 +47,8 @@ def test_a_released_mark_reaches_the_student_without_the_override_trail() -> Non
 def test_a_marker_sees_an_unreleased_mark() -> None:
     out = _submission_response(_row(SubmissionState.GRADED), staff=True)
     assert out.grade == Decimal("18") and out.feedback == "Good." and out.override_reason == "second marker"
+
+
+def test_a_resubmission_reason_reaches_the_student_but_the_old_mark_does_not() -> None:
+    out = _submission_response(_row(SubmissionState.RESUBMISSION_REQUIRED), staff=False)
+    assert out.feedback == "Good." and out.grade is None

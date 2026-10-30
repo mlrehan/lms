@@ -149,6 +149,9 @@ def _submission_response(
       the mark is. Required, not defaulted, so a new caller has to decide.
     """
     hidden = not staff and not s.state.is_visible_to_student
+    # A resubmission request writes its reason into `feedback`: that is the
+    # message the student must act on, so it is shown while the mark is not.
+    asked_again = s.state is SubmissionState.RESUBMISSION_REQUIRED
     return SubmissionResponse(
         public_id=s.public_id,
         assignment_id=s.assignment.public_id,
@@ -159,7 +162,7 @@ def _submission_response(
         files=[_file_response(f) for f in files],
         content=s.content,
         grade=None if hidden else s.grade,
-        feedback=None if hidden else s.feedback,
+        feedback=None if hidden and not asked_again else s.feedback,
         graded_at=None if hidden else s.graded_at,
         graded_by_username=visible_username(s.grader) if s.grader and not hidden else None,
         is_late=bool(s.submitted_at and s.assignment.due_date and s.submitted_at > s.assignment.due_date),

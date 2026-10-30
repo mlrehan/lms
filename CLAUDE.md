@@ -5404,6 +5404,30 @@ What changed:
     and attach it", and a released mark changed 17 -> 19 with a reason and
     re-released. The console changes were typechecked/linted/built but **not
     clicked in a browser** (signing in needs a password the agent may not read).
+* **The rest of a tutor's week** (`backend/ai/tools/teaching_actions.py`, 5 tools, all
+  HIGH + confirmed, each calling the console's own service as the tutor):
+  `request_resubmission`, `set_submission_status` (ABSENT/EXEMPTED; exemption needs a
+  reason; only on an existing submission -- a non-submitter is explained, not faked),
+  `record_class_performance` (assigned tutor only, saved as DRAFT), `publish_class_recording`
+  (a validated link or a library video the tutor may EDIT), `share_files` (a batch, optionally
+  with guardians, and/or names, VIEW by default, through `ResourceShareAudience` + `share_many`).
+  People are matched by name inside the class or the share audience only; one unknown or
+  ambiguous name refuses the whole request. Classes are picked by batch_code (+ date; never a
+  future class) or session_id.
+  - **Live finding: the model pads numbers.** With eight separate criterion fields it sent 0
+    for every criterion nobody mentioned, and the preview showed only the overall mark, so the
+    tutor would have confirmed hidden zeros. Criteria are now one `criteria` object of only what
+    was said, the preview lists everything that will be stored, and an all-zero set beside a
+    non-zero overall is dropped as padding. Lesson: **a tool schema with many optional numbers
+    invites invented zeros; ask for a sparse object instead.**
+  - A resubmission request stores its reason in `feedback`; the mark-withholding rule now shows
+    that feedback (not the grade) to the student in RESUBMISSION_REQUIRED.
+  - `tests/integration/test_ai_teaching_actions.py` (19). Mutation-checked: the first run had a
+    survivor -- deleting the assigned-tutor check failed nothing, because the other tutor could
+    not even see the class. A cover tutor who taught a different class of the same batch is the
+    case that rule exists for, and it now has a test. Driven live with the real model on a
+    throwaway course (deleted after): all five worked; "exempt X" asked for a reason; naming a
+    guardian in a class-performance grid refused the whole grid.
 * **Still divergent, recorded rather than hidden:** the other attendance figures
   in the AI tools still count excused absences against the student, unlike the
   console's `attendance_rate`. Fixing it means rewriting their counting
