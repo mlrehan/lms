@@ -9,38 +9,6 @@
  * not provide it -- that is a gap to document, not a type to add.
  */
 
-export interface AIAttachmentResponse {
-  id: string;
-  filename: string;
-  kind: string;
-  mime_type: string;
-  size: number;
-  status: string;
-  char_count: number;
-  truncated: boolean;
-  details?: Record<string, unknown>;
-  note?: string | null;
-  created_at?: string | null;
-}
-
-export interface AIChatRequest {
-  /** User prompt or instruction */
-  prompt?: string;
-  /** Whether to stream the response via SSE */
-  stream?: boolean;
-  /** Ids from POST /ai/attachments; only your own files are accepted. */
-  attachment_ids?: string[];
-}
-
-export interface AIChatResponse {
-  message: string;
-  role: string;
-  tool_calls?: (Record<string, unknown>)[];
-  draft_assessments?: (Record<string, unknown>)[];
-  confirmation_ticket?: Record<string, unknown> | null;
-  success?: boolean;
-}
-
 export interface AcademicYearCreateRequest {
   /** e.g. '2025-2026'. */
   label: string;
@@ -66,22 +34,6 @@ export interface AcademicYearUpdateRequest {
   start_date?: string | null;
   end_date?: string | null;
   is_current?: boolean | null;
-}
-
-/**
- * One person, and when they were last actually here.
- */
-export interface ActiveUserRow {
-  public_id: string;
-  name: string;
-  roles?: string[];
-  /** A browser is holding its realtime connection open now. */
-  online: boolean;
-  /** From the person's own profile, where they have filled it in. Never derived from an IP address: that would tell an administrator where a colleague is sitting, which nobody consented to. */
-  location?: string | null;
-  /** Last heartbeat. Absent when they are not online. */
-  last_seen_at?: string | null;
-  last_login_at?: string | null;
 }
 
 export interface AddMemberRequest {
@@ -179,11 +131,6 @@ export const AssessmentScopeValues = ["COURSE", "BATCH", "SESSION"] as const;
  */
 export type AssessmentState = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "CLOSED" | "ARCHIVED";
 export const AssessmentStateValues = ["DRAFT", "SCHEDULED", "PUBLISHED", "CLOSED", "ARCHIVED"] as const;
-
-export interface AssignSchemeRequest {
-  /** An activated scheme's public_id, or null to stop overriding: a course then uses the institution default, a batch its course's scheme. */
-  scheme_id?: string | null;
-}
 
 export interface AssignmentBrief {
   public_id: string;
@@ -355,10 +302,6 @@ export interface AttendanceSummaryResponse {
   attendance_rate?: number | null;
 }
 
-export interface AudioTranscriptionResponse {
-  text: string;
-}
-
 /**
  * What a filter UI needs, so it never hardcodes the vocabulary.
  */
@@ -369,24 +312,6 @@ export interface AuditCatalogResponse {
   entity_types: string[];
   /** Entity types whose rows can be filtered by id (the rest have no public id). */
   filterable_entity_types: string[];
-}
-
-/**
- * An IP-based estimate of where the address's network is -- never a person's position.
- */
-export interface AuditLocation {
-  /** OK, NOT_FOUND, NOT_APPLICABLE, UNAVAILABLE or ERROR. */
-  status: string;
-  /** Database and build date, e.g. 'GeoLite2-City 2026-10-24'. */
-  source?: string | null;
-  country_code?: string | null;
-  country?: string | null;
-  region?: string | null;
-  city?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  /** Radius the estimate is good to, at best. */
-  accuracy_km?: number | null;
 }
 
 export interface AuditLogResponse {
@@ -411,6 +336,24 @@ export interface AuditLogResponse {
   user_agent?: string | null;
   request_id?: string | null;
   created_at: string;
+}
+
+/**
+ * An IP-based estimate of where the address's network is -- never a person's position.
+ */
+export interface AuditLocation {
+  /** OK, NOT_FOUND, NOT_APPLICABLE, UNAVAILABLE or ERROR. */
+  status: string;
+  /** Database and build date, e.g. 'GeoLite2-City 2026-10-24'. */
+  source?: string | null;
+  country_code?: string | null;
+  country?: string | null;
+  region?: string | null;
+  city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  /** Radius the estimate is good to, at best. */
+  accuracy_km?: number | null;
 }
 
 /**
@@ -549,14 +492,6 @@ export interface BodySetPictureApiV1UserspicturePut {
   file: string;
 }
 
-export interface BodyTranscribeAudioApiV1AiTranscribePost {
-  file: string;
-}
-
-export interface BodyUploadAttachmentApiV1AiAttachmentsPost {
-  file: string;
-}
-
 export interface BodyUploadAttachmentApiV1MessagesAttachmentsPost {
   file: string;
 }
@@ -575,37 +510,81 @@ export interface BodyUploadVersionApiV1ResourcesversionsPost {
   change_note?: string | null;
 }
 
-export interface BulkDeleteRequest {
-  /** Resources to move to the recycle bin. */
-  resource_ids: string[];
-}
-
-export interface BulkDeleteResponse {
-  /** Number of resources moved to recycle bin. */
-  deleted_count: number;
-}
-
 export interface BulkPurgeRequest {
   /** Resources to permanently destroy. */
   resource_ids: string[];
-  /** Purge even if not previously moved to recycle bin (Super Admin only). */
+  /** Force purge even if not previously moved to recycle bin (Super Admin only). */
   force?: boolean;
 }
 
 export interface BulkPurgeResponse {
-  /** Number of resources successfully purged. */
   purged_count: number;
 }
 
+export interface PurgeAllResourcesResponse {
+  purged_count: number;
+}
+
+export interface BulkDeleteRequest {
+  resource_ids: string[];
+}
+
+export interface BulkDeleteResponse {
+  deleted_count: number;
+}
+
 export interface BulkRestoreRequest {
-  /** Resources to restore from recycle bin. */
   resource_ids: string[];
 }
 
 export interface BulkRestoreResponse {
-  /** Number of resources restored. */
   restored_count: number;
 }
+
+export interface SharedUserInfo {
+  user_id: string;
+  name: string;
+  email_or_username?: string | null;
+  role?: string | null;
+  level: ResourcePermissionLevel;
+  shared_by_name?: string | null;
+  created_at: string;
+}
+
+export interface GrantInfo {
+  scope_type: ResourceScopeType;
+  scope_id: number;
+  scope_label?: string | null;
+  level: ResourcePermissionLevel;
+  created_at: string;
+}
+
+export interface ResourceImpactItem {
+  resource_id: string;
+  name: string;
+  is_deleted?: boolean;
+  uploaded_by_username?: string | null;
+  course_title?: string | null;
+  batch_code?: string | null;
+  direct_shares_count: number;
+  direct_shares: SharedUserInfo[];
+  grants_count: number;
+  grants: GrantInfo[];
+  estimated_affected_users: number;
+}
+
+export interface DeletionImpactRequest {
+  resource_ids: string[];
+}
+
+export interface DeletionImpactResponse {
+  resources: ResourceImpactItem[];
+  total_resources: number;
+  total_direct_shares: number;
+  total_grants: number;
+  total_affected_users: number;
+}
+
 
 /**
  * Several files, several people, one decision.
@@ -677,16 +656,51 @@ export interface CarePanel {
   upcoming_sessions?: SessionBrief[];
 }
 
+export interface CorporateCourseSummary {
+  course_title: string;
+  course_code?: string | null;
+  batch_code: string;
+  enrollment_count: number;
+  tutor_name?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface CorporateAtRiskEmployee {
+  user_id: number;
+  full_name: string;
+  email: string;
+  attendance_rate?: number | null;
+  attended_sessions?: number;
+  total_sessions?: number;
+  assignments_overdue: number;
+  enrolled_courses?: string[];
+  risk_level: "critical" | "warning";
+  risk_reason: string;
+}
+
+export interface CorporatePanel {
+  organization_name?: string | null;
+  organization_code?: string | null;
+  manager_title?: string | null;
+  total_employees: number;
+  total_enrollments: number;
+  active_enrollments?: number;
+  attendance_rate?: number | null;
+  assignments_overdue: number;
+  at_risk_count: number;
+  health_score?: number;
+  health_status?: string;
+  at_risk_employees: CorporateAtRiskEmployee[];
+  active_courses: CorporateCourseSummary[];
+  upcoming_sessions: SessionBrief[];
+}
+
+
 export interface CategoryCreateRequest {
   name: string;
   /** Omit for a top-level category. */
   parent_id?: string | null;
-}
-
-export interface CategoryEditorRow {
-  public_id: string;
-  name: string;
-  editors?: ("sql" | "python")[];
 }
 
 export interface CategoryResponse {
@@ -802,11 +816,6 @@ export interface ClassPerformanceSheetSession {
   assigned_tutor?: MarkPerson | null;
 }
 
-export interface ClearHistoryResponse {
-  success: boolean;
-  deleted_count: number;
-}
-
 export interface CodeSuggestion {
   code: string;
 }
@@ -873,86 +882,6 @@ export interface ComposeRequest {
   email_copy?: boolean;
 }
 
-export interface ConfirmationExecuteRequest {
-  ticket_id: string;
-  parameters?: Record<string, unknown>;
-  /** The phrase the person typed, for actions whose preview requires one. */
-  confirmation_text?: string | null;
-}
-
-export interface ConfirmationExecuteResponse {
-  success: boolean;
-  result: Record<string, unknown>;
-}
-
-export interface ConfirmationTicketResponse {
-  ticket_id: string;
-  action_name: string;
-  parameters: Record<string, unknown>;
-  parameters_hash: string;
-  affected_records_count: number;
-  preview_summary: string;
-  expires_at: string;
-  status: string;
-}
-
-export interface ConversationHistoryResponse {
-  messages: ConversationMessageItem[];
-  total: number;
-}
-
-export interface ConversationMessageItem {
-  message_id: string;
-  role: string;
-  content: string;
-  tool_calls?: (Record<string, unknown>)[] | null;
-  attachments?: (Record<string, unknown>)[] | null;
-  created_at?: string | null;
-}
-
-export interface CorporateAtRiskEmployee {
-  user_id: number;
-  full_name: string;
-  email: string;
-  attendance_rate?: number | null;
-  attended_sessions?: number;
-  total_sessions?: number;
-  assignments_overdue?: number;
-  enrolled_courses?: string[];
-  risk_level?: string;
-  risk_reason: string;
-}
-
-export interface CorporateCourseSummary {
-  course_title: string;
-  course_code?: string | null;
-  batch_code: string;
-  enrollment_count: number;
-  tutor_name?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-}
-
-/**
- * Corporate workforce dashboard for corporate managers.
- */
-export interface CorporatePanel {
-  organization_name?: string | null;
-  organization_code?: string | null;
-  manager_title?: string | null;
-  total_employees?: number;
-  total_enrollments?: number;
-  active_enrollments?: number;
-  attendance_rate?: number | null;
-  assignments_overdue?: number;
-  at_risk_count?: number;
-  health_score?: number;
-  health_status?: string;
-  at_risk_employees?: CorporateAtRiskEmployee[];
-  active_courses?: CorporateCourseSummary[];
-  upcoming_sessions?: SessionBrief[];
-}
-
 export interface CountryResponse {
   public_id: string;
   name: string;
@@ -982,18 +911,6 @@ export interface CourseCreateRequest {
   small_course_image?: string | null;
   category_id?: string | null;
   department_id?: string | null;
-}
-
-/**
- * One course's effective answer, and where it came from.
- */
-export interface CourseEditorRow {
-  public_id: string;
-  title: string;
-  category?: string | null;
-  editors?: ("sql" | "python")[];
-  /** True when these came from the course's category. False means the course states its own answer -- including an explicit 'no editor', which is different from having nothing set. */
-  inherited: boolean;
 }
 
 export interface CourseResponse {
@@ -1133,11 +1050,6 @@ export interface CreateManagedStudentRequest {
   is_primary?: boolean;
 }
 
-export interface CreatePublishAssessmentTicketRequest {
-  /** Public ID or UUID of the quiz to publish */
-  quiz_id: string;
-}
-
 export interface CreateWebhookRequest {
   name: string;
   target_url: string;
@@ -1193,6 +1105,7 @@ export interface CurrentUserResponse {
   locale_city?: string | null;
   locale_country?: string | null;
   timezone_is_auto?: boolean;
+  /** How loudly to announce a notification in this browser. */
   notification_sound?: "off" | "subtle" | "prominent";
 }
 
@@ -1261,19 +1174,6 @@ export interface DelegateResponse {
   date_added?: string | null;
 }
 
-export interface DeletionImpactRequest {
-  /** Resources to inspect before permanent deletion. */
-  resource_ids: string[];
-}
-
-export interface DeletionImpactResponse {
-  resources: ResourceImpactItem[];
-  total_resources: number;
-  total_direct_shares: number;
-  total_grants: number;
-  total_affected_users: number;
-}
-
 export interface DepartmentCreateRequest {
   name: string;
   code?: string | null;
@@ -1321,28 +1221,6 @@ export interface DiscussionResponse {
   is_locked?: boolean;
   reply_count?: number;
   created_at?: string | null;
-}
-
-export interface EditorLinkResponse {
-  key: "sql" | "python";
-  label: string;
-  url: string;
-}
-
-export interface EditorMapping {
-  categories?: CategoryEditorRow[];
-  courses?: CourseEditorRow[];
-}
-
-export interface EmptyBatchRow {
-  id: number;
-  batch_code?: string | null;
-  start_date?: string | null;
-  sessions: number;
-}
-
-export interface EmptyBatchesResponse {
-  batches: EmptyBatchRow[];
 }
 
 export interface EnrollRequest {
@@ -1761,6 +1639,28 @@ export interface GradingSchemeResponse {
   applied_to_batches?: SchemeUsage[];
 }
 
+export interface SchemeUsage {
+  public_id: string;
+  label: string;
+  course_title?: string | null;
+}
+
+export interface AssignSchemeRequest {
+  /** An activated scheme's public_id, or null to stop overriding: a course then uses the institution default, a batch its course's scheme. */
+  scheme_id?: string | null;
+}
+
+/** What a course or batch is graded under, and why. */
+export interface SchemeAssignment {
+  /** The scheme this record names itself; null when it inherits. */
+  own_scheme_id?: string | null;
+  own_scheme_name?: string | null;
+  effective_scheme_id?: string | null;
+  effective_scheme_name?: string | null;
+  /** BATCH, COURSE, DEFAULT or NONE -- where the effective scheme came from. */
+  source: string;
+}
+
 export interface GradingSchemeSummary {
   public_id: string;
   name: string;
@@ -1781,14 +1681,6 @@ export interface GradingSchemeUpdateRequest {
   scale_type?: GradeScaleType | null;
   missing_mark_policy?: MissingMarkPolicy | null;
   passing_percentage?: number | string | null;
-}
-
-export interface GrantInfo {
-  scope_type: ResourceScopeType;
-  scope_id: number;
-  scope_label?: string | null;
-  level: ResourcePermissionLevel;
-  created_at: string;
 }
 
 export interface GrantPermissionRequest {
@@ -2074,10 +1966,6 @@ export interface NotificationResponse {
   sent_at?: string | null;
 }
 
-export interface NotificationSoundResponse {
-  sound: "off" | "subtle" | "prominent";
-}
-
 export interface OptionForAuthor {
   public_id?: string | null;
   id: number;
@@ -2186,14 +2074,6 @@ export interface OverviewRosterEntry {
 
 export interface PageAcademicYearResponse {
   items: AcademicYearResponse[];
-  /** Total rows matching the query, ignoring paging. */
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-export interface PageActiveUserRow {
-  items: ActiveUserRow[];
   /** Total rows matching the query, ignoring paging. */
   total: number;
   limit: number;
@@ -2634,103 +2514,6 @@ export interface PreferenceResetResponse {
   cleared: number;
 }
 
-/**
- * The counts, and a page of the people behind them.
- */
-export interface PresenceSummary {
-  /** How many people are connected right now. */
-  online: number;
-  /** How many rows match the requested filter. */
-  total: number;
-  /** How long after its last heartbeat an entry still counts as online. Somebody who closed their laptop drops out after this, without anything having to notice they left. */
-  window_seconds: number;
-  /** False when the realtime stream is switched off for this deployment, in which case nobody can be reported online and the figure is not a claim that nobody is working. */
-  realtime_enabled: boolean;
-  users: PageActiveUserRow;
-}
-
-export interface PurgeAllResourcesResponse {
-  /** Number of resources successfully purged. */
-  purged_count: number;
-}
-
-/**
- * Something a caller may reasonably look for and will not find here.
- *
- * Returned so the screen can show it greyed out with the reason. A screen
- * that silently omits what somebody asked for teaches them the feature is
- * broken; one that explains teaches them the rule.
- */
-export interface PurgeBlockedEntity {
-  key: string;
-  label: string;
-  reason: string;
-}
-
-export interface PurgeDependencyRow {
-  table: string;
-  column: string;
-  /** 'cascade', 'blocks' or 'detach'. */
-  effect: string;
-  rows: number;
-  depth: number;
-}
-
-export interface PurgeEntitiesResponse {
-  entities: PurgeEntityOption[];
-  blocked: PurgeBlockedEntity[];
-  /** Multi-column foreign keys, which the dependency walk cannot follow. Expected to be empty; listed so that 'none' is a measurement rather than an assumption. */
-  unsupported_constraints?: string[];
-}
-
-export interface PurgeEntityOption {
-  key: string;
-  label: string;
-  /** For counts of one; "1 people" reads as a bug. */
-  singular: string;
-  /** What else goes, in plain words. */
-  consequence: string;
-}
-
-export interface PurgeExecuteRequest {
-  entity: string;
-  ids: number[];
-  /** The exact phrase returned by the preview as `confirmation_phrase`. It carries the real record count, so a preview that has gone stale cannot be confirmed. */
-  confirmation: string;
-}
-
-export interface PurgePreviewRequest {
-  entity: string;
-  ids: number[];
-}
-
-export interface PurgePreviewResponse {
-  entity: string;
-  label: string;
-  singular: string;
-  consequence: string;
-  requested: number;
-  /** How many of the requested ids still exist. */
-  found: number;
-  targets: PurgeTarget[];
-  /** Rows that will cease to exist, targets included. */
-  deleted_rows: number;
-  /** Rows that survive with a reference cleared. */
-  detached_rows: number;
-  breakdown: PurgeDependencyRow[];
-  detached_breakdown: PurgeDependencyRow[];
-  /** True if the dependency walk hit its depth limit. The counts are then a floor rather than a total. */
-  truncated: boolean;
-  /** Reasons this deletion will be refused. Empty means it may proceed. */
-  blockers?: string[];
-  confirmation_phrase: string;
-}
-
-export interface PurgeTarget {
-  id: number;
-  label?: string | null;
-}
-
 export interface PushDeviceResponse {
   public_id: string;
   user_agent?: string | null;
@@ -3023,20 +2806,6 @@ export interface ResourceCopyRequest {
   name?: string | null;
 }
 
-export interface ResourceImpactItem {
-  resource_id: string;
-  name: string;
-  is_deleted?: boolean;
-  uploaded_by_username?: string | null;
-  course_title?: string | null;
-  batch_code?: string | null;
-  direct_shares_count?: number;
-  direct_shares?: SharedUserInfo[];
-  grants_count?: number;
-  grants?: GrantInfo[];
-  estimated_affected_users?: number;
-}
-
 export type ResourcePermissionLevel = "VIEW" | "DOWNLOAD" | "EDIT" | "MANAGE";
 export const ResourcePermissionLevelValues = ["VIEW", "DOWNLOAD", "EDIT", "MANAGE"] as const;
 
@@ -3062,14 +2831,14 @@ export interface ResourceResponse {
   mime_type?: string | null;
   size?: number | null;
   created_at: string;
-  uploaded_by_username?: string | null;
-  is_deleted?: boolean;
   folder_id?: string | null;
   folder_name?: string | null;
   course_id?: string | null;
   course_title?: string | null;
   batch_id?: string | null;
+  uploaded_by_username?: string | null;
   updated_at?: string | null;
+  is_deleted?: boolean;
   deleted_at?: string | null;
   current_version?: number;
   versions?: ResourceVersionResponse[];
@@ -3099,6 +2868,7 @@ export interface ResourceSummary {
   uploaded_by_username?: string | null;
   is_deleted?: boolean;
 }
+
 
 export type ResourceType = "Lecture Sheet" | "Lesson" | "Document" | "Video" | "Audio" | "Recordings" | "Presentation" | "Quiz" | "Assignment" | "Project" | "Certificate" | "Progress Report" | "Announcement" | "Policy Document" | "Custom Content";
 export const ResourceTypeValues = ["Lecture Sheet", "Lesson", "Document", "Video", "Audio", "Recordings", "Presentation", "Quiz", "Assignment", "Project", "Certificate", "Progress Report", "Announcement", "Policy Document", "Custom Content"] as const;
@@ -3196,25 +2966,6 @@ export interface ScheduleToSave {
   weekdays?: number[];
   start_time?: string | null;
   duration_minutes?: number | null;
-}
-
-/**
- * What a course or batch is graded under, and why.
- */
-export interface SchemeAssignment {
-  /** The scheme this record names itself; null when it inherits. */
-  own_scheme_id?: string | null;
-  own_scheme_name?: string | null;
-  effective_scheme_id?: string | null;
-  effective_scheme_name?: string | null;
-  /** BATCH, COURSE, DEFAULT or NONE -- where the effective scheme came from. */
-  source: string;
-}
-
-export interface SchemeUsage {
-  public_id: string;
-  label: string;
-  course_title?: string | null;
 }
 
 export interface SearchGroup {
@@ -3473,11 +3224,6 @@ export interface SetComponentsRequest {
   components: ComponentWeightPayload[];
 }
 
-export interface SetCourseEditorsRequest {
-  /** The complete set, not an addition. An empty list on a course clears its override and returns it to inheriting its category. */
-  editors?: ("sql" | "python")[];
-}
-
 export interface SetCourseTagsRequest {
   /** The complete set. Tags omitted here are removed. */
   tag_ids?: string[];
@@ -3485,11 +3231,6 @@ export interface SetCourseTagsRequest {
 
 export interface SetNotificationPreferenceRequest {
   enabled: boolean;
-}
-
-export interface SetNotificationSoundRequest {
-  /** off, subtle or prominent. `prominent` is a longer, more insistent tone -- not a louder one: the volume belongs to the device, and a page cannot raise it. */
-  sound: "off" | "subtle" | "prominent";
 }
 
 export interface SettingResponse {
@@ -3558,16 +3299,6 @@ export interface SharedResourceResponse {
   resource_type?: ResourceType | null;
   mime_type?: string | null;
   size?: number | null;
-}
-
-export interface SharedUserInfo {
-  user_id: string;
-  name: string;
-  email_or_username?: string | null;
-  role?: string | null;
-  level: ResourcePermissionLevel;
-  shared_by_name?: string | null;
-  created_at: string;
 }
 
 export interface SheetBatch {
@@ -3670,24 +3401,6 @@ export interface SheetView {
   notes?: string | null;
   roster: SheetRow[];
   summary: SheetSummary;
-}
-
-/**
- * Badge counts, keyed by menu item.
- *
- * A free-form mapping rather than a field per badge, deliberately: a key is
- * present only when the caller is entitled to that number, and a model with
- * fourteen optional integers would make "not entitled" and "happens to be
- * null" the same thing on the wire.
- *
- * Keys, where the caller is entitled to them: `courses`, `batches`,
- * `sessions`, `enrollments`, `assignments`, `quizzes`, `exams`,
- * `announcements`, `messages`, `notifications`, `users`, `roles`,
- * `permissions`, `guardians`.
- */
-export interface SidebarCountsResponse {
-  /** Badge counts the caller may see. A missing key means the caller is not entitled to that number, or it does not apply to them -- it does not mean zero, and the console shows no badge for it. */
-  counts?: Record<string, number>;
 }
 
 export interface StateRequest {
@@ -3895,43 +3608,6 @@ export interface SyncScheduleRequest {
   interval_hours?: number;
 }
 
-export interface SystemResetImpact {
-  table: string;
-  label: string;
-  rows: number;
-}
-
-export interface SystemResetPreviewResponse {
-  database: string;
-  environment: string;
-  /** Whether this installation will carry a reset out at all. False means the endpoint exists and is gated shut by configuration. */
-  enabled: boolean;
-  /** Why a reset cannot proceed here. Empty means it would run. */
-  blockers?: string[];
-  impact: SystemResetImpact[];
-  total_rows: number;
-  /** What a reset keeps: reference data, the schema, and the audit trail. */
-  preserved: string[];
-  confirmation_phrase: string;
-}
-
-export interface SystemResetRequest {
-  /** The exact phrase from the preview, which names this database. */
-  confirmation: string;
-}
-
-export interface SystemResetResponse {
-  database: string;
-  rows_deleted: number;
-  cleared: SystemResetImpact[];
-  seeded: Record<string, unknown>;
-  bootstrap_username: string;
-  /** Shown exactly once, in this response, and never stored in readable form or written to a log. If it is lost, the only way back is the bootstrap command with shell access. */
-  bootstrap_password: string;
-  sessions_invalidated: number;
-  warnings?: string[];
-}
-
 export interface TagResponse {
   public_id: string;
   name: string;
@@ -4070,50 +3746,9 @@ export interface TestDeliveryResponse {
   delivery_id: string;
 }
 
-export interface TicketCancelResponse {
-  ticket_id: string;
-  status: string;
-}
-
 export interface TimeZoneResponse {
   code: string;
   description?: string | null;
-}
-
-/**
- * One scheduled class, with everything the card shows and nothing more.
- */
-export interface TodayClass {
-  public_id: string;
-  course_title: string;
-  batch_code: string;
-  /** Its position in its batch's own order, not a stored number. */
-  session_number?: number | null;
-  tutor_name?: string | null;
-  /** Confirmed enrolments on the batch. */
-  enrolled?: number;
-  starts_at?: string | null;
-  ends_at?: string | null;
-  duration_minutes?: number | null;
-  /** Zoom, Teams, a room, and so on. */
-  platform?: string | null;
-  classroom?: string | null;
-  status: "upcoming" | "live" | "ended" | "cancelled";
-  /** Whether a door exists. The link itself is never in this payload: a listing is drawn for everyone who can see the class, and a link here would outlive the join window. Opening it is POST /sessions/{id}/join. */
-  has_meeting_link: boolean;
-  join_opens_at?: string | null;
-  join_closes_at?: string | null;
-  can_join_now?: boolean;
-}
-
-/**
- * The day, named, so the reader can tell which day was meant.
- */
-export interface TodayClasses {
-  /** The zone the day was computed in -- the caller's own, or UTC when their profile has none or an unknown one. */
-  timezone: string;
-  date: string;
-  classes?: TodayClass[];
 }
 
 export interface TokenResponse {
