@@ -5448,6 +5448,41 @@ What changed:
   - `tests/integration/test_ai_admin_actions.py` (13), mutation-checked 5/5. Driven live on a
     throwaway course (deleted after): course, batch and tutor created; link/unlink; sync;
     transcripts generated; finalising named the student with no final percentage.
+* **The Maxim Dusek case: accuracy is a tool problem first, a prompt problem second.**
+  A Super Admin asked for a student's enrolments and tutors; the assistant said two of three
+  batches had "No tutor currently assigned". Root cause: the shared prompt's worked SQL for
+  "batches taught by a tutor" joined `tutor_courses`, and the schema note said tutors teach
+  courses through it. `tutor_courses` is course-level access, empty for every LAIT-synced batch;
+  who teaches a batch is `batch_sessions.tutor_id`. Then "never contradict earlier confirmed
+  data points" made it defend the wrong answer, and it called a screenshot "matching the current
+  records" with nothing looked up.
+  - **One rule** (`services/batch_tutors.py`): the batch tutor = most non-cancelled classes, ties
+    to the earliest first class then lowest id, with every source labelled and a status
+    (ASSIGNED / NOT_APPLICABLE / SOURCE_CONFLICT; UNASSIGNED is defined but cannot occur today
+    because `batch_sessions.tutor_id` is NOT NULL). The Batches page list and detail both use it
+    (they were two copies with no tie-break).
+  - **Canonical reads** (`ai/tools/canonical_reads.py`): `get_student_enrollments` (by name within
+    the caller's scope; email only with `user.view_contact`; `EnrollmentVisibility`;
+    `completeness` block), `get_batch_overview` (live counts, never `total_enrollments`),
+    `get_my_tasks` (registers, marking, unreleased marks, next classes, each with a total).
+  - **Leaks closed:** `get_student_enrolled_courses` returned every enrolment of a visible student,
+    so a tutor got colleagues' batches with attendance; it now applies `EnrollmentVisibility`. It
+    and `get_student_assessments_and_deadlines` matched anyone's email and answered "not found"
+    differently for "exists, not yours" -- an address oracle; now one lookup, one answer.
+    Note `tutor_courses` grants no sight of a batch at all (`ScopeResolver._taught_batch_ids`).
+  - **SQL tool** reports `completeness.limit_applied/possibly_truncated` (it silently added
+    LIMIT 100), is described as a fallback, and its `tutor_courses` note is corrected.
+  - **Evidence checks** (`claims.Evidence`): an absence claim ("no tutor", "not assigned") or a
+    "matches the current records" claim with no successful read in the turn, and a list from a
+    truncated read, each get a visible correction. Prompt: earlier turns and attachments are not
+    evidence; a source map; status words; "Verified / Not verified".
+  - Tests: `test_ai_canonical_reads.py` (10, a Maxim-shaped fixture), claim unit tests (+10), two
+    scripted chat turns; mutation-checked 9/9. Live on the real model (local Super Admin and the
+    tutor account, read-only): the three-turn conversation now answers correctly, the challenge
+    "are you sure they have no tutor?" is re-checked and the premise corrected, and the tutor sees
+    only their 2 of Maxim's 3 enrolments, labelled "visible to you".
+  - **Pre-existing, not from this work:** `test_ai_sql_change.py` fails when run after
+    `test_ai_attachments.py` (passes alone; fails the same way on the committed code).
 * **Still divergent, recorded rather than hidden:** the other attendance figures
   in the AI tools still count excused absences against the student, unlike the
   console's `attendance_rate`. Fixing it means rewriting their counting

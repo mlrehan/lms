@@ -20,11 +20,10 @@ from backend.core.permissions import Action, Module, perm
 from backend.core.privacy import may_see_pricing
 from backend.db.dependencies import DBSession
 from backend.models.batch import BatchSession
-from backend.models.identity.user import User
 from backend.schemas.base import Page, PageParams
 from backend.schemas.batch import BatchResponse, BatchSummary, BatchUpdateRequest
 from backend.services.batch_service import BatchService
-from backend.services.mail_audience import display_name
+from backend.services.batch_tutors import tutors_for_batches
 
 router = APIRouter(prefix="/batches", tags=["Batches"])
 
@@ -43,15 +42,8 @@ async def summarise(session, batches) -> list[BatchSummary]:  # type: ignore[no-
             .where(BatchSession.batch_id.in_(ids), BatchSession.cancelled_at.is_(None)).group_by(BatchSession.batch_id)
         )).all():
             counts[bid], upcoming[bid] = int(n), nxt
-        top: dict[int, tuple[int, int]] = {}
-        for bid, tid, n in (await session.execute(
-            select(BatchSession.batch_id, BatchSession.tutor_id, func.count())
-            .where(BatchSession.batch_id.in_(ids), BatchSession.cancelled_at.is_(None)).group_by(BatchSession.batch_id, BatchSession.tutor_id)
-        )).all():
-            if bid not in top or n > top[bid][1]:
-                top[bid] = (tid, int(n))
-        names = {u.id: display_name(u) for u in (await session.execute(select(User).where(User.id.in_({t for t, _ in top.values()})))).scalars().unique()} if top else {}
-        tutors = {bid: names[tid] for bid, (tid, _) in top.items() if tid in names}
+        # One rule, shared with the assistant (services/batch_tutors.py).
+        tutors = {bid: t.primary_name for bid, t in (await tutors_for_batches(session, ids)).items() if t.primary_name}
 
     out = []
     for b in batches:
@@ -72,15 +64,7 @@ async def batch_response(service: BatchService, batch) -> BatchResponse:  # type
     occupied, remaining = await service.seat_counts(batch)
     # Who teaches most of this batch's sessions -- the same figure the list column shows. Derived rather than
     # stored, because a batch has no tutor of its own: its sessions do, and they need not all share one.
-    tutor_name = None
-    top = (await service.session.execute(
-        select(BatchSession.tutor_id, func.count())
-        .where(BatchSession.batch_id == batch.id, BatchSession.cancelled_at.is_(None))
-        .group_by(BatchSession.tutor_id).order_by(func.count().desc()).limit(1)
-    )).first()
-    if top and top[0] is not None:
-        person = (await service.session.execute(select(User).where(User.id == top[0]))).scalars().first()
-        tutor_name = display_name(person) if person else None
+    tutor_name = (await tutors_for_batches(service.session, [batch.id]))[batch.id].primary_name
     return BatchResponse(
         tutor_name=tutor_name,
         public_id=batch.public_id,

@@ -75,3 +75,42 @@ def test_other_sites_are_external_and_never_resolved() -> None:
 def test_trailing_punctuation_is_not_part_of_the_link() -> None:
     internal, _ = find_links(f"check https://www.lait.co/assignments/{AID}.", {"www.lait.co"})
     assert internal[0][0].endswith(AID)
+
+
+# -- facts, not only actions: the Maxim Dusek conversation -----------------------
+
+from backend.ai.claims import (  # noqa: E402
+    ABSENCE_CORRECTION,
+    PARTIAL_CORRECTION,
+    VERIFIED_CORRECTION,
+    Evidence,
+)
+
+
+@pytest.mark.parametrize("text,evidence,correction,expected", [
+    ("| 11454 | Data Analysis with Python | No tutor currently assigned |", Evidence(), ABSENCE_CORRECTION, True),
+    ("| 11454 | Data Analysis with Python | No tutor currently assigned |", Evidence(reads=1), ABSENCE_CORRECTION, False),
+    ("Batch 11467 is not assigned to anyone.", Evidence(), ABSENCE_CORRECTION, True),
+    ("Maxim Dusek has 3 enrollments.", Evidence(), ABSENCE_CORRECTION, False),
+    ("The attached screenshot is visible and matches the current records:", Evidence(), VERIFIED_CORRECTION, True),
+    ("The attached screenshot matches the current records.", Evidence(reads=2), VERIFIED_CORRECTION, False),
+    ("Here are the 100 students enrolled.", Evidence(reads=1, truncated=True), PARTIAL_CORRECTION, True),
+    ("These are the first 100; there may be more.", Evidence(reads=1, truncated=True), PARTIAL_CORRECTION, False),
+])
+def test_factual_claims_need_this_turns_evidence(text, evidence, correction, expected) -> None:
+    assert (correction in verify_claims(text, staged=False, evidence=evidence)) is expected
+
+
+def test_without_an_evidence_record_only_the_action_checks_run() -> None:
+    """Callers that pass no evidence keep the old behaviour exactly."""
+    assert verify_claims("No tutor currently assigned.", staged=False) == "No tutor currently assigned."
+
+
+def test_evidence_counts_only_reads_that_returned_data() -> None:
+    executed = [
+        {"tool": "a", "result": {"success": False, "error": "boom"}},
+        {"tool": "b", "result": {"status": "REQUIRES_CONFIRMATION"}},
+        {"tool": "c", "result": {"success": True, "completeness": {"possibly_truncated": True}}},
+    ]
+    assert Evidence.from_tools(executed) == Evidence(reads=1, truncated=True)
+    assert Evidence.from_tools([{"tool": "a", "result": {"error": "x"}}]).reads == 0

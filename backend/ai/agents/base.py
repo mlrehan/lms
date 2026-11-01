@@ -15,7 +15,7 @@ from typing import Any, AsyncGenerator, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.client import OpenAIClient, get_openai_client
-from backend.ai.claims import verify_claims
+from backend.ai.claims import Evidence, verify_claims
 from backend.ai.security import SecurityPolicyEngine
 from backend.ai.tools.registry import (
     ToolExecutionContext,
@@ -113,6 +113,22 @@ class BaseAgent:
             f"yourself and why. Never say an action was staged, done, sent or released unless a tool result in this "
             f"conversation shows it. When a request is ambiguous (two matching records, a missing value), ask one "
             f"short question instead of guessing.\n"
+            f"Evidence rules (institutional facts):\n"
+            f"- Read it in THIS turn. Your earlier replies and the user's attachments are not evidence: a follow-up "
+            f"('what are those?', 'who are the tutors?') is answered by reading again, never by building on earlier "
+            f"wording. If an earlier answer turns out wrong, say so plainly -- correcting it is the job.\n"
+            f"- Use the source that owns the fact: a student's enrolments, batches and their tutors -> "
+            f"get_student_enrollments; one batch (tutor, enrolled count, classes) -> get_batch_overview; a class's "
+            f"tutor -> that class (get_my_schedule / get_teaching_context); attendance -> the attendance tools; marks "
+            f"-> the marking and grade-book tools; what to teach -> get_teaching_context. A batch's tutor is who "
+            f"teaches its classes ('batch_tutor'); 'course_level_tutors' is course access, a different fact -- label "
+            f"which one you mean.\n"
+            f"- Absence is a finding only when a tool says so: a tutor status of UNASSIGNED means no tutor; "
+            f"NOT_APPLICABLE means no classes yet; SOURCE_CONFLICT means report both sources. An empty or missing "
+            f"result means 'not found by that lookup', never 'none exists'.\n"
+            f"- Lists and counts: report every record returned. If a result says it was truncated or hit a limit, say "
+            f"the list may be incomplete. When some records could not be resolved, say which.\n"
+            f"- When you could not verify something, say 'Verified: ... Not verified: ...' rather than filling the gap.\n"
         )
         # The SQL instructions are given only to callers who are offered the SQL
         # tools. Telling every role it "possesses direct database query
@@ -126,15 +142,17 @@ class BaseAgent:
             f"[DIRECT DATABASE QUERY & REAL-TIME GROUNDING]\n"
             f"You possess direct, real-time database query capabilities via 'execute_database_query' and 'inspect_database_schema'.\n"
             f"1. Zero Internal Exposure: Never mention internal tool names (e.g. execute_database_query), schema queries, SQL syntax, or execution traces in your text responses. Output must be executive-level business communication.\n"
-            f"2. Direct Database Access: For any question about LMS data (e.g., tutor counts, student counts, courses, batches, "
-            f"schedules, attendance, quiz scores, or platform stats), automatically execute a safe read-only SQL query via 'execute_database_query'.\n"
-            f"3. Automatic Execution: Do NOT ask permission, suggest reports, or tell the user to check dashboard pages. Execute the query immediately in the background.\n"
+            f"2. SQL is the FALLBACK: first use the dedicated tool that owns the fact (see the evidence rules above -- "
+            f"get_student_enrollments, get_batch_overview, ...). Use 'execute_database_query' for counts and statistics "
+            f"no tool answers.\n"
+            f"3. Automatic Execution: Do NOT ask permission, suggest reports, or tell the user to check dashboard pages. Look it up immediately.\n"
             f"4. Common Schema Queries & Critical Facts:\n"
             f"   - Tutors count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'TUTOR' AND u.status != 'DELETED';\n"
             f"   - Students count: SELECT count(DISTINCT u.id) FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.name = 'STUDENT' AND u.status != 'DELETED';\n"
             f"   - Students enrolled today: SELECT u.id AS student_id, u.first_name, u.last_name, u.email, b.batch_code, e.enrollment_date FROM enrollments e JOIN users u ON u.id = e.student_id JOIN batches b ON b.id = e.batch_id WHERE DATE(e.enrollment_date) = CURRENT_DATE ORDER BY e.enrollment_date DESC;\n"
             f"   - Enrolled students in a batch: SELECT b.batch_code, u.id AS student_id, u.first_name, u.last_name, e.status FROM enrollments e JOIN batches b ON b.id = e.batch_id JOIN users u ON u.id = e.student_id WHERE b.batch_code = '11568';\n"
-            f"   - Batches taught by current tutor: SELECT DISTINCT b.id, b.batch_code, c.title AS course_title FROM batches b JOIN courses c ON c.id = b.course_id JOIN tutor_courses tc ON tc.course_id = c.id WHERE tc.tutor_id = {self.user.id};\n"
+            f"   - Batches a tutor teaches = batches with a non-cancelled class whose batch_sessions.tutor_id is that tutor: SELECT DISTINCT b.batch_code, c.title FROM batch_sessions s JOIN batches b ON b.id = s.batch_id JOIN courses c ON c.id = b.course_id WHERE s.tutor_id = <tutor id> AND s.cancelled_at IS NULL;\n"
+            f"   - tutor_courses is course-level ACCESS, usually empty for synced batches: an empty join there does NOT mean a batch has no tutor.\n"
             f"   - Quizzes count: SELECT count(*) FROM quizzes; (Note: quizzes does NOT have an is_deleted column)\n"
             f"   - Published quizzes: SELECT count(*) FROM quizzes WHERE is_published = true;\n"
             f"   - Assignments count: SELECT count(*) FROM assignments; (Note: assignments does NOT have is_deleted column)\n"
@@ -146,14 +164,10 @@ class BaseAgent:
             f"   - For SuperAdmin and Tutors (who hold grading permissions): the Quizzes badge shows completed student quiz attempts awaiting marking/scoring (SELECT count(qa.id) FROM quiz_attempts qa JOIN quizzes q ON q.id = qa.quiz_id WHERE qa.finished_at IS NOT NULL AND qa.score IS NULL;). The Assignments badge shows submissions awaiting review/grading.\n"
             f"   - For Students: assessment badges show assigned items they have not yet submitted.\n"
             f"   - If asked why the sidebar shows a different count than total quizzes/assignments, concisely explain that the total count is created catalog items, while the sidebar badge indicates pending student submissions waiting to be marked.\n"
-            f"6. Multi-Turn Continuity & Session Memory:\n"
-            f"   - Maintain strict continuity across turns. Never contradict previously confirmed data points within the same session. If you confirmed N students exist, never state 'There are 0 students' in subsequent turns.\n"
-            f"   - For drill-down inquiries (e.g. 'who are they?', 'which batches?'), scope your query directly to the exact entity IDs confirmed in the immediate prior step (e.g. WHERE u.id IN (...)), or map directly from the confirmed entities.\n"
-            f"   - Discrepancy Clarification: Distinguish between total enrollments (course assignments) and unique students. For example: 'Today ({today_iso}), there are **4 new student enrollments** (2 unique students):'\n"
-            f"   - Standard Enrollment Format: Whenever asked about enrollments, always provide the executive table upfront:\n"
-            f"     | Student Name | Email | Enrolled Batches | Time |\n"
-            f"     | :--- | :--- | :--- | :--- |\n"
-            f"     | [Full Name] | [Email] | [Batch Codes] | [HH:MM] |\n"
+            f"6. Follow-up questions:\n"
+            f"   - For drill-downs ('who are they?', 'which batches?', 'who are the tutors?') read again for the same entities -- earlier replies are not evidence. If the new read disagrees with an earlier answer, say the earlier answer was wrong.\n"
+            f"   - Distinguish total enrollments from unique students. For example: 'Today ({today_iso}), there are **4 new student enrollments** (2 unique students)'.\n"
+            f"   - Show only the columns the question needs; include an email only when it was asked for.\n"
             f"7. Self-Healing & Failure Handling: If a query returns an error, use 'inspect_database_schema' to verify table/column names and retry safely.\n"
             f"8. Mandatory Tool Calling Rule: NEVER output conversational filler like 'I will check', 'I will look that up', or 'Checking your schedule now' without invoking a tool. Always execute the database tool immediately on the first turn and return the final complete answer.\n"
             f"9. Response Style — Strictly Concise: Return direct, natural, factual answers grounded in the database results."
@@ -392,7 +406,7 @@ class BaseAgent:
                 elif not full_text:
                     full_text = "Task completed."
 
-                full_text = verify_claims(full_text, staged=confirmation_needed is not None)
+                full_text = verify_claims(full_text, staged=confirmation_needed is not None, evidence=Evidence.from_tools(tools_executed))
                 # Stream the text deltas smoothly
                 words = full_text.split(" ")
                 chunk: list[str] = []
@@ -540,14 +554,15 @@ class BaseAgent:
                     "You must now provide the definitive, factual final response to the user's inquiry based strictly on the tool results above.\n\n"
                     "CORE ARCHITECTURAL DIRECTIVES:\n"
                     "1. Zero Internal Exposure (Clean UI): Never mention internal tool names (e.g. execute_database_query), schema queries, or SQL in your text responses. Output must be 100% polished, executive-level business communication.\n"
-                    "2. Multi-Turn Context Consistency: Maintain strict continuity with earlier statements in this conversation. NEVER contradict earlier confirmed data points. If students or records were confirmed earlier in the session, do NOT state there are 0 students or 0 records now. Present the requested attributes mapped to the confirmed entities.\n"
-                    "3. Count Distinction: Explicitly distinguish between total enrollments (course assignments) and unique students (e.g. 'There are 2 unique students holding a total of 4 course enrollments today.').\n"
-                    "4. Standard Output Format: When presenting student enrollments, format as an executive Markdown table:\n"
-                    "   Today ([Date]), there are **[X] new student enrollments** ([Y] unique students):\n\n"
-                    "   | Student Name | Email | Enrolled Batches | Time |\n"
-                    "   | :--- | :--- | :--- | :--- |\n"
-                    "   | [Full Name] | [Email] | [Batch Codes] | [HH:MM] |\n\n"
-                    "Deliver the final executive answer now.]"
+                    # "Never contradict earlier confirmed data points" used to be
+                    # here, and it told the model to defend a wrong answer instead
+                    # of correcting it -- the opposite of what a re-read is for.
+                    "2. Evidence: state only what the tool results in THIS turn show. If they contradict an earlier "
+                    "answer, say the earlier answer was wrong. Report every record returned; if a result says it was "
+                    "truncated, say the list may be incomplete. A missing value is 'not found', never 'none'.\n"
+                    "3. Count Distinction: distinguish total enrollments from unique students where both appear.\n"
+                    "4. Format: answer the question asked, with only the columns it needs; a table where it helps.\n\n"
+                    "Deliver the final answer now.]"
                 ),
             })
 
@@ -567,7 +582,7 @@ class BaseAgent:
             full_text = self.synthesize_tool_results_fallback(prompt, tools_executed)
         elif not full_text:
             full_text = "Task completed."
-        full_text = verify_claims(full_text, staged=confirmation_needed is not None)
+        full_text = verify_claims(full_text, staged=confirmation_needed is not None, evidence=Evidence.from_tools(tools_executed))
         words = full_text.split(" ")
         chunk = []
         for word in words:

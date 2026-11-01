@@ -309,3 +309,21 @@ def test_images_a_tool_returns_are_shown_to_the_model_and_kept_out_of_the_reply(
 
     assert picture not in response.text
     assert picture not in env.call("tutor", "GET", "/ai/history").text
+
+
+def test_a_no_tutor_claim_with_nothing_looked_up_is_corrected(env) -> None:
+    """The Maxim Dusek reply, through the real chat route: an absence asserted with no read in the turn."""
+    model = ScriptedModel([_completion("| 11454 | Data Analysis with Python | No tutor currently assigned |")])
+    response = env.chat("tutor", model, prompt="who are the tutors?")
+    assert response.status_code == 200, response.text
+    assert "is not verified" in response.json()["message"]
+    stored = env.call("tutor", "GET", "/ai/history").json()["messages"][-1]["content"]
+    assert "is not verified" in stored
+
+
+def test_the_same_claim_after_a_successful_read_is_left_alone(env) -> None:
+    model = ScriptedModel([_completion(tool=("get_my_updates", {})),
+                           _completion("Batch 11454 has no tutor currently assigned.")])
+    response = env.chat("tutor", model, prompt="who teaches 11454?")
+    assert response.status_code == 200, response.text
+    assert "is not verified" not in response.json()["message"]

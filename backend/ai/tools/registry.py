@@ -339,6 +339,11 @@ def get_tool_registry() -> ToolRegistry:
 
         _global_tool_registry.register(get_my_updates_tool)
 
+        from backend.ai.tools.canonical_reads import CANONICAL_READ_TOOLS
+
+        for tool in CANONICAL_READ_TOOLS:
+            _global_tool_registry.register(tool)
+
         from backend.ai.tools.admin_actions import ADMIN_ACTION_TOOLS
 
         for tool in ADMIN_ACTION_TOOLS:

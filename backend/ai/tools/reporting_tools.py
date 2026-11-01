@@ -605,14 +605,17 @@ async def handle_get_student_assessments_and_deadlines(
         except (ValueError, TypeError):
             pass
         if user_uuid:
-            stmt = select(UserModel).where((UserModel.public_id == user_uuid) | (UserModel.username == str(target_student_id)))
+            found = (await session.execute(select(UserModel).where(UserModel.public_id == user_uuid))).scalar_one_or_none()
         else:
-            stmt = select(UserModel).where((UserModel.email == str(target_student_id)) | (UserModel.username == str(target_student_id)))
-        found = (await session.execute(stmt)).scalar_one_or_none()
-        if not found:
-            raise NotFoundError(f"Student '{target_student_id}' not found.")
-        if not visible.allows(found.id):
-            raise NotFoundError("Student not found.")  # same answer as one that does not exist
+            # By name within what the caller may see; by email only for those who
+            # may see addresses. Matching anyone's email (as this did) and then
+            # answering "not found" differently for "exists, not yours" let any
+            # caller confirm an address was registered.
+            from backend.ai.tools.canonical_reads import _find_student
+
+            found = await _find_student(context, target_student_id)
+        if not found or not visible.allows(found.id):
+            raise NotFoundError("Student not found.")  # one answer for missing and not-yours
         student_id_int = found.id
         student_obj = found
     elif Roles.STUDENT.value in held_roles:
@@ -841,14 +844,17 @@ async def handle_get_student_enrolled_courses(
         except (ValueError, TypeError):
             pass
         if user_uuid:
-            stmt = select(UserModel).where((UserModel.public_id == user_uuid) | (UserModel.username == str(target_student_id)))
+            found = (await session.execute(select(UserModel).where(UserModel.public_id == user_uuid))).scalar_one_or_none()
         else:
-            stmt = select(UserModel).where((UserModel.email == str(target_student_id)) | (UserModel.username == str(target_student_id)))
-        found = (await session.execute(stmt)).scalar_one_or_none()
-        if not found:
-            raise NotFoundError(f"Student '{target_student_id}' not found.")
-        if not visible.allows(found.id):
-            raise NotFoundError("Student not found.")  # same answer as one that does not exist
+            # By name within what the caller may see; by email only for those who
+            # may see addresses. Matching anyone's email (as this did) and then
+            # answering "not found" differently for "exists, not yours" let any
+            # caller confirm an address was registered.
+            from backend.ai.tools.canonical_reads import _find_student
+
+            found = await _find_student(context, target_student_id)
+        if not found or not visible.allows(found.id):
+            raise NotFoundError("Student not found.")  # one answer for missing and not-yours
         student_id_int = found.id
         student_obj = found
     elif Roles.STUDENT.value in held_roles:
@@ -879,6 +885,12 @@ async def handle_get_student_enrolled_courses(
         .where(Enrollments.student_id == student_id_int)
         .order_by(Enrollments.enrollment_date.desc())
     )
+    # The enrolment screen's rule: a tutor sees the batches they teach and
+    # nothing else of a student's record. Without it a tutor asking about a
+    # student in their class was handed that student's other courses, with
+    # attendance, taught by colleagues.
+    stmt = (await resolver.enrollment_visibility(user)).apply(
+        stmt, batch_column=Enrollments.batch_id, student_column=Enrollments.student_id)
     rows = (await session.execute(stmt)).all()
 
     enrolled = []

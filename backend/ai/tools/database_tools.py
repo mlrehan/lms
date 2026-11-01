@@ -136,7 +136,12 @@ PRIMARY_SCHEMA_METADATA: dict[str, dict[str, Any]] = {
         "example": "SELECT b.batch_code, u.id AS student_id, u.first_name, u.last_name, e.status FROM enrollments e JOIN batches b ON b.id = e.batch_id JOIN users u ON u.id = e.student_id WHERE b.batch_code = '11568'",
     },
     "tutor_courses": {
-        "description": "Tutor assignments to courses. (NOTE: There is NO batch_tutors table. Tutors teach courses via tutor_courses and sessions via batch_sessions).",
+        "description": (
+            "Course-level tutor ACCESS, not who teaches a batch. Empty for most batches (the LAIT sync never fills it), "
+            "so an empty join here does NOT mean a batch has no tutor. Who teaches a batch = batch_sessions.tutor_id "
+            "(the Batches page shows the tutor with the most non-cancelled classes). Prefer the get_batch_overview and "
+            "get_student_enrollments tools for any tutor question."
+        ),
         "key_columns": ["tutor_id (FK -> users.id)", "course_id (FK -> courses.id)"],
         "example": "SELECT tutor_id, course_id FROM tutor_courses",
     },
@@ -474,11 +479,27 @@ async def handle_execute_database_query(
             row_count,
         )
 
+        # The validator adds or caps a LIMIT. A result that fills it may have been
+        # cut off, and a bare row_count cannot say so -- a truncated list then
+        # reads exactly like a complete one, and an empty join reads like "none".
+        limits = re.findall(r"\bLIMIT\s+(\d+)\b", safe_query, re.IGNORECASE)
+        limit_applied = int(limits[-1]) if limits else None
+        possibly_truncated = limit_applied is not None and row_count >= limit_applied
         return {
             "success": True,
             "row_count": row_count,
             "rows": serialized_rows,
-            "message": f"Query returned {row_count} record(s).",
+            "completeness": {
+                "limit_applied": limit_applied,
+                "possibly_truncated": possibly_truncated,
+            },
+            "message": (
+                f"Query returned {row_count} record(s) and hit the {limit_applied}-row limit: there may be more. "
+                "Do not present this as a complete list or count; use COUNT(*) for totals."
+                if possibly_truncated else
+                f"Query returned {row_count} record(s). An empty result means this query matched nothing -- "
+                "it is not evidence that something does not exist under another rule or table."
+            ),
         }
 
     except SQLAlchemyError as exc:
@@ -642,10 +663,10 @@ _SQL_ROLES: tuple[str, ...] = (Roles.SUPER_ADMIN.value,)
 execute_database_query_tool = ToolDefinition(
     name="execute_database_query",
     description=(
-        "Execute a safe, read-only SQL query against the LMS PostgreSQL database to answer "
-        "authorized questions about application data in real time (e.g. tutor counts, student counts, "
-        "active courses, batches, schedules, attendance, quiz scores, or system statistics). "
-        "Only SELECT and WITH (CTE) queries are permitted. Returns actual database records."
+        "FALLBACK ONLY: a read-only SQL query, for questions no dedicated tool answers (counts and statistics). "
+        "For a student's enrolments or tutors use get_student_enrollments; for a batch use get_batch_overview -- "
+        "they apply the console's own rules, which hand-written SQL does not. Only SELECT and WITH are permitted. "
+        "Check 'completeness': a result that hit its row limit is not a full list."
     ),
     policy=ToolPolicy(
         name="execute_database_query",
