@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Plus, Scale, Star } from "lucide-react";
 
@@ -213,13 +214,47 @@ function SchemeEditor({ publicId, onClose }: { publicId: string; onClose: () => 
       />
       <CardBody className="space-y-5">
         {/* Shown before a change, not after: editing a weight re-grades every
-            student in every one of these courses at once. */}
-        {(data.courses_using ?? 0) > 0 ? (
+            student in every one of these courses and batches at once. */}
+        {(data.courses_using ?? 0) + (data.batches_using ?? 0) > 0 ? (
           <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-            {data.courses_using} course{data.courses_using === 1 ? "" : "s"} graded by this
+            {data.is_default ? "Every course and batch without a scheme of its own, plus " : ""}
+            {data.courses_using} course{data.courses_using === 1 ? "" : "s"} and{" "}
+            {data.batches_using} batch{data.batches_using === 1 ? "" : "es"} graded by this
             scheme. Changing a weighting recalculates every student in them.
           </p>
         ) : null}
+
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Applied to</p>
+          {data.is_default ? (
+            <p className="text-xs text-muted-foreground">
+              The institution default: used by every course and batch that has no scheme of its own.
+            </p>
+          ) : null}
+          {(data.applied_to_courses ?? []).length + (data.applied_to_batches ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No course or batch names this scheme. To use it, open a course (Overview tab) or a
+              batch (Overview tab) and choose it under Grading scheme. A batch&apos;s choice
+              overrides its course&apos;s, which overrides the institution default.
+            </p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {(data.applied_to_courses ?? []).map((c) => (
+                <li key={c.public_id} className="flex items-center gap-2">
+                  <Badge tone="neutral">Course</Badge>
+                  <Link className="hover:underline" href={`/courses/${c.public_id}`}>{c.label}</Link>
+                </li>
+              ))}
+              {(data.applied_to_batches ?? []).map((b) => (
+                <li key={b.public_id} className="flex items-center gap-2">
+                  <Badge tone="neutral">Batch</Badge>
+                  <Link className="hover:underline" href={`/batches/${b.public_id}`}>{b.label}</Link>
+                  {b.course_title ? <span className="text-xs text-muted-foreground">{b.course_title}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <div className="space-y-3">
           <p className="text-sm font-medium">Weightings</p>
@@ -309,7 +344,7 @@ function SchemeEditor({ publicId, onClose }: { publicId: string; onClose: () => 
         open={confirmDefault}
         onOpenChange={setConfirmDefault}
         title="Make this the institution default?"
-        description="Every course without a scheme of its own will be graded by it from now on. This changes results across the institution."
+        description="Every course and batch without a scheme of its own will be graded by it from now on. This changes results across the institution."
         confirmLabel="Make default"
         onConfirm={() => makeDefault.mutate()}
       />

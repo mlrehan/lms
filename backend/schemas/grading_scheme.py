@@ -88,6 +88,42 @@ class GradingSchemeResponse(GradingSchemeSummary):
             "them at once."
         ),
     )
+    batches_using: int = Field(
+        default=0,
+        description="How many batches name this scheme as their own, overriding their course's.",
+    )
+    applied_to_courses: list["SchemeUsage"] = []
+    applied_to_batches: list["SchemeUsage"] = []
+
+
+class SchemeUsage(APIModel):
+    public_id: uuid.UUID
+    label: str
+    course_title: str | None = None
+
+
+class AssignSchemeRequest(RequestModel):
+    scheme_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "An activated scheme's public_id, or null to stop overriding: a course "
+            "then uses the institution default, a batch its course's scheme."
+        ),
+    )
+
+
+class SchemeAssignment(APIModel):
+    """What a course or batch is graded under, and why."""
+
+    own_scheme_id: uuid.UUID | None = Field(
+        default=None, description="The scheme this record names itself; null when it inherits."
+    )
+    own_scheme_name: str | None = None
+    effective_scheme_id: uuid.UUID | None = None
+    effective_scheme_name: str | None = None
+    source: str = Field(
+        description="BATCH, COURSE, DEFAULT or NONE -- where the effective scheme came from."
+    )
 
 
 class GradingSchemeCreateRequest(RequestModel):
@@ -126,3 +162,6 @@ class SetComponentsRequest(RequestModel):
 
 class SetBandsRequest(RequestModel):
     bands: list[BandPayload] = Field(max_length=30)
+
+
+GradingSchemeResponse.model_rebuild()

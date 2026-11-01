@@ -22,6 +22,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Sequence
 
 from sqlalchemy import select
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.errors import ConflictError, NotFoundError, ValidationError
 from backend.core.performance import Band, ComponentWeight, Scheme
+from backend.models.batch import Batch
 from backend.models.course import Course
 from backend.models.gradebook import GradeBand
 from backend.models.grading import GradingScheme, GradingSchemeComponent
@@ -41,6 +43,15 @@ _HUNDRED = Decimal("100")
 #: not a policy. A tolerance of a hundredth lets a scheme built from thirds
 #: (33.33 × 3) activate without the operator hunting for the missing penny.
 _TOLERANCE = Decimal("0.05")
+
+
+class SchemeSource(str, Enum):
+    """Where a batch's scheme came from -- shown beside it, so nobody has to guess."""
+
+    BATCH = "BATCH"
+    COURSE = "COURSE"
+    DEFAULT = "DEFAULT"
+    NONE = "NONE"
 
 
 class GradingSchemeService:
@@ -72,21 +83,138 @@ class GradingSchemeService:
             )
         ).scalar_one_or_none()
 
-    async def for_course(self, course_id: int) -> GradingScheme | None:
-        """The scheme a course is graded under: its own, or the institution's.
+    async def resolve(
+        self, *, course_id: int, batch_id: int | None = None
+    ) -> tuple[GradingScheme | None, SchemeSource]:
+        """The scheme a batch (or a course) is graded under, and where it came from.
 
-        §13's "a Course may optionally override the system default", resolved
-        in one place so no caller has to remember the fallback -- forgetting it
-        would mean a course silently graded under no scheme at all.
+        Batch override, then course override, then the institution's default.
+        Resolved in exactly one place so that results, reports and transcripts
+        cannot come to disagree about which scheme a student is marked under.
+
+        An override pointing at an inactive scheme is skipped rather than
+        honoured: an inactive scheme has not had its weights checked.
         """
-        override = (
+        if batch_id is not None:
+            row = (
+                await self.session.execute(
+                    select(GradingScheme)
+                    .join(Batch, Batch.grading_scheme_id == GradingScheme.id)
+                    .where(Batch.id == batch_id, GradingScheme.is_active.is_(True))
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                return row, SchemeSource.BATCH
+
+        row = (
             await self.session.execute(
                 select(GradingScheme)
                 .join(Course, Course.grading_scheme_id == GradingScheme.id)
                 .where(Course.id == course_id, GradingScheme.is_active.is_(True))
             )
         ).scalar_one_or_none()
-        return override or await self.default_scheme()
+        if row is not None:
+            return row, SchemeSource.COURSE
+
+        row = await self.default_scheme()
+        return row, (SchemeSource.DEFAULT if row is not None else SchemeSource.NONE)
+
+    async def for_course(self, course_id: int) -> GradingScheme | None:
+        """The course's own scheme, or the institution's -- ignoring batch overrides."""
+        return (await self.resolve(course_id=course_id))[0]
+
+    async def for_batch(self, batch_id: int) -> GradingScheme | None:
+        course_id = (
+            await self.session.execute(select(Batch.course_id).where(Batch.id == batch_id))
+        ).scalar_one_or_none()
+        if course_id is None:
+            raise NotFoundError("Batch not found.")
+        return (await self.resolve(course_id=course_id, batch_id=batch_id))[0]
+
+    # -- assigning -----------------------------------------------------------
+
+    async def _assignable(self, scheme_public_id: uuid.UUID | None) -> GradingScheme | None:
+        if scheme_public_id is None:
+            return None
+        row = await self.get(scheme_public_id)
+        if not row.is_active:
+            # An inactive scheme's weights have never been checked against 100,
+            # and `resolve` would skip it anyway -- accepting it would record an
+            # assignment that silently does nothing.
+            raise ConflictError("Activate the scheme before assigning it.")
+        return row
+
+    async def assign_to_course(
+        self, course_public_id: uuid.UUID, scheme_public_id: uuid.UUID | None, *, actor: User
+    ) -> Course:
+        """Point a course at a scheme, or back at the institution default (None)."""
+        course = (
+            await self.session.execute(select(Course).where(Course.public_id == course_public_id))
+        ).scalar_one_or_none()
+        if course is None or course.deleted_at is not None:
+            raise NotFoundError("Course not found.")
+        scheme = await self._assignable(scheme_public_id)
+        previous = await self._name_of(course.grading_scheme_id)
+        course.grading_scheme_id = scheme.id if scheme else None
+        await self.session.flush()
+        audit_service.record(
+            self.session, action=AuditAction.UPDATE,
+            actor_user_id=actor.id, actor_email=actor.email,
+            entity_type="course", entity_id=course.id,
+            details={"grading_scheme": scheme.name if scheme else None, "previous": previous},
+        )
+        return course
+
+    async def assign_to_batch(
+        self, batch_public_id: uuid.UUID, scheme_public_id: uuid.UUID | None, *, actor: User
+    ) -> Batch:
+        """Point a batch at a scheme, or back at its course's (None)."""
+        batch = (
+            await self.session.execute(select(Batch).where(Batch.public_id == batch_public_id))
+        ).scalar_one_or_none()
+        if batch is None:
+            raise NotFoundError("Batch not found.")
+        scheme = await self._assignable(scheme_public_id)
+        previous = await self._name_of(batch.grading_scheme_id)
+        batch.grading_scheme_id = scheme.id if scheme else None
+        await self.session.flush()
+        audit_service.record(
+            self.session, action=AuditAction.UPDATE,
+            actor_user_id=actor.id, actor_email=actor.email,
+            entity_type="batch", entity_id=batch.id,
+            details={"grading_scheme": scheme.name if scheme else None, "previous": previous},
+        )
+        return batch
+
+    async def _name_of(self, scheme_id: int | None) -> str | None:
+        if scheme_id is None:
+            return None
+        return (
+            await self.session.execute(select(GradingScheme.name).where(GradingScheme.id == scheme_id))
+        ).scalar_one_or_none()
+
+    async def usage(self, scheme_id: int) -> tuple[list[tuple], list[tuple]]:
+        """The courses and batches that name this scheme as their own.
+
+        Columns, not entities: both models eager-load a great deal, and this
+        only needs a label to show beside the scheme.
+        """
+        courses = (
+            await self.session.execute(
+                select(Course.public_id, Course.title)
+                .where(Course.grading_scheme_id == scheme_id, Course.deleted_at.is_(None))
+                .order_by(Course.title)
+            )
+        ).all()
+        batches = (
+            await self.session.execute(
+                select(Batch.public_id, Batch.batch_code, Course.title)
+                .join(Course, Course.id == Batch.course_id)
+                .where(Batch.grading_scheme_id == scheme_id)
+                .order_by(Batch.batch_code)
+            )
+        ).all()
+        return list(courses), list(batches)
 
     # -- the engine's view ---------------------------------------------------
 

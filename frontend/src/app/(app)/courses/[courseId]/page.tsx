@@ -1,5 +1,6 @@
 "use client";
 
+import { SchemeAssignmentCard } from "@/components/domain/scheme-assignment";
 import Link from "next/link";
 import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -48,13 +49,16 @@ function OverviewTab({ course, canEdit }: { course: CourseResponse; canEdit: boo
   // Keyed on the last update so the form re-initialises after a save (or an image change)
   // instead of showing the values it was first opened with.
   return (
-    <CourseForm
-      key={`${course.public_id}:${course.updated_at ?? ""}`}
-      mode="edit"
-      course={course}
-      canEdit={canEdit}
-      onSaved={() => undefined}
-    />
+    <div className="space-y-4">
+      <CourseForm
+        key={`${course.public_id}:${course.updated_at ?? ""}`}
+        mode="edit"
+        course={course}
+        canEdit={canEdit}
+        onSaved={() => undefined}
+      />
+      <SchemeAssignmentCard kind="course" id={course.public_id} />
+    </div>
   );
 }
 

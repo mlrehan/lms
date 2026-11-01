@@ -1,5 +1,6 @@
 "use client";
 
+import { SchemeAssignmentCard } from "@/components/domain/scheme-assignment";
 import Link from "next/link";
 import { use, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -851,7 +852,10 @@ export default function BatchDetailPage({ params }: { params: Promise<{ batchId:
           <TabsTab value="enrollments">Enrollments</TabsTab>
         </TabsList>
         <TabsPanel value="overview">
-          <OverviewTab batch={data} canEdit={permissions.has("batch.update")} />
+          <div className="space-y-4">
+            <OverviewTab batch={data} canEdit={permissions.has("batch.update")} />
+            <SchemeAssignmentCard kind="batch" id={data.public_id} />
+          </div>
         </TabsPanel>
         <TabsPanel value="sessions">
           <SessionsTab batch={data} />

@@ -5000,6 +5000,27 @@ session promotes it. The test now does that, and fails without the listeners.
 service against the same database -- raise no event, because the hook is on the
 ORM session. Those still correct on the next poll or focus.
 
+## Which grading scheme applies: batch -> course -> default
+
+`GradingSchemeService.resolve(course_id=, batch_id=)` is the only place the
+answer is worked out: the batch's own scheme (`batches.grading_scheme_id`,
+migration `c6a9e2d4f1b7`), else the course's (`courses.grading_scheme_id`),
+else the institution default. An override naming an inactive scheme is
+skipped. Performance, transcripts and the grade distribution all call it; a
+course-wide distribution is refused when its active batches resolve to
+different schemes, because bands from two schemes cannot be added together.
+
+Before this the course column existed and nothing could set it. Set it with
+`PUT /courses/{id}/grading-scheme` and `PUT /batches/{id}/grading-scheme`
+(`{"scheme_id": uuid | null}`; GETs show the effective scheme and its source).
+They have their own routes on purpose: assigning a scheme re-grades everyone it
+covers, so it needs `grading_scheme.manage` (Super Admin), not
+`course.update`/`batch.update`. Only activated schemes are accepted. The
+console shows a **Grading scheme** card on the course and batch Overview tabs,
+and the scheme page lists what it is applied to. Tests:
+`tests/integration/test_scheme_assignment.py` (7, mutation-checked 6/6);
+verified in the browser.
+
 ## Course and category code editors (Python, SQL)
 
 Added during the Antigravity phase (`backend/services/editor_service.py`,

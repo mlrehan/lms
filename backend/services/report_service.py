@@ -322,11 +322,38 @@ class ReportService:
             )
 
         if batch_pk is not None and course_pk is None:
-            batch = await self.session.get(Batch, batch_pk)
-            course_pk = batch.course_id if batch is not None else None
+            course_pk = (
+                await self.session.execute(select(Batch.course_id).where(Batch.id == batch_pk))
+            ).scalar_one_or_none()
 
         schemes = GradingSchemeService(self.session)
-        scheme = await schemes.for_course(course_pk) if course_pk is not None else None
+        scheme = None
+        if course_pk is not None and batch_pk is not None:
+            scheme, _source = await schemes.resolve(course_id=course_pk, batch_id=batch_pk)
+        elif course_pk is not None:
+            # A whole course: its active batches may be graded under different
+            # schemes once a batch overrides. Bands from two schemes cannot be
+            # added together, so that is refused and the batches are named.
+            active = (
+                await self.session.execute(
+                    select(Batch.id, Batch.batch_code).where(
+                        Batch.course_id == course_pk, Batch.is_active.is_(True)
+                    )
+                )
+            ).all()
+            by_scheme: dict[int | None, list[str]] = {}
+            for bid, code in active:
+                row, _source = await schemes.resolve(course_id=course_pk, batch_id=bid)
+                by_scheme.setdefault(row.id if row else None, []).append(code)
+                scheme = scheme or row
+            if len(by_scheme) > 1:
+                raise ValidationError(
+                    "This course's batches are graded under different schemes. Choose a batch.",
+                    details={"reason": "Counting students across schemes would add together "
+                             "bands that do not mean the same thing."},
+                )
+            if not active:
+                scheme = await schemes.for_course(course_pk)
         if scheme is None:
             raise ValidationError(
                 "No grading scheme applies to that course.",

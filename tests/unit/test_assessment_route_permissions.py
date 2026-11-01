@@ -61,6 +61,12 @@ EXPECTED: dict[tuple[str, str], set[str]] = {
     ("GET", "/grading-schemes"): {"grading_scheme.read"},
     ("POST", "/grading-schemes"): {"grading_scheme.manage"},
     ("PUT", "/grading-schemes/{scheme_id}/components"): {"grading_scheme.manage"},
+    # Pointing a course or batch at another scheme re-grades it: the same
+    # decision as editing a weight, so not `course.update` / `batch.update`.
+    ("GET", "/courses/{course_id}/grading-scheme"): {"grading_scheme.read"},
+    ("PUT", "/courses/{course_id}/grading-scheme"): {"grading_scheme.manage"},
+    ("GET", "/batches/{batch_id}/grading-scheme"): {"grading_scheme.read"},
+    ("PUT", "/batches/{batch_id}/grading-scheme"): {"grading_scheme.manage"},
 }
 
 

@@ -416,7 +416,7 @@ class PerformanceService:
         if course_id is None:
             raise NotFoundError("Batch not found.")
 
-        scheme_row = await self.schemes.for_course(course_id)
+        scheme_row, _source = await self.schemes.resolve(course_id=course_id, batch_id=batch_id)
         scheme = await self.schemes.as_engine_scheme(scheme_row)
 
         attendance, total_sessions, attended = await self._attendance_mark(

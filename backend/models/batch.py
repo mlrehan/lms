@@ -20,6 +20,11 @@ class Batch(Base, PublicIdMixin):
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey('courses.id'), nullable=False)
     academic_year_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("academic_years.id", ondelete="SET NULL"), nullable=True)
     semester_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("semesters.id", ondelete="SET NULL"), nullable=True)
+    # A batch may be graded under its own scheme. Null means "the course's" (which in turn
+    # falls back to the institution default) -- resolved only in GradingSchemeService.resolve.
+    grading_scheme_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("grading_schemes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     duration_hours: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     number_of_sessions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
