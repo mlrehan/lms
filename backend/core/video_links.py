@@ -79,14 +79,122 @@ class VideoLink:
 _LABELS = {
     "youtube": "YouTube",
     "vimeo": "Vimeo",
+    "wistia": "Wistia",
+    "brightcove": "Brightcove",
+    "dacast": "Dacast",
     "zoom": "Zoom",
-    "google_drive": "Google Drive",
+    "google_drive": "Google Drive / Meet",
+    "microsoft": "Microsoft Teams / Stream",
+    "streamyard": "StreamYard",
+    "zoho": "Zoho Meeting",
     "direct": "Video file",
     "other": "Video link",
 }
 
 #: Providers this build recognises, for the interface to list.
-SUPPORTED_PROVIDERS = ("youtube", "vimeo", "zoom", "google_drive", "direct")
+SUPPORTED_PROVIDERS = (
+    "youtube", "vimeo", "wistia", "brightcove", "dacast", "zoom",
+    "google_drive", "microsoft", "streamyard", "zoho", "direct",
+)
+
+
+@dataclass(frozen=True)
+class ProviderProfile:
+    """What the LMS can and cannot promise about a provider, stated to the viewer.
+
+    The player is the provider's own, inside our frame. So whether a viewer
+    can download, and whether the video plays on other sites, is decided by
+    the provider and by the owner's settings *there* -- never by us. Saying so
+    is the honest version of "no download button".
+    """
+
+    plays_in_lms: bool
+    #: What controls downloading, in words for the person reading it.
+    download: str
+    #: Whether the provider can lock playback to approved domains.
+    domain_restriction: str
+    #: Whether a viewer must be signed in to the provider to watch.
+    needs_provider_sign_in: bool = False
+
+
+_PROFILES: dict[str, ProviderProfile] = {
+    "youtube": ProviderProfile(
+        True,
+        "The YouTube player has no download button. Unlisted videos still play for anyone "
+        "holding the YouTube link -- use private hosting for material that must stay inside the LMS.",
+        "Not available for public or unlisted YouTube videos.",
+    ),
+    "vimeo": ProviderProfile(
+        True,
+        "Set on Vimeo: the owner turns downloads off under the video's privacy settings.",
+        "Available on paid Vimeo plans (embed only on specific domains).",
+    ),
+    "wistia": ProviderProfile(
+        True,
+        "Set in Wistia: downloads are off unless the owner enables them.",
+        "Available in Wistia's account security settings (domain restrictions).",
+    ),
+    "brightcove": ProviderProfile(
+        True,
+        "The Brightcove player has no download button; offline download is a separate Brightcove feature.",
+        "Available through Brightcove player domain restrictions.",
+    ),
+    "dacast": ProviderProfile(
+        True,
+        "The Dacast player has no download button.",
+        "Available through Dacast's referrer (domain) restrictions.",
+    ),
+    "zoom": ProviderProfile(
+        True,
+        "Set in Zoom: the recording's share settings decide whether viewers may download it. "
+        "A passcode-protected recording asks for the passcode in the player.",
+        "Not offered by Zoom for shared recordings.",
+    ),
+    "google_drive": ProviderProfile(
+        True,
+        "Set in Google Drive: the owner must turn off download for viewers, otherwise Drive's own "
+        "player offers it. Google Meet recordings are Drive files and behave the same way.",
+        "Not offered; the viewer needs access to the file in Drive.",
+        needs_provider_sign_in=True,
+    ),
+    "microsoft": ProviderProfile(
+        True,
+        "Set in SharePoint/OneDrive: download follows the file's sharing permissions.",
+        "The viewer must be signed in to Microsoft 365 with access to the file.",
+        needs_provider_sign_in=True,
+    ),
+    "streamyard": ProviderProfile(
+        False,
+        "StreamYard does not offer an embeddable player for recordings. Publish the recording to "
+        "YouTube or Vimeo and add that link to play it inside the LMS.",
+        "Not available.",
+    ),
+    "zoho": ProviderProfile(
+        False,
+        "Zoho Meeting recordings open on Zoho's site; they have no embeddable player.",
+        "Not available.",
+        needs_provider_sign_in=True,
+    ),
+    "direct": ProviderProfile(
+        True,
+        "Plays in the LMS player with its download control hidden; the file's address can still be "
+        "found by a determined viewer. Upload it to the resource library to keep it on our storage.",
+        "Not applicable.",
+    ),
+    "other": ProviderProfile(
+        False,
+        "Unknown provider: it opens on the provider's site.",
+        "Unknown.",
+    ),
+}
+
+
+def provider_label(provider: str) -> str:
+    return _LABELS.get(provider, "Video link")
+
+
+def provider_profile(provider: str) -> ProviderProfile:
+    return _PROFILES.get(provider, _PROFILES["other"])
 
 
 def _clean(raw: str) -> str:
@@ -158,6 +266,24 @@ def _vimeo_id(parts) -> str | None:  # noqa: ANN001
     return None
 
 
+_WISTIA_ID = re.compile(r"^[A-Za-z0-9]{6,20}$")
+
+
+def _wistia_id(parts) -> str | None:  # noqa: ANN001
+    host = _host(parts)
+    if not (host.endswith("wistia.com") or host.endswith("wistia.net") or host == "wi.st"):
+        return None
+    segments = [x for x in (parts.path or "").split("/") if x]
+    # /medias/<id>, /embed/medias/<id>(.jsonp), /embed/iframe/<id>
+    for marker in ("medias", "iframe"):
+        if marker in segments:
+            i = segments.index(marker)
+            if len(segments) > i + 1:
+                candidate = segments[i + 1].split(".")[0]
+                return candidate if _WISTIA_ID.match(candidate) else None
+    return None
+
+
 def _drive_id(parts) -> str | None:  # noqa: ANN001
     if _host(parts) != "drive.google.com":
         return None
@@ -212,6 +338,63 @@ def parse_video_url(raw: str) -> VideoLink:
             thumbnail_url=None,
             is_embeddable=True,
             is_direct_file=False,
+        )
+
+    wistia = _wistia_id(parts)
+    if wistia:
+        return VideoLink(
+            provider="wistia",
+            url=urlunparse(parts),
+            embed_url=f"https://fast.wistia.net/embed/iframe/{wistia}",
+            thumbnail_url=None,
+            is_embeddable=True,
+            is_direct_file=False,
+        )
+
+    if host == "players.brightcove.net" and "videoId" in parse_qs(parts.query):
+        # The player page Brightcove documents for iframe embedding *is* this
+        # address (`/<account>/<player>_default/index.html?videoId=...`).
+        return VideoLink(
+            provider="brightcove",
+            url=urlunparse(parts),
+            embed_url=urlunparse(parts),
+            thumbnail_url=None,
+            is_embeddable=True,
+            is_direct_file=False,
+        )
+
+    if host == "iframe.dacast.com":
+        # Dacast's documented iframe player address.
+        return VideoLink(
+            provider="dacast", url=urlunparse(parts), embed_url=urlunparse(parts),
+            thumbnail_url=None, is_embeddable=True, is_direct_file=False,
+        )
+    if host.endswith("dacast.com"):
+        return VideoLink(
+            provider="dacast", url=urlunparse(parts), embed_url=None,
+            thumbnail_url=None, is_embeddable=False, is_direct_file=False,
+        )
+
+    if host.endswith("sharepoint.com") or host in ("onedrive.live.com", "web.microsoftstream.com"):
+        # Teams recordings live in SharePoint/OneDrive. Only SharePoint's own
+        # `embed.aspx` address frames; anything else opens on Microsoft's site.
+        embeddable = (parts.path or "").lower().endswith("/_layouts/15/embed.aspx")
+        return VideoLink(
+            provider="microsoft", url=urlunparse(parts),
+            embed_url=urlunparse(parts) if embeddable else None,
+            thumbnail_url=None, is_embeddable=embeddable, is_direct_file=False,
+        )
+
+    if host.endswith("streamyard.com"):
+        return VideoLink(
+            provider="streamyard", url=urlunparse(parts), embed_url=None,
+            thumbnail_url=None, is_embeddable=False, is_direct_file=False,
+        )
+
+    if host.startswith("meeting.zoho.") or host.startswith("zoho.") and "meeting" in (parts.path or ""):
+        return VideoLink(
+            provider="zoho", url=urlunparse(parts), embed_url=None,
+            thumbnail_url=None, is_embeddable=False, is_direct_file=False,
         )
 
     if host.endswith("zoom.us") or host.endswith("zoom.com"):

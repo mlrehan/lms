@@ -10,11 +10,11 @@ from sqlalchemy import (CheckConstraint, Integer, String, ForeignKey, DateTime, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
-from .helpers import bool_column, utc_datetime_column
+from .helpers import AssessmentOwnershipMixin, bool_column, utc_datetime_column
 from backend.utils.enums import AssessmentScope, ExamType, SubmissionState
 
 
-class Exam(Base, PublicIdMixin):
+class Exam(Base, PublicIdMixin, AssessmentOwnershipMixin):
     __tablename__ = "exams"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)

@@ -21,6 +21,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Switch,
   Tabs,
   TabsList,
   TabsPanel,
@@ -789,6 +790,21 @@ export default function AssignmentDetailPage({
     onSuccess: () => router.push("/assignments"),
   });
 
+  // Publishing is a change to `state`, through the same edit route the
+  // assistant's publish tool uses. There was no control for it here, so a
+  // tutor could publish a draft only by asking the assistant.
+  const setPublished = useApiMutation<AssignmentResponse, boolean>({
+    mutationFn: (published) =>
+      api.patch<AssignmentResponse>(`/assignments/${segment(assignmentId)}`, {
+        body: { state: published ? "PUBLISHED" : "DRAFT" },
+      }),
+    success: (row) =>
+      row.state === "PUBLISHED"
+        ? "Assignment published. Its students have been notified."
+        : "Assignment unpublished. Students can no longer open it.",
+    invalidate: [["assignments"]],
+  });
+
   if (isPending) return <LoadingState rows={6} />;
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
   if (!data) return null;
@@ -809,6 +825,9 @@ export default function AssignmentDetailPage({
         title={data.title}
         description={
           <span className="flex flex-wrap items-center gap-2">
+            <Badge tone={data.state === "PUBLISHED" ? "success" : "neutral"}>
+              {data.state === "PUBLISHED" ? "Published" : "Draft"}
+            </Badge>
             <Badge tone="neutral">{humanise(data.submission_type)}</Badge>
             <Badge tone={data.allow_late_submissions ? "warning" : "neutral"}>
               {data.allow_late_submissions ? "Late work accepted" : "No late work"}
@@ -820,15 +839,31 @@ export default function AssignmentDetailPage({
           </span>
         }
         actions={
-          permissions.has("assignment.delete") ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Delete assignment"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 className="text-danger" />
-            </Button>
+          // Only the author (or a Super Admin) is offered these; the server
+          // refuses everybody else regardless.
+          data.can_manage ? (
+            <div className="flex items-center gap-3">
+              {permissions.has("assignment.update") ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={data.state === "PUBLISHED"}
+                    disabled={setPublished.isPending}
+                    onCheckedChange={(checked) => setPublished.mutate(checked)}
+                  />
+                  Published
+                </label>
+              ) : null}
+              {permissions.has("assignment.delete") ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Delete assignment"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="text-danger" />
+                </Button>
+              ) : null}
+            </div>
           ) : null
         }
       />
@@ -865,8 +900,8 @@ export default function AssignmentDetailPage({
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         destructive
-        title="Delete this assignment?"
-        description="Every submission and grade attached to it goes too."
+        title={`Delete "${data.title}"?`}
+        description="It disappears from every list and its links stop working, for students and staff alike. Submissions, marks, grade-book entries and finalised transcripts are kept, not deleted, and the deletion is recorded in the audit log."
         confirmPhrase={data.title}
         confirmLabel="Delete assignment"
         pending={remove.isPending}

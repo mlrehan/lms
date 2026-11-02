@@ -75,6 +75,10 @@ class Module:
     #: whereas `grade.update` is the whole grade book. Same reasoning that
     #: keeps `assignment.grade` separate from `exam.grade`.
     CLASS_PERFORMANCE: Final = "class_performance"
+    #: The video library: links to recordings hosted by a provider (YouTube,
+    #: Vimeo, Zoom...), shared with chosen people or batches and watched
+    #: through an in-platform player that re-checks access on every open.
+    VIDEO: Final = "video"
     #: Irreversible operations on the installation itself: permanently erasing
     #: records, and resetting the system. Its own module rather than an action
     #: on each entity, because the distinction that matters is not *what* is
@@ -260,7 +264,9 @@ _register(
     Module.QUIZ,
     _CRUD + (Action.ATTEMPT, Action.GRADE, Action.PUBLISH),
     "quizzes",
-    phrasing={Action.PUBLISH: "Release quiz results to students"},
+    # This gates `PUT /quizzes/{id}/publish` -- making the quiz visible to the
+    # students it is set for. Results are released with `quiz.grade`.
+    phrasing={Action.PUBLISH: "Publish or unpublish quizzes"},
 )
 _register(
     Module.EXAM,
@@ -268,7 +274,8 @@ _register(
     "examinations",
     phrasing={
         Action.GRADE: "Record and amend examination marks",
-        Action.PUBLISH: "Release examination results to students",
+        # Gates `PUT /exams/{id}/publish` (the schedule). Results: `grade.publish`.
+        Action.PUBLISH: "Publish or unpublish examination schedules",
     },
 )
 _register(Module.GRADE, (Action.READ, Action.UPDATE, Action.PUBLISH), "grades and transcripts")
@@ -384,6 +391,19 @@ _register(
     },
 )
 
+_register(
+    Module.VIDEO,
+    _CRUD + (Action.PUBLISH,),
+    "videos in the video library",
+    phrasing={
+        Action.READ: "Watch videos shared with you",
+        Action.CREATE: "Add videos to the video library",
+        Action.UPDATE: "Edit your own videos",
+        Action.DELETE: "Delete your own videos",
+        Action.PUBLISH: "Share videos with people and batches",
+    },
+)
+
 
 ALL_PERMISSIONS: Final[dict[str, str]] = dict(_CATALOG)
 
@@ -410,7 +430,7 @@ _ADMIN: set[str] = (
         Module.ASSIGNMENT, Module.QUIZ, Module.EXAM, Module.GRADE,
         Module.ORGANIZATION, Module.GUARDIAN, Module.MANAGED_STUDENT,
         Module.ANNOUNCEMENT,
-        Module.DISCUSSION, Module.ACADEMIC, Module.REPORT,
+        Module.DISCUSSION, Module.ACADEMIC, Module.REPORT, Module.VIDEO,
         # Running the academic office is daily operations: an administrator
         # views performance and issues transcripts. Defining the weighting
         # scheme is not -- it silently changes every student's result at once,
@@ -542,10 +562,18 @@ _TUTOR: set[str] = {
     perm(Module.EXAM, Action.CREATE),
     perm(Module.EXAM, Action.UPDATE),
     perm(Module.EXAM, Action.GRADE),
-    # Releasing marks, for the work they set and marked themselves.
+    # Releasing marks, and publishing quizzes and exam schedules -- each only
+    # for an assessment the tutor wrote (`services/assessment_access.py`).
     perm(Module.ASSIGNMENT, Action.PUBLISH),
     perm(Module.QUIZ, Action.PUBLISH),
     perm(Module.EXAM, Action.PUBLISH),
+    # The video library: their own videos, shared within the classes they
+    # teach (the service enforces the audience).
+    perm(Module.VIDEO, Action.CREATE),
+    perm(Module.VIDEO, Action.READ),
+    perm(Module.VIDEO, Action.UPDATE),
+    perm(Module.VIDEO, Action.DELETE),
+    perm(Module.VIDEO, Action.PUBLISH),
     # The weighted picture of a student they teach, and the scheme it was
     # computed under -- read-only. Defining the scheme is not theirs: it
     # changes every student's result at once.
@@ -591,6 +619,8 @@ _TUTOR: set[str] = {
 
 # --- Student ---------------------------------------------------------------
 _STUDENT: set[str] = {
+    # Videos somebody shared with them, or with a batch they are in.
+    perm(Module.VIDEO, Action.READ),
     perm(Module.COURSE, Action.READ),
     # The catalogue, but not what it costs: a student browsing courses is a
     # different thing from a student seeing the commercial terms.
@@ -644,6 +674,8 @@ _STUDENT: set[str] = {
 # link is -- "these thirty are mine" is a claim, and the institution has to
 # be the one making it.
 _CORPORATE_MANAGER: set[str] = {
+    # Videos somebody shared with them, or with a batch they are in.
+    perm(Module.VIDEO, Action.READ),
     perm(Module.TEAM, Action.READ),
     perm(Module.MANAGED_STUDENT, Action.READ),
     perm(Module.ORGANIZATION, Action.READ),
@@ -693,6 +725,8 @@ _CORPORATE_MANAGER: set[str] = {
 # Read-only, and scoped in the service layer to their linked students via
 # student_guardians.
 _GUARDIAN: set[str] = {
+    # Videos somebody shared with them, or with a batch they are in.
+    perm(Module.VIDEO, Action.READ),
     perm(Module.TEAM, Action.READ),
     perm(Module.USER, Action.READ),
     perm(Module.COURSE, Action.READ),

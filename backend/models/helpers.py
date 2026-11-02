@@ -1,7 +1,7 @@
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Time, text, Boolean, func
-from sqlalchemy.orm import mapped_column
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Time, text, Boolean, func
+from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 
 
@@ -111,3 +111,23 @@ def bool_column(default: bool = True, nullable: bool = False, index: Optional[bo
         comment=comment
     )
 
+
+
+class AssessmentOwnershipMixin:
+    """Who wrote an assessment, and whether it was withdrawn.
+
+    Shared by `Assignment`, `Quiz` and `Exam` so the three keep one shape (§3).
+    `created_by` is what tutor isolation is decided on: a tutor sees and manages
+    their own assessments, never a colleague's. NULL means the author is unknown
+    (written before the column existed and not in the audit trail) and is treated
+    as institution-owned. `deleted_at` withdraws the assessment without removing
+    the students' work and marks that hang off it.
+    """
+
+    created_by: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    deleted_at: Mapped[Optional[datetime]] = utc_datetime_column(default=False)
+    deleted_by: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )

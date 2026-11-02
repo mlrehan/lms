@@ -26,6 +26,7 @@ from backend.api.v1 import (
     geo,
     gradebook,
     grading_schemes,
+    videos,
     guardians,
     managed_students,
     editors,
@@ -82,6 +83,7 @@ router.include_router(exams.router)
 router.include_router(gradebook.router)
 router.include_router(grading_schemes.router)
 router.include_router(grading_schemes.assignment_router)
+router.include_router(videos.router)
 router.include_router(class_performance.router)
 router.include_router(resources.router)
 router.include_router(organizations.router)

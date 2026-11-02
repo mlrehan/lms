@@ -211,7 +211,8 @@ def _grading_context():
 def test_a_missing_suggested_grade_is_refused_not_defaulted_to_full_marks():
     async def run():
         ctx, sub, _ = _grading_context()
-        with patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as vis:
+        with patch("backend.services.assessment_access.AssessmentAccess.may_read", new=AsyncMock(return_value=True)), \
+             patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as vis:
             vis.return_value = MagicMock(allows=MagicMock(return_value=True))
             with pytest.raises(ValidationError):
                 await handle_suggest_submission_grade({"submission_id": str(sub.public_id)}, ctx)
@@ -222,7 +223,8 @@ def test_a_missing_suggested_grade_is_refused_not_defaulted_to_full_marks():
 def test_grade_suggestion_records_nothing_and_names_no_login():
     async def run():
         ctx, sub, student = _grading_context()
-        with patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as vis, \
+        with patch("backend.services.assessment_access.AssessmentAccess.may_read", new=AsyncMock(return_value=True)), \
+             patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as vis, \
              patch("backend.services.assignment_service.AssignmentService.grade", new_callable=AsyncMock) as grade:
             vis.return_value = MagicMock(allows=MagicMock(return_value=True))
             res = await handle_suggest_submission_grade(

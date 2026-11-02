@@ -5,7 +5,7 @@ from sqlalchemy import (BigInteger, Integer, String, ForeignKey, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
-from .helpers import utc_datetime_column, bool_column
+from .helpers import AssessmentOwnershipMixin, utc_datetime_column, bool_column
 from backend.utils.enums import (
     AssessmentScope,
     AssessmentState,
@@ -14,7 +14,7 @@ from backend.utils.enums import (
 )
 
 
-class Assignment(Base, PublicIdMixin):
+class Assignment(Base, PublicIdMixin, AssessmentOwnershipMixin):
     """Spec §12."""
     __tablename__ = "assignments"
 

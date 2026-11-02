@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.core.logging import get_logger
 from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
@@ -36,6 +37,7 @@ from backend.services.assessment_scope import (
 from backend.core.notification_types import NotificationType
 from backend.services.notification_service import NotificationService
 from backend.services.scope import ScopeResolver
+from backend.services.assessment_access import AssessmentAccess
 from backend.utils.enums import GradeComponentType, Roles
 
 
@@ -50,6 +52,7 @@ class ExamService:
         self.courses = CourseService(session)
         self.batches = BatchService(session)
         self.scopes = ScopeResolver(session)
+        self.access = AssessmentAccess(session)
         self.targets = AssessmentScopeResolver(session)
 
     # -- exams ---------------------------------------------------------------
@@ -69,6 +72,7 @@ class ExamService:
             batch_scope=batch_scope,
             invigilating_exam_ids=invigilating,
             published_only=published_only,
+            assessments=await self.access.visibility(actor),
         )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Exam:
@@ -77,6 +81,12 @@ class ExamService:
             raise NotFoundError("Exam not found.")
 
         if not await self._can_reach(row, actor):
+            raise NotFoundError("Exam not found.")
+        # Tutor isolation (`assessment_access`): another tutor's exam is a 404,
+        # unless this tutor was assigned to invigilate it.
+        if not await self.access.may_read(row, actor) and row.id not in (
+            await self.exams.invigilating_exam_ids(actor.id)
+        ):
             raise NotFoundError("Exam not found.")
 
         if not row.is_published and not await self._can_see_unpublished(row, actor):
@@ -134,6 +144,7 @@ class ExamService:
             passing_marks=payload.passing_marks,
             instructions=payload.instructions,
             is_published=False,
+            created_by=actor.id,
         )
         row.invigilators = []
         row.results = []
@@ -154,6 +165,7 @@ class ExamService:
         self, public_id: uuid.UUID, payload: ExamUpdateRequest, *, actor: User
     ) -> Exam:
         row = await self.get(public_id, actor=actor)
+        self._assert_manages(row, actor)
         changes = payload.model_dump(exclude_unset=True)
 
         total = changes.get("total_marks", row.total_marks)
@@ -197,6 +209,8 @@ class ExamService:
         self, public_id: uuid.UUID, is_published: bool, *, actor: User
     ) -> Exam:
         row = await self.get(public_id, actor=actor)
+        # The author's (or an unrestricted caller's), whichever route asks.
+        self._assert_manages(row, actor)
         was_published = bool(row.is_published)
         row.is_published = is_published
 
@@ -237,27 +251,32 @@ class ExamService:
         )
 
     async def delete(self, public_id: uuid.UUID, *, actor: User) -> None:
+        """Withdraw the exam: gone from every listing and every old link.
+
+        Not a row deletion -- `results` cascades, so deleting the row would take
+        every recorded mark with it. The author may withdraw their own at any
+        time, a Super Admin anybody's; the results are kept.
+        """
         row = await self.get(public_id, actor=actor)
-
+        self._assert_manages(row, actor)
         total, _ = await self.exams.result_counts(row.id)
-        if total:
-            # `results` cascades on delete, so removing the exam would take
-            # every recorded mark with it.
-            raise ConflictError(
-                "This exam already has recorded results and cannot be deleted.",
-                details={"results": total},
-            )
-
-        entity_id = row.id
-        await self.session.delete(row)
+        row.deleted_at = datetime.now(UTC)
+        row.deleted_by = actor.id
+        row.is_published = False
         audit_service.record(
             self.session,
             action=AuditAction.DELETE,
             actor_user_id=actor.id,
             actor_email=actor.email,
             entity_type="exam",
-            entity_id=entity_id,
+            entity_id=row.id,
+            details={"title": row.title, "withdrawn": True, "results_kept": total},
         )
+
+    @staticmethod
+    def _assert_manages(row: Exam, actor: User) -> None:
+        if not AssessmentAccess.may_manage(row, actor):
+            raise AuthorizationError("Only the tutor who set this exam can change it.")
 
     # -- invigilators --------------------------------------------------------
 
@@ -271,6 +290,7 @@ class ExamService:
         teach the course.
         """
         exam = await self.get(public_id, actor=actor)
+        self._assert_manages(exam, actor)
         tutors = await self._resolve_tutors(tutor_public_ids)
 
         existing = {
@@ -329,6 +349,7 @@ class ExamService:
         return await self.results.search(
             params,
             visibility=visibility,
+            assessments=await self.access.visibility(actor),
             exam_id=exam_id,
             student_id=student_id,
             # Gated on `grade.update` (the marking permission), not

@@ -226,6 +226,22 @@ class AIClientError(AppError):
     code = "AI_PLATFORM_ERROR"
 
 
+def _rate_limit_message(exc: Exception) -> str:
+    """A 429 is two different problems, and only one of them passes by itself.
+
+    `insufficient_quota` means the provider account has run out of credit:
+    "busy, retry shortly" sends people to retry something that cannot succeed
+    until an administrator tops the account up.
+    """
+    text = str(exc)
+    if "insufficient_quota" in text or "credit_balance_exhausted" in text:
+        return (
+            "The AI assistant is unavailable: the institution's AI provider account has no credit left. "
+            "Please tell an administrator."
+        )
+    return "AI service is currently busy. Please retry shortly."
+
+
 class AIRateLimitError(AppError):
     """Raised when OpenAI rate limits are exceeded."""
 
@@ -329,7 +345,7 @@ class OpenAIClient:
             raise AIClientError(f"AI platform error: {exc.message}") from exc
         except openai.RateLimitError as exc:
             logger.warning("OpenAI rate limit encountered: %s", exc)
-            raise AIRateLimitError("AI service is currently busy. Please retry shortly.") from exc
+            raise AIRateLimitError(_rate_limit_message(exc)) from exc
         except openai.AuthenticationError as exc:
             logger.error("OpenAI authentication failed: %s", exc)
             raise AIClientError("AI platform authentication configuration is invalid.") from exc
@@ -423,7 +439,7 @@ class OpenAIClient:
             raise AIClientError(f"AI platform error: {exc.message}") from exc
         except openai.RateLimitError as exc:
             logger.warning("OpenAI rate limit encountered: %s", exc)
-            raise AIRateLimitError("AI service is currently busy. Please retry shortly.") from exc
+            raise AIRateLimitError(_rate_limit_message(exc)) from exc
         except openai.AuthenticationError as exc:
             logger.error("OpenAI authentication failed: %s", exc)
             raise AIClientError("AI platform authentication configuration is invalid.") from exc

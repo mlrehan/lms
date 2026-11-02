@@ -349,6 +349,11 @@ def get_tool_registry() -> ToolRegistry:
         for tool in ADMIN_ACTION_TOOLS:
             _global_tool_registry.register(tool)
 
+        from backend.ai.tools.library_tools import LIBRARY_TOOLS
+
+        for tool in LIBRARY_TOOLS:
+            _global_tool_registry.register(tool)
+
         from backend.ai.tools.teaching_actions import TEACHING_ACTION_TOOLS
 
         for tool in TEACHING_ACTION_TOOLS:

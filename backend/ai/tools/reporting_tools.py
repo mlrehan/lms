@@ -660,6 +660,11 @@ async def handle_get_student_assessments_and_deadlines(
     held = SecurityPolicyEngine.caller_permissions(context.user)
     marker = "assignment.grade" in held
     quiz_marker = "quiz.grade" in held
+    # A tutor asking about a student sees only their own (and the office's)
+    # assessments, never a colleague's -- the console's rule.
+    from backend.services.assessment_access import AssessmentAccess
+
+    isolation = await AssessmentAccess(session).visibility(context.user)
 
     if batch_ids:
         # 1. Quizzes
@@ -673,6 +678,7 @@ async def handle_get_student_assessments_and_deadlines(
             )
             .order_by(Quiz.available_until.asc().nulls_last())
         )
+        q_stmt = isolation.exclude_colleagues(q_stmt, course_column=Quiz.course_id, creator_column=Quiz.created_by)
         quizzes = (await session.execute(q_stmt)).scalars().all()
 
         for q in quizzes:
@@ -726,6 +732,9 @@ async def handle_get_student_assessments_and_deadlines(
                 Assignment.state == AssessmentState.PUBLISHED,
             )
             .order_by(Assignment.due_date.asc().nulls_last())
+        )
+        asgn_stmt = isolation.exclude_colleagues(
+            asgn_stmt, course_column=Assignment.course_id, creator_column=Assignment.created_by
         )
         assignments = (await session.execute(asgn_stmt)).scalars().all()
 

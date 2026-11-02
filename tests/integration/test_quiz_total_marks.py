@@ -92,6 +92,7 @@ def env():
                 course_id=course.id, batch_id=batch.id, scope=AssessmentScope.BATCH,
                 title=f"{tag} {name}", passing_score=Decimal("50.00"), is_published=False,
                 attempts_allowed=5, weight=Decimal("1.00"), total_marks=total,
+                created_by=tutor.id,  # the tutor's own quiz: theirs to edit
             )
 
         capped, uncapped = quiz("capped", Decimal("10.00")), quiz("uncapped", None)

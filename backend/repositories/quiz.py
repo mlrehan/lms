@@ -13,6 +13,7 @@ from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
 
 if TYPE_CHECKING:
+    from backend.services.assessment_access import AssessmentVisibility
     from backend.services.scope import Scope, WorkVisibility
 
 
@@ -20,7 +21,8 @@ class QuizRepository(BaseRepository[Quiz]):
     model = Quiz
 
     def _base(self) -> Select[tuple[Quiz]]:
-        return select(Quiz).options(selectinload(Quiz.course))
+        # A withdrawn quiz is gone from every read, including an old link.
+        return select(Quiz).options(selectinload(Quiz.course)).where(Quiz.deleted_at.is_(None))
 
     async def get_by_public_id_full(self, public_id: uuid.UUID) -> Quiz | None:
         stmt = self._base().where(Quiz.public_id == public_id)
@@ -30,11 +32,16 @@ class QuizRepository(BaseRepository[Quiz]):
         self,
         params: PageParams,
         *,
-        scope: "Scope",
+        visibility: "AssessmentVisibility",
         course_id: int | None = None,
         published_only: bool = False,
     ) -> tuple[Sequence[Quiz], int]:
-        stmt = scope.apply(self._base(), Quiz.course_id)
+        stmt = visibility.apply(
+            self._base(),
+            course_column=Quiz.course_id,
+            creator_column=Quiz.created_by,
+            deleted_column=Quiz.deleted_at,
+        )
         if course_id is not None:
             stmt = stmt.where(Quiz.course_id == course_id)
         if published_only:
@@ -156,6 +163,7 @@ class AttemptRepository(BaseRepository[QuizAttempt]):
         params: PageParams,
         *,
         visibility: "WorkVisibility",
+        assessments: "AssessmentVisibility | None" = None,
         quiz_id: int | None = None,
         student_id: int | None = None,
     ) -> tuple[Sequence[QuizAttempt], int]:
@@ -164,7 +172,11 @@ class AttemptRepository(BaseRepository[QuizAttempt]):
             stmt,
             course_column=Quiz.course_id,
             student_column=QuizAttempt.student_id,
-        )
+        ).where(Quiz.deleted_at.is_(None))
+        if assessments is not None:
+            stmt = assessments.exclude_colleagues(
+                stmt, course_column=Quiz.course_id, creator_column=Quiz.created_by
+            )
 
         if quiz_id is not None:
             stmt = stmt.where(QuizAttempt.quiz_id == quiz_id)

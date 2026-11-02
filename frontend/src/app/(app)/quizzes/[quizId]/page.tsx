@@ -1753,7 +1753,8 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
         }
         actions={
           <div className="flex items-center gap-3">
-            {permissions.has("quiz.update") ? (
+            {/* The author's (or a Super Admin's) to publish; the server refuses anyone else. */}
+            {permissions.has("quiz.publish") && data.can_manage ? (
               <label className="flex items-center gap-2 text-sm">
                 <Switch
                   checked={data.is_published}
@@ -1763,7 +1764,7 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
                 Published
               </label>
             ) : null}
-            {permissions.has("quiz.delete") ? (
+            {permissions.has("quiz.delete") && data.can_manage ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -1811,8 +1812,8 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         destructive
-        title="Delete this quiz?"
-        description="Its questions and every attempt go with it."
+        title={`Delete "${data.title}"?`}
+        description="It disappears from every list and its links stop working, for students and staff alike. Its questions, students' attempts and scores, and grade-book entries are kept, not deleted, and the deletion is recorded in the audit log."
         confirmPhrase={data.title}
         confirmLabel="Delete quiz"
         pending={remove.isPending}

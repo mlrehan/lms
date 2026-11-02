@@ -219,7 +219,8 @@ def test_tutor_suggest_submission_grade():
         exec_result.first.return_value = (sub, asmt, student)
         session_mock.execute.return_value = exec_result
 
-        with patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as mock_vis:
+        with patch("backend.services.assessment_access.AssessmentAccess.may_read", new=AsyncMock(return_value=True)), \
+             patch("backend.services.scope.ScopeResolver.visible_course_ids", new_callable=AsyncMock) as mock_vis:
             scope_mock = MagicMock()
             scope_mock.allows.return_value = True
             mock_vis.return_value = scope_mock

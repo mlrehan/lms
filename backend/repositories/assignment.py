@@ -13,9 +13,10 @@ from backend.models.batch import Batch
 from backend.models.enrollment import Enrollments
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
-from backend.utils.enums import EnrollmentStatus, SubmissionState
+from backend.utils.enums import AssessmentState, EnrollmentStatus, SubmissionState
 
 if TYPE_CHECKING:
+    from backend.services.assessment_access import AssessmentVisibility
     from backend.services.scope import Scope, WorkVisibility
 
 
@@ -23,7 +24,13 @@ class AssignmentRepository(BaseRepository[Assignment]):
     model = Assignment
 
     def _base(self) -> Select[tuple[Assignment]]:
-        return select(Assignment).options(selectinload(Assignment.course))
+        # A withdrawn assignment is gone from every read, including a lookup by
+        # an old link; its submissions and marks stay in their own tables.
+        return (
+            select(Assignment)
+            .options(selectinload(Assignment.course))
+            .where(Assignment.deleted_at.is_(None))
+        )
 
     async def get_by_public_id_full(self, public_id: uuid.UUID) -> Assignment | None:
         stmt = self._base().where(Assignment.public_id == public_id)
@@ -33,11 +40,24 @@ class AssignmentRepository(BaseRepository[Assignment]):
         self,
         params: PageParams,
         *,
-        scope: "Scope",
+        scope: "Scope | None" = None,
+        visibility: "AssessmentVisibility | None" = None,
         course_id: int | None = None,
         query: str | None = None,
+        published_only: bool = False,
     ) -> tuple[Sequence[Assignment], int]:
-        stmt = scope.apply(self._base(), Assignment.course_id)
+        stmt = self._base()
+        if scope is not None:
+            stmt = scope.apply(stmt, Assignment.course_id)
+        if visibility is not None:
+            stmt = visibility.apply(
+                stmt,
+                course_column=Assignment.course_id,
+                creator_column=Assignment.created_by,
+                deleted_column=Assignment.deleted_at,
+            )
+        if published_only:
+            stmt = stmt.where(Assignment.state == AssessmentState.PUBLISHED)
         if course_id is not None:
             stmt = stmt.where(Assignment.course_id == course_id)
         if query:
@@ -118,6 +138,7 @@ class SubmissionRepository(BaseRepository[AssignmentSubmission]):
         params: PageParams,
         *,
         visibility: "WorkVisibility",
+        assessments: "AssessmentVisibility | None" = None,
         assignment_id: int | None = None,
         student_id: int | None = None,
         graded: bool | None = None,
@@ -132,7 +153,13 @@ class SubmissionRepository(BaseRepository[AssignmentSubmission]):
             stmt,
             course_column=Assignment.course_id,
             student_column=AssignmentSubmission.student_id,
-        )
+        ).where(Assignment.deleted_at.is_(None))
+        if assessments is not None:
+            # A colleague's assignment in a course this tutor also teaches:
+            # its submissions are the colleague's to see, not theirs.
+            stmt = assessments.exclude_colleagues(
+                stmt, course_column=Assignment.course_id, creator_column=Assignment.created_by
+            )
 
         if assignment_id is not None:
             stmt = stmt.where(AssignmentSubmission.assignment_id == assignment_id)

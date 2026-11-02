@@ -15,6 +15,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.services.assessment_access import AssessmentAccess
 from backend.ai.security import RiskLevel, ToolPolicy
 from backend.ai.tools.registry import ConfirmationPreview, ToolDefinition, ToolExecutionContext
 from backend.core.privacy import visible_email, visible_username
@@ -474,6 +475,10 @@ async def handle_get_pending_submissions(
     )
 
     stmt = visible_courses.apply(stmt, Assignment.course_id)
+    # Tutor isolation, as on the console: another tutor's assignment is theirs to mark.
+    stmt = (await AssessmentAccess(session).visibility(user)).exclude_colleagues(
+        stmt, course_column=Assignment.course_id, creator_column=Assignment.created_by
+    )
 
     batch_id_str = arguments.get("batch_identifier")
     if batch_id_str:
@@ -539,8 +544,8 @@ async def handle_suggest_submission_grade(
     sub, asmt, student = row
     resolver = ScopeResolver(session)
     visible_courses = await resolver.visible_course_ids(user)
-    if not visible_courses.allows(asmt.course_id):
-        raise AuthorizationError("You are not authorized to grade submissions for this course.")
+    if not visible_courses.allows(asmt.course_id) or not await AssessmentAccess(session).may_read(asmt, user):
+        raise NotFoundError("Submission not found.")
 
     # A missing score is refused, never defaulted: the previous default was
     # full marks, which is a grade nobody decided.
@@ -603,8 +608,8 @@ async def handle_get_quiz_evaluation_summary(
 
     resolver = ScopeResolver(session)
     visible_courses = await resolver.visible_course_ids(user)
-    if not visible_courses.allows(quiz.course_id):
-        raise AuthorizationError("You are not authorized to view results for this quiz.")
+    if not visible_courses.allows(quiz.course_id) or not await AssessmentAccess(session).may_read(quiz, user):
+        raise NotFoundError(f"Quiz '{quiz_id_str}' was not found.")
 
     stmt = (
         select(QuizAttempt)
@@ -1130,10 +1135,24 @@ async def preview_publish_assessment(
     context: ToolExecutionContext,
 ) -> ConfirmationPreview:
     kind, row = await _load_for_publish(arguments, context)
-    return ConfirmationPreview(
-        summary=f"Publish the {kind} '{row.title}' to its students?",
-        bound_parameters={"assessment_public_id": str(row.public_id)},
+    publish = _wants_publish(arguments)
+    summary = (
+        f"Publish the {kind} '{row.title}'? The students it is set for can then see it and are notified."
+        if publish
+        else f"Unpublish the {kind} '{row.title}'? Students stop seeing it until it is published again; "
+        "nothing already submitted or marked is lost."
     )
+    return ConfirmationPreview(
+        summary=summary,
+        bound_parameters={"assessment_public_id": str(row.public_id), "publish": publish},
+    )
+
+
+def _wants_publish(arguments: dict[str, Any]) -> bool:
+    value = arguments.get("publish", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "no", "0", "unpublish")
+    return bool(value)
 
 
 async def handle_publish_assessment(
@@ -1148,31 +1167,37 @@ async def handle_publish_assessment(
     kind, row = await _load_for_publish(arguments, context)
     if str(row.public_id) != str(arguments.get(f"{BOUND_PREFIX}assessment_public_id")):
         raise ValidationError("The assessment no longer matches the one confirmed; ask again.")
+    # Publish or unpublish as confirmed, never what the model sends afterwards.
+    publish = bool(arguments.get(f"{BOUND_PREFIX}publish", True))
 
+    # Each service checks ownership: a tutor publishes and unpublishes only
+    # their own, exactly as the console's switch does.
     user = context.user
     if kind == "quiz":
-        updated = await QuizService(context.session).set_published(row.public_id, True, actor=user)
+        updated = await QuizService(context.session).set_published(row.public_id, publish, actor=user)
         published = bool(updated.is_published)
     elif kind == "assignment":
         updated = await AssignmentService(context.session).update(
-            row.public_id, AssignmentUpdateRequest(state=AssessmentState.PUBLISHED), actor=user
+            row.public_id,
+            AssignmentUpdateRequest(state=AssessmentState.PUBLISHED if publish else AssessmentState.DRAFT),
+            actor=user,
         )
         published = updated.state is AssessmentState.PUBLISHED
     else:
-        updated = await ExamService(context.session).set_published(row.public_id, True, actor=user)
+        updated = await ExamService(context.session).set_published(row.public_id, publish, actor=user)
         published = bool(updated.is_published)
 
     # Reported from the row the service returned, not assumed from the call.
     return {
-        "success": published,
+        "success": published == publish,
         "assessment_type": kind,
         "assessment_id": str(updated.public_id),
         "title": updated.title,
         "is_published": published,
         "message": (
-            f"The {kind} '{updated.title}' is now published."
-            if published
-            else f"The {kind} '{updated.title}' could not be published."
+            f"The {kind} '{updated.title}' is now {'published' if published else 'unpublished (a draft)'}."
+            if published == publish
+            else f"The {kind} '{updated.title}' could not be {'published' if publish else 'unpublished'}."
         ),
     }
 
@@ -1180,8 +1205,9 @@ async def handle_publish_assessment(
 publish_assessment_tool = ToolDefinition(
     name="publish_assessment",
     description=(
-        "Publish an assessment (quiz, assignment, or examination) so its students can see it. "
-        "Requires the user's confirmation."
+        "Publish or unpublish an assessment (quiz, assignment, or examination schedule). A tutor may do this "
+        "only for assessments they created; a Super Admin for any. Set publish=false to unpublish (students stop "
+        "seeing it; submissions and marks are kept). Requires the user's confirmation."
     ),
     policy=ToolPolicy(
         name="publish_assessment",
@@ -1203,7 +1229,12 @@ publish_assessment_tool = ToolDefinition(
             },
             "assessment_id": {
                 "type": "string",
-                "description": "UUID or exact title of the assessment to publish",
+                "description": "UUID or exact title of the assessment",
+            },
+            "publish": {
+                "type": "boolean",
+                "description": "true to publish (default), false to unpublish",
+                "default": True,
             },
         },
         "required": ["assessment_id"],

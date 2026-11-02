@@ -13,6 +13,7 @@ from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
 
 if TYPE_CHECKING:
+    from backend.services.assessment_access import AssessmentVisibility
     from backend.services.scope import Scope, WorkVisibility
 
 
@@ -20,10 +21,15 @@ class ExamRepository(BaseRepository[Exam]):
     model = Exam
 
     def _base(self) -> Select[tuple[Exam]]:
-        return select(Exam).options(
-            selectinload(Exam.course),
-            selectinload(Exam.batch),
-            selectinload(Exam.invigilators).selectinload(ExamInvigilator.tutor),
+        # A withdrawn exam is gone from every read, including an old link.
+        return (
+            select(Exam)
+            .options(
+                selectinload(Exam.course),
+                selectinload(Exam.batch),
+                selectinload(Exam.invigilators).selectinload(ExamInvigilator.tutor),
+            )
+            .where(Exam.deleted_at.is_(None))
         )
 
     async def get_by_public_id_full(self, public_id: uuid.UUID) -> Exam | None:
@@ -38,6 +44,7 @@ class ExamRepository(BaseRepository[Exam]):
         batch_scope: "Scope",
         invigilating_exam_ids: set[int] | None = None,
         published_only: bool = False,
+        assessments: "AssessmentVisibility | None" = None,
     ) -> tuple[Sequence[Exam], int]:
         """An exam is reachable through *either* anchor, plus a third route:
         being assigned to invigilate it.
@@ -58,6 +65,17 @@ class ExamRepository(BaseRepository[Exam]):
             if invigilating_exam_ids:
                 conditions.append(Exam.id.in_(invigilating_exam_ids))
             stmt = stmt.where(or_(*conditions)) if conditions else stmt.where(false())
+
+        if assessments is not None:
+            # Another tutor's exam in a course this tutor also teaches -- unless
+            # they were asked to invigilate it, which is an explicit way in.
+            hidden = assessments.exclude_colleagues(
+                select(Exam.id), course_column=Exam.course_id, creator_column=Exam.created_by
+            )
+            if invigilating_exam_ids:
+                stmt = stmt.where(or_(Exam.id.in_(hidden), Exam.id.in_(invigilating_exam_ids)))
+            else:
+                stmt = stmt.where(Exam.id.in_(hidden))
 
         if published_only:
             stmt = stmt.where(Exam.is_published.is_(True))
@@ -105,13 +123,18 @@ class ExamResultRepository(BaseRepository[ExamResult]):
         exam_id: int | None = None,
         student_id: int | None = None,
         include_unpublished: bool,
+        assessments: "AssessmentVisibility | None" = None,
     ) -> tuple[Sequence[ExamResult], int]:
         stmt = self._base().join(Exam, Exam.id == ExamResult.exam_id)
         stmt = visibility.apply(
             stmt,
             course_column=Exam.course_id,
             student_column=ExamResult.student_id,
-        )
+        ).where(Exam.deleted_at.is_(None))
+        if assessments is not None:
+            stmt = assessments.exclude_colleagues(
+                stmt, course_column=Exam.course_id, creator_column=Exam.created_by
+            )
 
         if not include_unpublished:
             # A result that has been recorded but not released must not reach

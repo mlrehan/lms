@@ -17,8 +17,10 @@ from backend.utils.enums import (
     SubmissionType,
 )
 
+from backend.schemas.assessment_common import AssessmentOwnershipFields
 
-class AssignmentSummary(APIModel):
+
+class AssignmentSummary(APIModel, AssessmentOwnershipFields):
     public_id: uuid.UUID
     title: str
     due_date: datetime

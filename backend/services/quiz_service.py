@@ -52,6 +52,7 @@ from backend.services.assessment_scope import (
 from backend.services.notification_service import NotificationService
 from backend.core.notification_types import NotificationType
 from backend.services.scope import ScopeResolver
+from backend.services.assessment_access import AssessmentAccess
 from backend.utils.enums import GradeComponentType, QuestionType
 
 # Wall-clock slack allowed past a quiz's `duration_minutes` before the
@@ -127,6 +128,7 @@ class QuizService:
         self.attempts = AttemptRepository(session)
         self.courses = CourseService(session)
         self.scopes = ScopeResolver(session)
+        self.access = AssessmentAccess(session)
         # The same shared resolver assignments use. §3's "do not create
         # duplicated implementations" is satisfied by there being exactly one.
         self.targets = AssessmentScopeResolver(session)
@@ -144,12 +146,13 @@ class QuizService:
         if course_public_id is not None:
             course_id = (await self.courses.get(course_public_id, actor=actor)).id
 
-        scope = await self.scopes.visible_course_ids(actor)
+        # Course scope, withdrawal and tutor isolation: `assessment_access`.
+        visibility = await self.access.visibility(actor)
         # A student has no business seeing a quiz the tutor is still drafting;
         # anyone who can author quizzes sees unpublished ones too.
         published_only = not await self._can_author(actor)
         return await self.quizzes.search(
-            params, scope=scope, course_id=course_id, published_only=published_only
+            params, visibility=visibility, course_id=course_id, published_only=published_only
         )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Quiz:
@@ -157,8 +160,8 @@ class QuizService:
         if row is None:
             raise NotFoundError("Quiz not found.")
 
-        scope = await self.scopes.visible_course_ids(actor)
-        if not scope.allows(row.course_id):
+        # Another tutor's quiz is a 404, like one that does not exist.
+        if not await self.access.may_read(row, actor):
             raise NotFoundError("Quiz not found.")
 
         if not row.is_published and not await self._can_author(actor):
@@ -215,6 +218,7 @@ class QuizService:
             # Always unpublished: a quiz created live would be visible to
             # students before it had a single question.
             is_published=False,
+            created_by=actor.id,
         )
         await self.quizzes.add_and_flush(row)
 
@@ -233,6 +237,7 @@ class QuizService:
         self, public_id: uuid.UUID, payload: QuizUpdateRequest, *, actor: User
     ) -> Quiz:
         row = await self.get(public_id, actor=actor)
+        self._assert_manages(row, actor)
         changes = payload.model_dump(exclude_unset=True)
 
         if changes and await self._has_attempts(row.id):
@@ -261,6 +266,10 @@ class QuizService:
         self, public_id: uuid.UUID, is_published: bool, *, actor: User
     ) -> Quiz:
         row = await self.get(public_id, actor=actor)
+        # Publishing and unpublishing are the author's (or an unrestricted
+        # caller's). The console's switch and the assistant's
+        # `publish_assessment` both arrive here, so one rule serves both.
+        self._assert_manages(row, actor)
 
         if is_published:
             count, _ = await self.quizzes.question_stats(row.id)
@@ -318,27 +327,32 @@ class QuizService:
         )
 
     async def delete(self, public_id: uuid.UUID, *, actor: User) -> None:
+        """Withdraw the quiz: gone from every listing, attempt and old link.
+
+        Not a row deletion. Attempts hold students' answers and scores, and
+        the grade book was computed from them; the author may withdraw their
+        own at any time, a Super Admin anybody's, and all of that is kept.
+        """
         row = await self.get(public_id, actor=actor)
-
-        if await self._has_attempts(row.id):
-            raise ConflictError(
-                "This quiz already has attempts and cannot be deleted."
-            )
-
-        for question in await self.quizzes.questions_for(row.id):
-            await self.quizzes.delete_options_for(question.id)
-            await self.session.delete(question)
-
-        entity_id = row.id
-        await self.session.delete(row)
+        self._assert_manages(row, actor)
+        row.deleted_at = datetime.now(UTC)
+        row.deleted_by = actor.id
+        row.is_published = False
         audit_service.record(
             self.session,
             action=AuditAction.DELETE,
             actor_user_id=actor.id,
             actor_email=actor.email,
             entity_type="quiz",
-            entity_id=entity_id,
+            entity_id=row.id,
+            details={"title": row.title, "withdrawn": True,
+                     "attempts_kept": await self._has_attempts(row.id)},
         )
+
+    @staticmethod
+    def _assert_manages(row: Quiz, actor: User) -> None:
+        if not AssessmentAccess.may_manage(row, actor):
+            raise AuthorizationError("Only the tutor who set this quiz can change it.")
 
     # -- questions -----------------------------------------------------------
 
@@ -499,6 +513,7 @@ class QuizService:
         self, public_id: uuid.UUID, payload: QuestionCreateRequest, *, actor: User
     ) -> Question:
         quiz = await self.get(public_id, actor=actor)
+        self._assert_manages(quiz, actor)
         await self._assert_question_bank_editable(quiz)
         await self._assert_within_total(quiz, adding=Decimal(str(payload.points)))
 
@@ -548,6 +563,7 @@ class QuizService:
             raise NotFoundError("Question not found.")
 
         quiz = await self.get(question.quiz.public_id, actor=actor)
+        self._assert_manages(quiz, actor)
         await self._assert_question_bank_editable(quiz)
 
         changes = payload.model_dump(exclude_unset=True)
@@ -631,6 +647,7 @@ class QuizService:
             raise NotFoundError("Question not found.")
 
         quiz = await self.get(question.quiz.public_id, actor=actor)
+        self._assert_manages(quiz, actor)
         await self._assert_question_bank_editable(quiz)
 
         entity_id = question.id
@@ -666,7 +683,11 @@ class QuizService:
 
         visibility = await self.scopes.work_visibility(actor)
         return await self.attempts.search(
-            params, visibility=visibility, quiz_id=quiz_id, student_id=student_id
+            params,
+            visibility=visibility,
+            assessments=await self.access.visibility(actor),
+            quiz_id=quiz_id,
+            student_id=student_id,
         )
 
     async def get_attempt(self, public_id: uuid.UUID, *, actor: User) -> QuizAttempt:
@@ -682,6 +703,10 @@ class QuizService:
             )
             if not reachable:
                 raise NotFoundError("Attempt not found.")
+        if row.quiz.deleted_at is not None or (
+            row.student_id != actor.id and not await self.access.may_read(row.quiz, actor)
+        ):
+            raise NotFoundError("Attempt not found.")
         return row
 
     async def start_attempt(self, quiz_public_id: uuid.UUID, *, actor: User) -> QuizAttempt:

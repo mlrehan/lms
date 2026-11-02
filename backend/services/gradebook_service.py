@@ -58,6 +58,7 @@ from backend.services import audit_service
 from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.scope import ScopeResolver
+from backend.services.assessment_access import AssessmentAccess
 from backend.utils.enums import AttendanceStatus, GradeComponentType
 
 _ZERO = Decimal("0")
@@ -200,6 +201,9 @@ class GradeBookService:
             batch_id=batch_id,
             student_id=student_id,
             component_type=component_type,
+            # Entries derived from a withdrawn assessment, or from another
+            # tutor's, are not this caller's to list.
+            assessments=await AssessmentAccess(self.session).visibility(actor),
         )
 
     async def get_entry(self, public_id: uuid.UUID, *, actor: User) -> GradeBookEntry:

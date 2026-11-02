@@ -139,6 +139,11 @@ export const PERMISSION_NAMES = [
   "user.sync",
   "user.update",
   "user.view_contact",
+  "video.create",
+  "video.delete",
+  "video.publish",
+  "video.read",
+  "video.update",
 ] as const;
 
 export type PermissionName = (typeof PERMISSION_NAMES)[number];
@@ -195,7 +200,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   "exam.create": "Create examinations",
   "exam.delete": "Delete examinations",
   "exam.grade": "Record and amend examination marks",
-  "exam.publish": "Release examination results to students",
+  "exam.publish": "Publish or unpublish examination schedules",
   "exam.read": "View examinations",
   "exam.update": "Modify examinations",
   "google.read": "View the Google Calendar connection",
@@ -238,7 +243,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   "quiz.create": "Create quizzes",
   "quiz.delete": "Delete quizzes",
   "quiz.grade": "Grade quizzes",
-  "quiz.publish": "Release quiz results to students",
+  "quiz.publish": "Publish or unpublish quizzes",
   "quiz.read": "View quizzes",
   "quiz.update": "Modify quizzes",
   "report.export": "Export reports",
@@ -274,4 +279,9 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionName, string> = {
   "user.sync": "Synchronise user accounts from the external LAIT system",
   "user.update": "Modify user accounts",
   "user.view_contact": "See other people's email addresses, phone numbers and login names in user accounts",
+  "video.create": "Add videos to the video library",
+  "video.delete": "Delete your own videos",
+  "video.publish": "Share videos with people and batches",
+  "video.read": "Watch videos shared with you",
+  "video.update": "Edit your own videos",
 };

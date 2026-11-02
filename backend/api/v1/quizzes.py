@@ -24,6 +24,7 @@ from backend.api.deps import CurrentUser, require_permissions, resolve_permissio
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
 from backend.models.quiz import QuestionOption, Question, Quiz, QuizAnswer, QuizAttempt
+from backend.schemas.assessment_common import ownership_fields
 from backend.schemas.base import Page, PageParams
 from backend.schemas.quiz import (
     AUTO_GRADABLE,
@@ -311,7 +312,11 @@ async def list_quizzes(
     rows, total = await QuizService(session).list_quizzes(
         params, actor=actor, course_public_id=course_id
     )
-    return Page.build([QuizSummary.model_validate(q) for q in rows], total=total, params=params)
+    return Page.build(
+        [QuizSummary.model_validate(q).model_copy(update=ownership_fields(q, actor)) for q in rows],
+        total=total,
+        params=params,
+    )
 
 
 @router.post(
@@ -380,6 +385,7 @@ async def _quiz_response(service: QuizService, quiz: Quiz, actor) -> QuizRespons
         )
     )
     return QuizResponse(
+        **ownership_fields(quiz, actor),
         public_id=quiz.public_id,
         title=quiz.title,
         duration_minutes=quiz.duration_minutes,
@@ -448,7 +454,8 @@ async def publish_quiz(
     session: DBSession,
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.QUIZ, Action.PUBLISH)))],
 ) -> QuizResponse:
-    """A quiz with no questions cannot be published."""
+    """The author or an unrestricted caller; another tutor's quiz is a 404.
+    A quiz with no questions cannot be published."""
     service = QuizService(session)
     quiz = await service.set_published(quiz_id, payload.is_published, actor=actor)
     return await _quiz_response(service, quiz, actor)

@@ -46,6 +46,8 @@ from backend.services.assessment_scope import (
     validate as validate_scope,
 )
 from backend.services.scope import ScopeResolver
+from backend.services.assessment_access import AssessmentAccess
+from backend.core.permissions import Action, Module, perm
 from backend.utils.enums import (
     AssessmentScope,
     AssessmentState,
@@ -70,6 +72,7 @@ class AssignmentService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.assignments = AssignmentRepository(session)
+        self.access = AssessmentAccess(session)
         self.submissions = SubmissionRepository(session)
         self.courses = CourseService(session)
         self.scopes = ScopeResolver(session)
@@ -92,18 +95,40 @@ class AssignmentService:
         if course_public_id is not None:
             course_id = (await self.courses.get(course_public_id, actor=actor)).id
 
-        scope = await self.scopes.visible_course_ids(actor)
-        return await self.assignments.search(params, scope=scope, course_id=course_id, query=query)
+        visibility = await self.access.visibility(actor)
+        return await self.assignments.search(
+            params,
+            visibility=visibility,
+            course_id=course_id,
+            query=query,
+            # A draft is its author's working copy. Students used to see drafts
+            # listed (they could not submit to one), which left "publish"
+            # meaning very little.
+            published_only=not self._is_staff(actor),
+        )
 
     async def get(self, public_id: uuid.UUID, *, actor: User) -> Assignment:
         row = await self.assignments.get_by_public_id_full(public_id)
         if row is None:
             raise NotFoundError("Assignment not found.")
 
-        scope = await self.scopes.visible_course_ids(actor)
-        if not scope.allows(row.course_id):
+        # Course scope, withdrawal and tutor isolation in one predicate shared
+        # with quizzes and exams (`services/assessment_access.py`). Another
+        # tutor's assignment is a 404, exactly like one that does not exist.
+        if not await self.access.may_read(row, actor):
+            raise NotFoundError("Assignment not found.")
+        if row.state is not AssessmentState.PUBLISHED and not self._is_staff(actor):
             raise NotFoundError("Assignment not found.")
         return row
+
+    @staticmethod
+    def _is_staff(actor: User) -> bool:
+        return perm(Module.ASSIGNMENT, Action.UPDATE) in ScopeResolver.held_permissions(actor)
+
+    @staticmethod
+    def _assert_manages(row: Assignment, actor: User) -> None:
+        if not AssessmentAccess.may_manage(row, actor):
+            raise AuthorizationError("Only the tutor who set this assignment can change it.")
 
     async def create(
         self, course_public_id: uuid.UUID, payload: AssignmentCreateRequest, *, actor: User
@@ -145,6 +170,7 @@ class AssignmentService:
             scope=target.scope,
             batch_id=target.batch_id,
             session_id=target.session_id,
+            created_by=actor.id,
             state=payload.state,
             publish_at=payload.publish_at,
             available_from=payload.available_from,
@@ -179,12 +205,16 @@ class AssignmentService:
             details={"title": row.title, "course": course.title},
         )
 
-        # A draft is not announced. §8 allows saving work before it is ready,
-        # and announcing it the moment it is saved would defeat the point --
-        # `publish` sends the notification when the tutor is ready.
-        if row.state is not AssessmentState.PUBLISHED:
-            roster = []
+        # A draft is not announced: §8 allows saving work before it is ready.
+        # (It used to be -- the empty roster set here was overwritten on the
+        # very next line, so every draft notified its students.)
+        if row.state is AssessmentState.PUBLISHED:
+            await self._announce(row, course, target)
 
+        return await self.assignments.get_by_public_id_full(row.public_id)  # type: ignore[return-value]
+
+    async def _announce(self, row: Assignment, course, target: AssessmentTarget) -> None:  # noqa: ANN001
+        """Tell the students it is set for, and their guardians, and fire the webhook."""
         # The one fan-out in the system, and it is bounded by a course
         # roster. An announcement is the mechanism for anything wider -- see
         # `MAX_FANOUT` in the notification service for where the line is.
@@ -223,12 +253,14 @@ class AssignmentService:
             },
         )
 
-        return await self.assignments.get_by_public_id_full(row.public_id)  # type: ignore[return-value]
-
     async def update(
         self, public_id: uuid.UUID, payload: AssignmentUpdateRequest, *, actor: User
     ) -> Assignment:
         row = await self.get(public_id, actor=actor)
+        # Editing -- publishing and unpublishing included, which are a change
+        # to `state` -- is the author's (or an unrestricted caller's). The
+        # console and the assistant's `publish_assessment` both arrive here.
+        self._assert_manages(row, actor)
         changes = payload.model_dump(exclude_unset=True)
 
         new_max = changes.get("max_score")
@@ -255,6 +287,7 @@ class AssignmentService:
         if "description" in changes:
             changes["description"] = sanitize_rich_text(changes["description"]) or None
 
+        was_published = row.state is AssessmentState.PUBLISHED
         for field, value in changes.items():
             setattr(row, field, value)
 
@@ -267,29 +300,32 @@ class AssignmentService:
             entity_id=row.id,
             details={"fields": sorted(changes)},
         )
+        if row.state is AssessmentState.PUBLISHED and not was_published:
+            # Publishing a draft announces it, once: the moment students can open it.
+            await self._announce(row, row.course, AssessmentTarget.of(row))
         return row
 
     async def delete(self, public_id: uuid.UUID, *, actor: User) -> None:
+        """Withdraw the assignment: gone from every listing and every old link.
+
+        Not a row deletion. Its submissions hold students' work and marks, and
+        the grade book and any finalised transcript were computed from them;
+        deleting the row would cascade away or orphan all of that. The author
+        may withdraw their own at any time, a Super Admin anybody's.
+        """
         row = await self.get(public_id, actor=actor)
-
-        count = await self.assignments.count_submissions(row.id)
-        if count:
-            # Submissions carry students' work and their marks; deleting the
-            # assignment out from under them destroys both.
-            raise ConflictError(
-                "This assignment already has submissions and cannot be deleted.",
-                details={"submissions": count},
-            )
-
-        entity_id = row.id
-        await self.session.delete(row)
+        self._assert_manages(row, actor)
+        kept = await self.assignments.count_submissions(row.id)
+        row.deleted_at = datetime.now(UTC)
+        row.deleted_by = actor.id
         audit_service.record(
             self.session,
             action=AuditAction.DELETE,
             actor_user_id=actor.id,
             actor_email=actor.email,
             entity_type="assignment",
-            entity_id=entity_id,
+            entity_id=row.id,
+            details={"title": row.title, "withdrawn": True, "submissions_kept": kept},
         )
 
     # -- submissions ---------------------------------------------------------
@@ -316,6 +352,7 @@ class AssignmentService:
         return await self.submissions.search(
             params,
             visibility=visibility,
+            assessments=await self.access.visibility(actor),
             assignment_id=assignment_id,
             student_id=student_id,
             graded=graded,
@@ -337,6 +374,12 @@ class AssignmentService:
             )
             if not reachable:
                 raise NotFoundError("Submission not found.")
+        # Reachable, but the assignment it answers must be too: withdrawn, or a
+        # colleague's, closes the submission with it. A student's own is theirs.
+        if row.assignment.deleted_at is not None or (
+            row.student_id != actor.id and not await self.access.may_read(row.assignment, actor)
+        ):
+            raise NotFoundError("Submission not found.")
         return row
 
     # -- attachments ---------------------------------------------------------

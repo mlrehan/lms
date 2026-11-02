@@ -175,6 +175,8 @@ export interface AssignmentPublishResultsRequest {
 }
 
 export interface AssignmentResponse {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   due_date: string;
@@ -210,6 +212,8 @@ export interface AssignmentResponse {
 }
 
 export interface AssignmentSummary {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   due_date: string;
@@ -1295,6 +1299,8 @@ export interface ExamPublishResultsRequest {
 }
 
 export interface ExamResponse {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   exam_type: ExamType;
@@ -1339,6 +1345,8 @@ export interface ExamResultResponse {
 }
 
 export interface ExamSummary {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   exam_type: ExamType;
@@ -2657,6 +2665,8 @@ export interface QuizReleaseResultsRequest {
 }
 
 export interface QuizResponse {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   duration_minutes?: number | null;
@@ -2691,6 +2701,8 @@ export interface QuizResponse {
 }
 
 export interface QuizSummary {
+  /** The caller wrote it (or is unrestricted): may edit, publish, unpublish and delete it. */
+  can_manage?: boolean;
   public_id: string;
   title: string;
   duration_minutes?: number | null;
@@ -4046,3 +4058,69 @@ export interface WebhookEventCatalogResponse {
   note?: string;
 }
 
+
+// -- Video library (hand-written; see memory note: do not regenerate this file) --
+
+export interface VideoProviderNotes {
+  plays_in_lms: boolean;
+  download: string;
+  domain_restriction: string;
+  needs_provider_sign_in: boolean;
+}
+
+export interface VideoSummary {
+  public_id: string;
+  title: string;
+  description?: string | null;
+  provider: string;
+  provider_label: string;
+  plays_in_lms: boolean;
+  /** A path on the API that re-checks access, or null. */
+  thumbnail_url?: string | null;
+  course_id?: string | null;
+  course_title?: string | null;
+  batch_id?: string | null;
+  batch_code?: string | null;
+  category_id?: string | null;
+  category_name?: string | null;
+  owner_name?: string | null;
+  is_mine?: boolean;
+  can_manage?: boolean;
+  share_count?: number | null;
+  created_at: string;
+}
+
+export interface PageVideoSummary {
+  items: VideoSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface VideoShareLine {
+  id: number;
+  kind: "PERSON" | "BATCH";
+  label: string;
+  created_at: string;
+}
+
+export interface VideoDetail extends VideoSummary {
+  /** Frame this path; null when the provider cannot play inside the LMS. */
+  player_url?: string | null;
+  open_url: string;
+  /** The provider's own address -- only for whoever manages the video. */
+  source_url?: string | null;
+  notes: VideoProviderNotes;
+  shares?: VideoShareLine[] | null;
+}
+
+export interface VideoInspectResponse {
+  provider: string;
+  provider_label: string;
+  notes: VideoProviderNotes;
+}
+
+export interface VideoShareResult {
+  people_added: number;
+  batches_added: number;
+}

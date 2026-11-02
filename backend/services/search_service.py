@@ -230,8 +230,14 @@ class SearchService:
             if work.unrestricted
             else Scope.of(set(work.taught_course_ids) | await self._enrolled_course_ids(actor))
         )
+        from backend.services.assessment_access import AssessmentAccess
+
         rows, total = await AssignmentRepository(self.session).search(
-            params, scope=scope, query=query
+            params,
+            scope=scope,
+            # Tutor isolation and withdrawal, as on the assignments screen.
+            visibility=await AssessmentAccess(self.session).visibility(actor),
+            query=query,
         )
         return [
             SearchHit(

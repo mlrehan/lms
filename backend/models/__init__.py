@@ -49,6 +49,7 @@ from .ai_embedding import ResourceEmbedding, AIConversationMessage
 from .ai_ticket import AIConfirmationTicket
 from .ai_index_state import ResourceIndexState
 from .ai_attachment import AIAttachment
+from .video import Video, VideoShare
 
 __all__ = [
     # AI & Embeddings
@@ -92,4 +93,10 @@ __all__ = [
     "SharedLink", "SharedLinkTarget",
     # Background synchronisation
     "SyncPipelineRun", "SyncPipelineJob", "PIPELINE_STEPS", "PIPELINE_STEP_LABELS",
+    # Video library
+    "Video", "VideoShare",
 ]
+
+# Withdrawn (soft-deleted) assessments are hidden from every ORM query by one
+# session hook; registered here so every process that loads the models has it.
+import backend.db.withdrawn  # noqa: E402,F401

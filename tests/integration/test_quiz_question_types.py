@@ -549,11 +549,13 @@ def test_the_same_rules_apply_when_a_question_is_edited(env) -> None:
     """
     async def edit(s):  # noqa: ANN001, ANN202
         from backend.schemas.quiz import QuestionUpdateRequest
-        student = await s.get(User, env.world["alice"])
+        # Somebody allowed to edit the paper, so the answer-key rule is what
+        # refuses it rather than ownership.
+        editor = (await s.execute(select(User).where(User.username == "superadmin"))).scalar_one()
         return await QuizService(s).update_question(
             env.world["numeric"],
             QuestionUpdateRequest(settings={"answer": "not a number"}),
-            actor=student,
+            actor=editor,
         )
 
     with pytest.raises(ValidationError):

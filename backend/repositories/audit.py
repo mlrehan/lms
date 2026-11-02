@@ -51,6 +51,7 @@ from backend.models.notification import Announcement
 from backend.models.organization import ManagedStudent, Organization, OrganizationMembership
 from backend.models.quiz import Question, Quiz, QuizAttempt
 from backend.models.resource import Resource, ResourceFolder
+from backend.models.video import Video
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
 
@@ -118,6 +119,7 @@ ENTITY_KINDS: dict[str, EntityKind] = {
     "token": EntityKind(Token),
     "transcript": EntityKind(Transcript),
     "user": EntityKind(User, User.username),
+    "video": EntityKind(Video, Video.title),
     "mail_message": EntityKind(MailMessage, MailMessage.subject),
 }
 
@@ -271,7 +273,9 @@ class AuditRepository(BaseRepository[AuditLog]):
                 # A user's label is their login name, which is usually their email address: show the name instead.
                 name = func.coalesce(func.nullif(func.trim(func.concat_ws(" ", User.first_name, User.last_name)), ""), "A user")
                 stmt = select(kind.pk, kind.model.public_id, name)
-            stmt = stmt.where(kind.pk.in_(ids))
+            # An audit trail names what was withdrawn too: hiding a deleted
+            # assessment's title here is how "DELETE assignment" loses its subject.
+            stmt = stmt.where(kind.pk.in_(ids)).execution_options(include_withdrawn=True)
             for row in (await self.session.execute(stmt)).all():
                 row_id = int(row[0])
                 if kind.addressable and kind.label is not None:
@@ -291,7 +295,11 @@ class AuditRepository(BaseRepository[AuditLog]):
         kind = ENTITY_KINDS.get(entity_type)
         if kind is None or not kind.addressable:
             return None
-        stmt = select(kind.pk).where(kind.model.public_id == public_id)
+        stmt = (
+            select(kind.pk)
+            .where(kind.model.public_id == public_id)
+            .execution_options(include_withdrawn=True)
+        )
         row = (await self.session.execute(stmt)).scalar_one_or_none()
         return int(row) if row is not None else None
 

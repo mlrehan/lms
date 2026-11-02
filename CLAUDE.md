@@ -5065,6 +5065,36 @@ and `certbot`. Migrations are run explicitly
 * Being one process matters: the AI request limiter keeps its window in
   memory. Scaling to several workers would need it moved to Redis.
 
+## Assessment ownership, tutor isolation, soft delete, and the video library
+
+Migrations `d7b3e8f2a640` (ownership) and `e8c4f1a7b352` (videos). After pulling: `alembic upgrade head`, re-seed identity (new `video.*` permissions; `quiz.publish`/`exam.publish` regranted to TUTOR), and re-run `create_ai_readonly_role` (two new tables).
+
+* **Ownership.** `assignments`/`quizzes`/`exams` carry `created_by` (`AssessmentOwnershipMixin`, `models/helpers.py`), backfilled from each row's audit CREATE entry. NULL = institution-owned, which only unrestricted callers manage.
+* **One manage rule** (`services/assessment_access.py::AssessmentAccess.may_manage`): unrestricted, or `created_by == actor.id`. Edit, publish, unpublish, delete, questions and invigilators all go through it in the **services**, so the console and the AI cannot disagree. Responses carry `can_manage`, and the pages gate on it rather than on a role.
+* **Tutors publish and unpublish their own work** without approval (user decision). The earlier "only the Super Admin publishes" version was reverted. The root cause of the complaint was that the assignment page had no publish control at all; it now has a Published switch (PATCH `state`).
+* **Isolation.** `AssessmentVisibility` hides another tutor's assessments from a tutor on courses they *teach*. It does not hide them on courses the tutor (or someone in their care) *studies*, because there they are a reader. "Another tutor" = a creator holding TUTOR and not an admin role (`written_by_another_tutor`), so institution-owned and admin-written work stays visible to every tutor of the course. Applied to listings, `get`, search, submissions/attempts/results, the grade book (`entry_source_is_visible`) and the AI read tools. Batch-level aggregates (performance, transcripts) are not filtered: they name no individual assessment.
+* **Students never see a DRAFT assignment**, in the list or by link. A creation-time bug also announced drafts to the roster (`roster = []` was overwritten on the next line); fixed.
+* **Delete is soft** (`deleted_at`/`deleted_by`); submissions, marks and grade-book rows survive. One hook (`db/withdrawn.py`, `do_orm_execute` + `with_loader_criteria`) hides withdrawn rows from every top-level ORM SELECT. It deliberately skips relationship loads, so `submission.assignment` still resolves. Opt out with `execution_options(include_withdrawn=True)`, as the audit repository does so an audit row still names what it describes.
+* **Video library** (`models/video.py`, `services/video_service.py`, `api/v1/videos.py`, `/videos` in the console). A video is a validated provider link (`core/video_links.py`: YouTube, Vimeo, Wistia, Brightcove, Dacast, StreamYard, Zoom, Teams, Zoho, Google Meet; anything else is offered as a link, not framed). It is shared with batches or people (`video_shares`, exactly one target per row) through `ResourceShareAudience`: a tutor reaches their batches, their students and those students' guardians; the Super Admin reaches anyone. `/player`, `/open` and `/thumbnail` re-check access on every request and 307 to the provider with `no-store`. The provider URL is never in a payload for a viewer. Each view is audited (`VIDEO_VIEW`).
+* **Honest limit, stated in the UI too:** the player is the provider's own, so whatever download or share control the provider offers stays. This is not DRM. A video that must not be downloadable belongs in the Resources library as a stored file.
+* **AI** (`ai/tools/library_tools.py`):
+  * `list_my_assessments` and `delete_assessment` (HIGH, confirmed; refuses another tutor's work).
+  * `find_videos`, `add_video`, and `share_video` (HIGH, confirmed; people by full name within the share audience).
+  * `assign_grading_scheme` (Super Admin, HIGH, confirmed).
+  * `publish_assessment` takes `publish: false` to unpublish.
+  * Every role's prompt names what applies to it.
+* **AI errors:** an OpenAI 429 `insufficient_quota` used to read "AI service is currently busy". It now says the provider account has no credit (`ai/client.py::_rate_limit_message`).
+* Tests:
+  * `tests/integration/test_assessment_privacy_and_videos.py` (19, real Postgres; mutation-checked 6/6, including the withdrawn hook and `mine_only`).
+  * `tests/unit/ai/test_rate_limit_message.py`.
+* **Not verified:** a real-model replay of the new AI tools. The OpenAI account had no credit (429 `insufficient_quota`), so the tools are proven only by the integration tests and a scripted model.
+* **Verified in the browser as Super Admin:**
+  * The library lists a YouTube video with its thumbnail, the player loads without Error 153, and theatre mode works.
+  * The share dialog lists people.
+  * The assignment Published switch saves (PATCH 200).
+  * The delete dialog wording is correct.
+* **Not driven as a tutor in the browser.**
+
 ## The AI assistant (`backend/ai/`)
 
 Built during the Antigravity phase (OpenAI, role-bound agents, a tool

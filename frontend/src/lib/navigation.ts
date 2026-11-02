@@ -14,6 +14,7 @@ import {
   Cog,
   Trash2,
   FileSpreadsheet,
+  Film,
   FolderTree,
   GraduationCap,
   KeyRound,
@@ -179,6 +180,8 @@ export const NAVIGATION: NavSection[] = [
        */
       { href: "/resources", label: "Resources", icon: FolderTree, permission: "resource.create" },
       { href: "/shared-with-me", label: "Shared with me", icon: Share2 },
+      // Videos the caller may watch; the server narrows the list to them.
+      { href: "/videos", label: "Video library", icon: Film, permission: "video.read" },
     ],
   },
   {

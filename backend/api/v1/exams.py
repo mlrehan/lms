@@ -13,6 +13,7 @@ from backend.api.deps import CurrentUser, require_permissions, resolve_permissio
 from backend.core.permissions import Action, Module, perm
 from backend.db.dependencies import DBSession
 from backend.models.exam import Exam, ExamResult
+from backend.schemas.assessment_common import ownership_fields
 from backend.schemas.base import Page, PageParams
 from backend.schemas.exam import (
     ExamCreateRequest,
@@ -31,7 +32,7 @@ router = APIRouter(tags=["Examinations"])
 
 
 def _exam_response(
-    e: Exam, *, results: int = 0, published: int = 0, staff: bool = True
+    e: Exam, *, results: int = 0, published: int = 0, staff: bool = True, actor=None  # noqa: ANN001
 ) -> ExamResponse:
     """One examination.
 
@@ -46,6 +47,7 @@ def _exam_response(
     `user.view_contact`.
     """
     return ExamResponse(
+        **(ownership_fields(e, actor) if actor is not None else {}),
         public_id=e.public_id,
         title=e.title,
         exam_type=e.exam_type,
@@ -102,7 +104,11 @@ async def list_exams(
     course they don't teach still needs to see it. Unpublished schedules are
     visible only to callers who can manage exams."""
     rows, total = await ExamService(session).list_exams(params, actor=actor)
-    return Page.build([ExamSummary.model_validate(e) for e in rows], total=total, params=params)
+    return Page.build(
+        [ExamSummary.model_validate(e).model_copy(update=ownership_fields(e, actor)) for e in rows],
+        total=total,
+        params=params,
+    )
 
 
 @router.post(
@@ -119,7 +125,7 @@ async def create_exam(
     """Must be anchored to a course, a batch, or both — an exam attached to
     neither is unreachable by every scoping query. A batch-anchored exam
     inherits that batch's course automatically."""
-    return _exam_response(await ExamService(session).create(payload, actor=actor))
+    return _exam_response(await ExamService(session).create(payload, actor=actor), actor=actor)
 
 
 @router.get("/exams/{exam_id}", response_model=ExamResponse, summary="Get one examination")
@@ -137,7 +143,7 @@ async def get_exam(
         published=published,
         # The one read a candidate makes. Recording marks is what makes
         # somebody staff here; sitting the paper is not.
-        staff=perm(Module.EXAM, Action.UPDATE) in resolve_permissions(actor),
+        staff=perm(Module.EXAM, Action.UPDATE) in resolve_permissions(actor), actor=actor
     )
 
 
@@ -149,7 +155,7 @@ async def update_exam(
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.EXAM, Action.UPDATE)))],
 ) -> ExamResponse:
     """`total_marks` cannot be lowered below a mark already recorded."""
-    return _exam_response(await ExamService(session).update(exam_id, payload, actor=actor))
+    return _exam_response(await ExamService(session).update(exam_id, payload, actor=actor), actor=actor)
 
 
 @router.put(
@@ -163,10 +169,10 @@ async def publish_exam(
     session: DBSession,
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.EXAM, Action.PUBLISH)))],
 ) -> ExamResponse:
-    """Publishes the *schedule* only. Results have their own, separate switch
+    """The author or an unrestricted caller. Publishes the *schedule* only. Results have their own, separate switch
     — a timetable is normally public long before any marks are."""
     return _exam_response(
-        await ExamService(session).set_published(exam_id, payload.is_published, actor=actor)
+        await ExamService(session).set_published(exam_id, payload.is_published, actor=actor), actor=actor
     )
 
 
@@ -184,7 +190,7 @@ async def set_invigilators(
     """An authorization write: an invigilator gains sight of the exam and its
     candidates whether or not they teach the course."""
     return _exam_response(
-        await ExamService(session).set_invigilators(exam_id, payload.invigilators, actor=actor)
+        await ExamService(session).set_invigilators(exam_id, payload.invigilators, actor=actor), actor=actor
     )
 
 
@@ -196,8 +202,8 @@ async def delete_exam(
     session: DBSession,
     actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.EXAM, Action.DELETE)))],
 ) -> Response:
-    """Refused once results are recorded — the cascade would take every mark
-    with it."""
+    """Withdraws the exam (soft delete). The author or a Super Admin may;
+    recorded results are kept, and old links answer 404."""
     await ExamService(session).delete(exam_id, actor=actor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

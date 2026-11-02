@@ -63,6 +63,8 @@ class AuditAction:
     # permission check with no memory.
     CLASS_JOIN = "CLASS_JOIN"
     RECORDING_VIEW = "RECORDING_VIEW"
+    #: A video-library video opened in the in-platform player (once per open).
+    VIDEO_VIEW = "VIDEO_VIEW"
     AI_INTERACTION = "AI_INTERACTION"
     AI_CONFIRMED_ACTION = "AI_CONFIRMED_ACTION"
     AI_SECURITY_ALERT = "AI_SECURITY_ALERT"

@@ -28,7 +28,7 @@ import pytest
 from sqlalchemy import select, text
 
 from backend.core.config import get_settings
-from backend.core.errors import ConflictError, ValidationError
+from backend.core.errors import NotFoundError, ConflictError, ValidationError
 from backend.db.manager import DatabaseManager
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course, TutorCourse
@@ -238,7 +238,10 @@ def test_a_draft_accepts_nothing(env) -> None:
                 actor=made["tutor"],
             )
             await s.flush()
-            with pytest.raises(ConflictError):
+            # A draft is not even visible to a student any more -- they get the
+            # same 404 as for work that does not exist, which is stricter than
+            # the refusal this test was written against.
+            with pytest.raises(NotFoundError):
                 await svc.submit(row.public_id, SubmitAssignmentRequest(content="x"),
                                  actor=made["alice"])
             return True

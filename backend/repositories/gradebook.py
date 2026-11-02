@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.models.batch import Batch
@@ -16,6 +16,7 @@ from backend.schemas.base import PageParams
 from backend.utils.enums import GradeComponentType
 
 if TYPE_CHECKING:
+    from backend.services.assessment_access import AssessmentVisibility
     from backend.services.scope import EnrollmentVisibility
 
 
@@ -57,6 +58,42 @@ class GradeBandRepository(BaseRepository[GradeBand]):
             .limit(1)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+
+def entry_source_is_visible(assessments: "AssessmentVisibility") -> Any:
+    """SQL: the assessment behind a derived entry is live and not a colleague's.
+
+    `reference_id` points at the submission, attempt or result the entry was
+    derived from. Selecting those ids through their assessment lets the
+    session hook drop withdrawn assessments (`db/withdrawn.py`) and
+    `exclude_colleagues` drop another tutor's. Entries with no source --
+    attendance, class performance -- are the batch's, not any author's.
+    """
+    from backend.models.assignment import Assignment, AssignmentSubmission
+    from backend.models.exam import Exam, ExamResult
+    from backend.models.quiz import Quiz, QuizAttempt
+
+    subs = assessments.exclude_colleagues(
+        select(AssignmentSubmission.id).join(Assignment, Assignment.id == AssignmentSubmission.assignment_id),
+        course_column=Assignment.course_id, creator_column=Assignment.created_by,
+    )
+    attempts = assessments.exclude_colleagues(
+        select(QuizAttempt.id).join(Quiz, Quiz.id == QuizAttempt.quiz_id),
+        course_column=Quiz.course_id, creator_column=Quiz.created_by,
+    )
+    results = assessments.exclude_colleagues(
+        select(ExamResult.id).join(Exam, Exam.id == ExamResult.exam_id),
+        course_column=Exam.course_id, creator_column=Exam.created_by,
+    )
+    return or_(
+        GradeBookEntry.reference_id.is_(None),
+        and_(GradeBookEntry.component_type == GradeComponentType.ASSIGNMENT,
+             GradeBookEntry.reference_id.in_(subs)),
+        and_(GradeBookEntry.component_type == GradeComponentType.QUIZ,
+             GradeBookEntry.reference_id.in_(attempts)),
+        and_(GradeBookEntry.component_type == GradeComponentType.FINAL_EXAM,
+             GradeBookEntry.reference_id.in_(results)),
+    )
 
 
 class GradeBookRepository(BaseRepository[GradeBookEntry]):
@@ -116,12 +153,15 @@ class GradeBookRepository(BaseRepository[GradeBookEntry]):
         batch_id: int | None = None,
         student_id: int | None = None,
         component_type: GradeComponentType | None = None,
+        assessments: "AssessmentVisibility | None" = None,
     ) -> tuple[Sequence[GradeBookEntry], int]:
         stmt = visibility.apply(
             self._base(),
             batch_column=GradeBookEntry.batch_id,
             student_column=GradeBookEntry.student_id,
         )
+        if assessments is not None:
+            stmt = stmt.where(entry_source_is_visible(assessments))
 
         if batch_id is not None:
             stmt = stmt.where(GradeBookEntry.batch_id == batch_id)

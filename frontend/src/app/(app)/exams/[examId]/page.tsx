@@ -441,7 +441,7 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
           </span>
         }
         actions={
-          permissions.has("exam.delete") ? (
+          permissions.has("exam.delete") && data.can_manage ? (
             <Button
               variant="ghost"
               size="icon"
@@ -475,7 +475,8 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
             <label className="flex items-center gap-3 text-sm">
               <Switch
                 checked={data.is_published}
-                disabled={publishSchedule.isPending}
+                // The schedule is the author's (or a Super Admin's) to publish.
+                disabled={publishSchedule.isPending || !data.can_manage}
                 onCheckedChange={(checked) => publishSchedule.mutate(checked)}
               />
               Publish the schedule
@@ -531,8 +532,8 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         destructive
-        title="Delete this examination?"
-        description="Its results go with it."
+        title={`Delete "${data.title}"?`}
+        description="It disappears from every list and its links stop working, for students and staff alike. Recorded results and grade-book entries are kept, not deleted, and the deletion is recorded in the audit log."
         confirmPhrase={data.title}
         confirmLabel="Delete examination"
         pending={remove.isPending}

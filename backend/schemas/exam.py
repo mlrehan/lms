@@ -12,8 +12,10 @@ from pydantic import Field, field_validator, model_validator
 from backend.schemas.base import APIModel, RequestModel
 from backend.utils.enums import AssessmentScope, ExamType
 
+from backend.schemas.assessment_common import AssessmentOwnershipFields  # noqa: E402
 
-class ExamSummary(APIModel):
+
+class ExamSummary(APIModel, AssessmentOwnershipFields):
     public_id: uuid.UUID
     title: str
     exam_type: ExamType

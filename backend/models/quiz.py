@@ -5,11 +5,11 @@ from sqlalchemy import (Integer, String, ForeignKey, DateTime,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, List
 from backend.models.base import Base, PublicIdMixin
-from .helpers import bool_column, utc_datetime_column
+from .helpers import AssessmentOwnershipMixin, bool_column, utc_datetime_column
 from backend.utils.enums import AssessmentScope, AssessmentState, SubmissionState, QuestionType
 
 
-class Quiz(Base, PublicIdMixin):
+class Quiz(Base, PublicIdMixin, AssessmentOwnershipMixin):
     """Spec §13."""
     __tablename__ = "quizzes"
 

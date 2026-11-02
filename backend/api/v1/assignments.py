@@ -32,6 +32,7 @@ from backend.schemas.assignment import (
     SubmitAssignmentRequest,
 )
 from backend.api.v1.resources import _stream
+from backend.schemas.assessment_common import ownership_fields
 from backend.schemas.base import Page, PageParams
 from backend.services.assessment_scope import AssessmentTarget, describe as describe_scope
 from backend.services.assignment_service import AssignmentService
@@ -48,6 +49,7 @@ def _assignment_response(
     my_submission_id: uuid.UUID | None = None,
     eligible_count: int | None = None,
     staff: bool = True,
+    actor: User | None = None,
 ) -> AssignmentResponse:
     """One assignment.
 
@@ -68,7 +70,7 @@ def _assignment_response(
     is out of, the accepted file types and size, the late penalty, the pass
     mark -- is unchanged.
     """
-    return AssignmentResponse(
+    response = AssignmentResponse(
         public_id=a.public_id,
         title=a.title,
         due_date=a.due_date,
@@ -101,6 +103,9 @@ def _assignment_response(
         allow_resubmission=a.allow_resubmission,
         late_penalty_percent_per_day=a.late_penalty_percent_per_day,
     )
+    if actor is None:
+        return response
+    return response.model_copy(update=ownership_fields(a, actor))
 
 
 def _file_response(f: AssignmentSubmissionFile) -> SubmissionFileResponse:
@@ -196,7 +201,12 @@ async def list_assignments(
         params, actor=actor, course_public_id=course_id
     )
     return Page.build(
-        [AssignmentSummary.model_validate(a) for a in rows], total=total, params=params
+        [
+            AssignmentSummary.model_validate(a).model_copy(update=ownership_fields(a, actor))
+            for a in rows
+        ],
+        total=total,
+        params=params,
     )
 
 
@@ -215,7 +225,7 @@ async def create_assignment(
     ],
 ) -> AssignmentResponse:
     return _assignment_response(
-        await AssignmentService(session).create(course_id, payload, actor=actor)
+        await AssignmentService(session).create(course_id, payload, actor=actor), actor=actor
     )
 
 
@@ -242,7 +252,7 @@ async def get_assignment(
         my_submission_id=mine.public_id if mine else None,
         # The one read a candidate makes. Setting coursework is what makes
         # somebody staff here -- reading it is not.
-        staff=perm(Module.ASSIGNMENT, Action.UPDATE) in resolve_permissions(actor),
+        staff=perm(Module.ASSIGNMENT, Action.UPDATE) in resolve_permissions(actor), actor=actor
     )
 
 
@@ -261,7 +271,7 @@ async def update_assignment(
 ) -> AssignmentResponse:
     """`max_score` cannot be lowered below a grade already awarded."""
     return _assignment_response(
-        await AssignmentService(session).update(assignment_id, payload, actor=actor)
+        await AssignmentService(session).update(assignment_id, payload, actor=actor), actor=actor
     )
 
 
@@ -277,7 +287,8 @@ async def delete_assignment(
         CurrentUser, Depends(require_permissions(perm(Module.ASSIGNMENT, Action.DELETE)))
     ],
 ) -> Response:
-    """Refused once submissions exist — they hold students' work and marks."""
+    """Withdraws the assignment (soft delete). The author or a Super Admin may;
+    submissions and marks are kept, and old links answer 404."""
     await AssignmentService(session).delete(assignment_id, actor=actor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

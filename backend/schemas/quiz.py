@@ -142,8 +142,10 @@ def answer_key_problem(
         return f"{question_type.value} is graded manually and takes no options"
     return None
 
+from backend.schemas.assessment_common import AssessmentOwnershipFields  # noqa: E402
 
-class QuizSummary(APIModel):
+
+class QuizSummary(APIModel, AssessmentOwnershipFields):
     public_id: uuid.UUID
     title: str
     duration_minutes: int | None = None
