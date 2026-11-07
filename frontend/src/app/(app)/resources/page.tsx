@@ -723,6 +723,7 @@ function ResourcesContent() {
   const [selected, setSelected] = useState<string | null>(params.get("resource"));
 
   const [sharingMany, setSharingMany] = useState<string[]>([]);
+  const [sharingFolder, setSharingFolder] = useState<FolderSummary | null>(null);
   const [deleting, setDeleting] = useState<ResourceSummary | null>(null);
   const [deletingMany, setDeletingMany] = useState<string[]>([]);
   const [purgingTarget, setPurgingTarget] = useState<string[] | null>(null);
@@ -892,6 +893,7 @@ function ResourcesContent() {
     onPurgeMany: (resourceIds) => setPurgingTarget(resourceIds),
     onRenameFolder: (folder) => setRenaming(folder),
     onDeleteFolder: (folder) => setDeletingFolder(folder),
+    onShareFolder: (folder) => setSharingFolder(folder),
   };
 
   const statusOptions = [
@@ -1161,6 +1163,15 @@ function ResourcesContent() {
         resourceId={selected}
         onClose={() => setSelected(null)}
         onPurge={(r) => setPurgingTarget([r.public_id])}
+      />
+
+      <ShareDialog
+        open={sharingFolder !== null}
+        onOpenChange={(open) => (open ? null : setSharingFolder(null))}
+        resourceIds={[]}
+        resourceNames={[]}
+        folderIds={sharingFolder ? [sharingFolder.public_id] : []}
+        folderNames={sharingFolder ? [sharingFolder.name] : []}
       />
 
       <ShareDialog

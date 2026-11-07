@@ -215,6 +215,70 @@ class SharedResourceResponse(APIModel):
     resource_type: ResourceType | None = None
     mime_type: str | None = None
     size: int | None = None
+    # The course the file belongs to, from the file itself -- never from the
+    # share. The sharer cannot choose it, so it cannot be used to make a file
+    # look like part of a course it is not in. Null means the file belongs to
+    # no course, and the library groups it under "General".
+    course_id: uuid.UUID | None = None
+    course_title: str | None = None
+
+
+class SharedFolderResponse(APIModel):
+    """A folder handed to a person; everything beneath it is covered."""
+
+    folder_id: uuid.UUID
+    folder_name: str
+    level: ResourcePermissionLevel
+    shared_with_user_id: uuid.UUID | None = None
+    shared_with_name: str | None = None
+    shared_with_role: str | None = None
+    shared_by_name: str | None = None
+    created_at: datetime
+    course_id: uuid.UUID | None = None
+    course_title: str | None = None
+
+
+class SharedCourseGroup(APIModel):
+    """Everything shared with the caller that belongs to one course."""
+
+    course_id: uuid.UUID | None = Field(
+        default=None, description="Null for files and folders that belong to no course."
+    )
+    course_title: str | None = None
+    folders: list[SharedFolderResponse] = Field(default_factory=list)
+    files: list[SharedResourceResponse] = Field(default_factory=list)
+
+
+class SharedLibraryResponse(APIModel):
+    groups: list[SharedCourseGroup] = Field(
+        default_factory=list,
+        description="One group per course, by title; the no-course group is last.",
+    )
+    total_files: int = 0
+    total_folders: int = 0
+
+
+class SharedFolderEntry(APIModel):
+    folder_id: uuid.UUID
+    name: str
+
+
+class SharedFolderContentsResponse(APIModel):
+    """One folder inside a tree that was shared with the caller."""
+
+    folder_id: uuid.UUID
+    name: str
+    level: ResourcePermissionLevel = Field(
+        description="What the caller may do with the files here, through the share."
+    )
+    course_id: uuid.UUID | None = None
+    course_title: str | None = None
+    path: list[SharedFolderEntry] = Field(
+        default_factory=list,
+        description="From the shared folder down to this one. Never above the share.",
+    )
+    folders: list[SharedFolderEntry] = Field(default_factory=list)
+    files: list[SharedResourceResponse] = Field(default_factory=list)
 
 
 class SharePlacement(APIModel):
@@ -249,10 +313,18 @@ class ShareCandidateResponse(APIModel):
 
 
 class BulkShareRequest(RequestModel):
-    """Several files, several people, one decision."""
+    """Several files and folders, several people, one decision."""
 
     resource_ids: list[uuid.UUID] = Field(
-        min_length=1, max_length=100, description="Files to share."
+        default_factory=list, max_length=500, description="Files to share."
+    )
+    folder_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        max_length=100,
+        description=(
+            "Folders to share. Everything beneath a folder is covered, including "
+            "files added to it later."
+        ),
     )
     user_ids: list[uuid.UUID] = Field(
         min_length=1, max_length=200, description="People to share them with."
@@ -263,6 +335,30 @@ class BulkShareRequest(RequestModel):
             "What the recipients may do. VIEW lets them read or watch it in "
             "place; DOWNLOAD hands over the bytes. Defaults to the narrower."
         ),
+    )
+
+    @model_validator(mode="after")
+    def _something_to_share(self) -> "BulkShareRequest":
+        if not self.resource_ids and not self.folder_ids:
+            raise ValueError("Choose at least one file or folder to share.")
+        return self
+
+
+class BulkShareResponse(APIModel):
+    """What one share did.
+
+    Counts rather than every share row of every file: the caller already knows
+    what it sent, and reading back each file's whole share list was a large
+    part of what made a twelve-file share outlast the gateway timeout.
+    """
+
+    files: int
+    folders: int
+    people: int
+    created: int = Field(description="New shares written.")
+    updated: int = Field(description="Existing shares whose level changed.")
+    unchanged: int = Field(
+        description="Already shared at this level; nothing was written for these."
     )
 
 

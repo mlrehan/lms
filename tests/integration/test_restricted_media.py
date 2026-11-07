@@ -151,6 +151,20 @@ def env():
         open_file, staff_only = media("open", restricted=False), media("staff", restricted=True)
         s.add_all([open_file, staff_only])
         await s.flush()
+        # Guardians and managers hold no `resource.read`, so a course's files
+        # are not theirs to browse; a *share* is how material reaches them.
+        # Both files are shared with them directly -- the staff-only one as a
+        # share made before it was restricted, which the share service now
+        # refuses to create -- so the refusals below are about the restriction,
+        # not about these two simply having no route to the file at all.
+        for who in ("guardian", "manager"):
+            for row in (open_file, staff_only):
+                s.add(SharedResource(
+                    resource_id=row.id, shared_with_user_id=people[who].id,
+                    shared_by_user_id=people["tutor"].id, level=L.VIEW,
+                    created_at=datetime.now(UTC),
+                ))
+        await s.flush()
         return {"course": course, "open": open_file, "staff": staff_only, **people}
 
     ns = type("Env", (), dict(tag=tag, run=staticmethod(run), build=staticmethod(build)))
@@ -288,7 +302,8 @@ def test_sharing_it_sideways_to_a_colleague_is_refused(env) -> None:
             rows = await ResourceService(s).share(
                 made["staff"].public_id, [admin.public_id], actor=made["tutor"]
             )
-            return [r.level for r in rows]
+            # The fixture's own guardian/manager rows are on this file too.
+            return [r.level for r in rows if r.shared_with_user_id == admin.id]
         return go()
 
     assert env.run(f) == [L.VIEW]

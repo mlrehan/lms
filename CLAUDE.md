@@ -5095,6 +5095,65 @@ Migrations `d7b3e8f2a640` (ownership) and `e8c4f1a7b352` (videos). After pulling
   * The delete dialog wording is correct.
 * **Not driven as a tutor in the browser.**
 
+## Sharing: the twelve-file timeout, folder sharing, duplicates, course grouping
+
+Migration `f9d2a6c3e815` (`shared_folders`, plus the missing recipient index on `shared_resources`). After pulling: `alembic upgrade head`, then re-run `create_ai_readonly_role` (new table). No permission changes, so no re-seed.
+
+### The timeout was the code, not the server
+
+"The server did not respond in time" is the console's own BFF (`api/backend/[...path]/route.ts`): it answers 504 when the API sends no headers within `LMS_API_TIMEOUT_MS` (30 s). The API took that long because **loading one `Resource` loaded its course's whole graph** -- every relationship on these models is `lazy="selectin"`, so course -> batches -> sessions -> enrolments -> users (with city, country, organisations) came along, about four times per file (`get`, `require_level`, the duplicate check, and a read-back of every file's whole share list that the dialog never used). Measured on a copy of a real course (7 batches, 20 sessions): **12 files to one student = 3,256 queries, 20.5 s, on an idle laptop**; after the fix, **9 queries, 0.05 s**. Raising the timeout would only have hidden it.
+
+* **Bounded load graphs** (`RESOURCE_LOAD` and the share repositories in `repositories/resource.py`): a loaded resource carries the flat fields its responses read and nothing behind them, with `raiseload("*")` on the nested side so a deeper read fails loudly in a test instead of quietly bringing the cascade back. This also speeds up opening and listing files everywhere.
+* **Bulk authorisation**: `effective_levels(resources, actor)` resolves the caller's scopes once (memoised per service instance, which lives one request) and every per-file lookup is one query over all files. `effective_level` is a wrapper over it, so one file and 500 go through the same rule.
+* **One write**: `_upsert_shares` is a single `INSERT ... ON CONFLICT (resource_id, shared_with_user_id) DO UPDATE SET level ... WHERE level IS DISTINCT FROM excluded.level RETURNING xmax = 0`. Created/updated/unchanged are counted from that, the response is those counts (`BulkShareResponse`), and the route commits before responding.
+* **Rows are sorted by the conflict key before the insert.** Without it, two tutors sharing overlapping files with overlapping students in different orders deadlocked (Postgres killed one with a 500) -- found by the load test, ~1 in 150 bursts; reproduced and pinned by `test_overlapping_shares_in_opposite_orders_do_not_deadlock`.
+
+### Duplicates and retries
+
+`UNIQUE (resource_id, shared_with_user_id)` already existed and is the guard; the folder table has the same one. Sharing again at the same level writes nothing and says nothing (the dialog shows the same "Shared with N people"); a different level is a permission change. Because the write is idempotent, a retry after a gateway timeout, or a double click, is harmless -- there is no check-then-insert to race. Mutations never auto-retry in the console (`mutations: { retry: false }`).
+
+### Folder sharing (`shared_folders`)
+
+One row per (folder, person). Access to everything beneath is **computed from the tree at read time** by a depth-capped recursive CTE (`_UP` / `_DOWN`, `MAX_FOLDER_DEPTH = 64`, cycle-safe), never copied into a row per file. So a file added later is covered at once, a file moved out stops being covered at once, and revoking the folder share removes exactly what it granted (a direct share of a file inside it is a separate row and survives). Folder grants in `resource_permissions.folder_id` are still recorded and still enforced nowhere -- left as found, because switching them on silently would widen access for any existing row. Staff-only files inside a shared folder stay hidden from non-staff by the same rule `get()` applies. Sharing a folder needs MANAGE on it (owning its course space with `resource.delete`, or unrestricted).
+
+Routes: `POST /resources/share` takes `folder_ids` beside `resource_ids`; `GET /folders/{id}/shares`; `DELETE /folders/{id}/share/{user_id}`; `GET /shared-with-me/folders/{id}` (subfolders + files, with a path that **stops at the shared folder** -- the folders above it were not part of the share).
+
+### "Shared with me", grouped by course
+
+`GET /shared-with-me/library` groups folders and files by **the material's own course** (`course_id`, else its batch's course) -- never anything the sharer chose, so it cannot be used to make a file look like part of another course. The no-course group is last ("General"). The page (`app/(app)/shared-with-me/page.tsx`) shows collapsible course groups with counts, opens a shared folder in place with a breadcrumb, and keeps the viewer, search, type filter and phone layout.
+
+### Three defects found on the way
+
+1. **Nothing shared with a guardian or a corporate manager could ever be opened.** They are in the share audience by design but hold no `resource.*` permission, and the file routes required `resource.read`. Now: `GET /resources/{id}`, `/preview`, `/download` and the shared-with-me routes need only a signed-in user, and the service decides. The **space route** (reaching files through a course or batch you can see) still requires `resource.read` (`_may_read_spaces`) -- otherwise a guardian would reach every file in their ward's courses. The library listing keeps its `resource.read` gate.
+2. **A share could grant EDIT or MANAGE** through the API, letting a student delete or re-share a tutor's file. `SHAREABLE_LEVELS` is VIEW and DOWNLOAD; existing rows are honoured as they are.
+3. **Responses before commits**, twice more: `POST /folders` and `POST /resources` now commit before responding -- "create a folder, upload into it" and "upload, then share" both raced under load and answered "not found".
+
+### Tests
+
+`tests/integration/test_folder_sharing.py` (19, real Postgres): inheritance and its boundary, files moved in and out, revocation that spares direct shares, duplicates, level changes, a retried HTTP request, three identical concurrent shares, the deadlock race, refusal of a colleague's folder and of MANAGE, guardian delivery, course grouping, a cycle in the tree, and a query-count ceiling. **Mutation-tested 8/8** (the first harness mis-wrote two mutations -- one evaluated to the original code -- and they were rerun properly). Four existing tests were updated to the new contract while keeping what they protect; `test_restricted_media.py` now gives guardians and managers a real share route so its staff-only refusals are about the restriction, not unreachability.
+
+### Load test (`scripts/load_test_resources.py`)
+
+Reusable: builds a tagged fixture (one course, 10 batches x 10 sessions, 70 students, 30 tutors, 12 uploaded files), runs 25/50/75/100 virtual users (70% students, 30% tutors, 0.5-1.5 s think time, 60 s measured after a 10 s ramp) and a burst of 30 tutors each sharing 12 files at the same instant, five times; samples DB connections and API CPU/memory; deletes everything. **Run it against a second API process** (`lms-api-verify`, :8010), never the one somebody is using.
+
+Measured 2026-11-07 on the development laptop (Windows, one API process, Postgres, two Next.js servers and the load generator all on the same machine):
+
+| Stage | Success | Throughput | 12-file share p50 / p95 | Notes |
+|---|---|---|---|---|
+| 25 users | 100% | 5.6 req/s | 3.6 s / 4.8 s | API at 70% of one core |
+| 50 users | 100% | 5.1 req/s | 7.0 s / 10.5 s | DB pool full (30) |
+| 75 users | 100% | 6.3 req/s | 8.4 s / 12.0 s | |
+| 100 users | 91.4% | 6.7 req/s | 10.5 s / 23.5 s | 500s = `QueuePool limit ... timeout 30` |
+| burst, 150 shares | 100% | 4.7 req/s | 5.8 s / 6.6 s | 0 deadlocks (1 in 150 before the sort) |
+
+Every latency there is queueing for one saturated core, not the work itself: unloaded, the same 12-file share is ~50 ms server-side. The failures at 100 users are the consequence chain of that: requests hold a pooled connection while waiting for CPU, the 10+20 pool empties, and new requests wait 30 s and fail.
+
+### Capacity -- measured, not claimed
+
+* The API is **one process** (`python -m backend.main`; the Docker image runs one too), so it uses one core.
+* Unloaded single requests: `/auth/me` 25 ms, `/dashboard` 42 ms, `/shared-with-me/library` 56 ms, **`/courses` 242 ms**. Profiled: `/courses` materialises ~2,700 ORM objects per request through the same model-wide eager loading (course -> batches -> sessions -> resources ...). It is the next fix and is deliberately not in this change.
+* Supporting 50-100 concurrent users needs (a) the course-list fix, (b) several API workers, which first needs the per-process pieces moved to Redis (the AI request limiter; the realtime bus already supports Redis), and (c) the production server's actual cores and Postgres sizing, which were not available to measure.
+
 ## The AI assistant (`backend/ai/`)
 
 Built during the Antigravity phase (OpenAI, role-bound agents, a tool

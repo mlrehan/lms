@@ -19,6 +19,33 @@
       ],
       "port": 3000,
       "cwd": "frontend"
+    },
+    {
+      "name": "lms-api-verify",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "backend.main"
+      ],
+      "env": {
+        "SERVER_PORT": "8010"
+      },
+      "port": 8010
+    },
+    {
+      "name": "lms-console-verify",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "start",
+        "-p",
+        "3010"
+      ],
+      "env": {
+        "LMS_API_URL": "http://127.0.0.1:8010/api/v1"
+      },
+      "port": 3010,
+      "cwd": "frontend"
     }
   ]
 }

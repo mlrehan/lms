@@ -212,6 +212,8 @@ export interface DriveActions {
   onRestoreMany?: (resourceIds: string[]) => void;
   onRenameFolder: (folder: FolderSummary) => void;
   onDeleteFolder: (folder: FolderSummary) => void;
+  /** Hand the whole folder over; everything beneath it is covered. */
+  onShareFolder?: (folder: FolderSummary) => void;
 }
 
 
@@ -509,6 +511,9 @@ export function DriveView({
                     }}
                     onRename={() => actions.onRenameFolder(folder)}
                     onDelete={() => actions.onDeleteFolder(folder)}
+                    onShare={
+                      actions.onShareFolder ? () => actions.onShareFolder?.(folder) : undefined
+                    }
                   />
                 ))}
               </div>
@@ -615,6 +620,9 @@ export function DriveView({
                   }}
                   onRename={() => actions.onRenameFolder(folder)}
                   onDelete={() => actions.onDeleteFolder(folder)}
+                  onShare={
+                    actions.onShareFolder ? () => actions.onShareFolder?.(folder) : undefined
+                  }
                 />
               ))}
               {resources.map((resource) => (
@@ -674,6 +682,7 @@ interface FolderTargetProps {
   onDropResource: (resourceId: string) => void;
   onRename: () => void;
   onDelete: () => void;
+  onShare?: () => void;
 }
 
 /** Shared drop handling: a folder accepts a resource id dragged from a tile or row. */
@@ -736,7 +745,12 @@ function FolderTile(props: FolderTargetProps) {
       <Folder className="size-5 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1 truncate font-medium">{props.folder.name}</span>
       {props.canWrite ? (
-        <FolderMenu onRename={props.onRename} onDelete={props.onDelete} onOpen={props.onOpen} />
+        <FolderMenu
+          onRename={props.onRename}
+          onDelete={props.onDelete}
+          onOpen={props.onOpen}
+          onShare={props.onShare}
+        />
       ) : null}
     </div>
   );
@@ -787,7 +801,12 @@ function FolderRow(
       <td className="hidden px-3 py-2 text-right text-muted-foreground sm:table-cell">—</td>
       <td className="px-3 py-2 text-right">
         {props.canWrite ? (
-          <FolderMenu onRename={props.onRename} onDelete={props.onDelete} onOpen={props.onOpen} />
+          <FolderMenu
+            onRename={props.onRename}
+            onDelete={props.onDelete}
+            onOpen={props.onOpen}
+            onShare={props.onShare}
+          />
         ) : null}
       </td>
     </tr>
@@ -798,10 +817,12 @@ function FolderMenu({
   onOpen,
   onRename,
   onDelete,
+  onShare,
 }: {
   onOpen: () => void;
   onRename: () => void;
   onDelete: () => void;
+  onShare?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -826,6 +847,11 @@ function FolderMenu({
         <DropdownMenuItem onClick={onRename}>
           <Pencil /> Rename
         </DropdownMenuItem>
+        {onShare ? (
+          <DropdownMenuItem onClick={onShare}>
+            <Share2 /> Share folder
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem destructive onClick={onDelete}>
           <Trash2 /> Delete folder
@@ -1123,6 +1149,15 @@ function ContextMenu({
                 <button type="button" className={item} onClick={() => run(() => actions.onRenameFolder(state.folder!))}>
                   <Pencil /> Rename
                 </button>
+                {actions.onShareFolder ? (
+                  <button
+                    type="button"
+                    className={item}
+                    onClick={() => run(() => actions.onShareFolder?.(state.folder!))}
+                  >
+                    <Share2 /> Share folder
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={cn(item, "text-danger hover:bg-danger/10 hover:text-danger")}

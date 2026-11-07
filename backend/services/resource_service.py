@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Sequence
 
 from fastapi import UploadFile
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import raiseload
 
 
 from backend.core.config import get_settings
@@ -37,12 +40,14 @@ from backend.models.resource import (
     ResourceFolder,
     ResourcePermission,
     ResourceVersion,
+    SharedFolder,
     SharedResource,
 )
 from backend.repositories.resource import (
     FolderRepository,
     ResourcePermissionRepository,
     ResourceRepository,
+    SharedFolderRepository,
     SharedResourceRepository,
 )
 from backend.core.privacy import visible_username
@@ -63,7 +68,7 @@ from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.resource_audience import ResourceShareAudience, display_name, role_label
 from backend.services.course_service import CourseService
-from backend.services.scope import ScopeResolver
+from backend.services.scope import Scope, ScopeResolver
 from backend.storage import get_storage
 from backend.storage.base import build_key
 from backend.utils.enums import ResourcePermissionLevel, ResourceScopeType, ResourceType
@@ -71,12 +76,38 @@ from backend.utils.enums import ResourcePermissionLevel, ResourceScopeType, Reso
 
 logger = get_logger(__name__)
 
+
+@dataclass
+class ShareOutcome:
+    """What a share did, for the response and the log."""
+
+    files: int
+    folders: int
+    people: int
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+
+    def add(self, counts: tuple[int, int, int]) -> None:
+        self.created += counts[0]
+        self.updated += counts[1]
+        self.unchanged += counts[2]
+
 _UNSET = object()
 
 #: Holding this is what separates staff from the audience a restricted file is
 #: kept away from. Resolved as a permission rather than a role name so an
 #: institution can add a registrar or an external examiner later.
 _VIEW_RESTRICTED = _perm(_Mod.RESOURCE, _Act.VIEW_RESTRICTED)
+
+#: Files a person reaches through shared folders that the library listing
+#: will consider. A listing is paged anyway; this bounds the IN-list the
+#: search is handed, not what the person may open.
+MAX_LISTED_FROM_FOLDERS = 10_000
+#: Levels a share may grant. EDIT and MANAGE are what owning a course's space
+#: confers; handing them to a person by share would let a student delete a
+#: tutor's material or re-share it onward.
+SHAREABLE_LEVELS = (ResourcePermissionLevel.VIEW, ResourcePermissionLevel.DOWNLOAD)
 
 
 class ResourceService:
@@ -86,6 +117,10 @@ class ResourceService:
         self.folders = FolderRepository(session)
         self.permissions = ResourcePermissionRepository(session)
         self.shares = SharedResourceRepository(session)
+        self.shared_folders = SharedFolderRepository(session)
+        self._scope_cache: dict[int, tuple[Scope, Scope, Scope]] = {}
+        self._shared_folder_cache: dict[int, set[int]] = {}
+        self._batch_course: dict[int, int | None] = {}
         self.courses = CourseService(session)
         self.batches = BatchService(session)
         self.scopes = ScopeResolver(session)
@@ -1240,73 +1275,14 @@ class ResourceService:
         actor: User,
         level: ResourcePermissionLevel = ResourcePermissionLevel.VIEW,
     ) -> list[SharedResource]:
-        """Share a file with named people, at a stated level.
+        """Share one file with named people, at a stated level.
 
-        `level` used to be unreachable: the column existed and `effective_level`
-        read it, but nothing ever set it, so every share took the server default
-        and "let them watch it without keeping a copy" could not be expressed --
-        which is the whole of what the brief asks for.
-
-        **Who may receive it is checked here, not in the picker.** Holding
-        `resource.update` used to mean a tutor could share any file they
-        managed with any user id in the system -- a colleague's whole class,
-        or a corporate manager at an unrelated employer -- because the request
-        body named the recipients and nothing read it back against a rule.
-        `ResourceShareAudience` is that rule, and it is the same one the
-        picker is drawn from, so the list a sharer sees and the list the
-        server accepts cannot drift apart.
+        The same path as `share_many`, so one file and twelve are authorised and
+        written by the same rule. Returns the file's whole share list, which is
+        what the file's own panel draws.
         """
         resource = await self.get(public_id, actor=actor)
-        await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
-
-        users = await ResourceShareAudience(self.session).resolve(actor, list(user_public_ids))
-
-        if resource.is_restricted:
-            # Sharing is how staff material travels, so it is allowed -- but
-            # only to people who could have seen the file anyway. Otherwise a
-            # share row would exist that `get()` then refuses, which reads to
-            # the recipient as the system losing a file.
-            blocked = [u for u in users if not self.may_see_restricted(u)]
-            if blocked:
-                raise ValidationError(
-                    "This file is staff-only and cannot be shared with these people.",
-                    details={"users": sorted(u.username or str(u.public_id) for u in blocked)},
-                )
-
-        for user in users:
-            existing = await self.shares.existing(resource_id=resource.id, user_id=user.id)
-            if existing is not None:
-                # Re-sharing is how a level is changed; skipping would make
-                # "share this read-only" silently do nothing to someone who
-                # already had it at DOWNLOAD.
-                existing.level = level
-                continue
-            self.session.add(
-                SharedResource(
-                    resource_id=resource.id,
-                    shared_with_user_id=user.id,
-                    shared_by_user_id=actor.id,
-                    level=level,
-                    created_at=datetime.now(UTC),
-                )
-            )
-        await self.session.flush()
-
-        audit_service.record(
-            self.session,
-            action=AuditAction.UPDATE,
-            actor_user_id=actor.id,
-            actor_email=actor.email,
-            entity_type="resource",
-            entity_id=resource.id,
-            details={
-                # The audit trail records *who*, by stable id, not by login
-                # name -- which in this deployment is an email address, and
-                # the one thing a share must not copy into another table.
-                "shared_with": sorted(str(u.public_id) for u in users),
-                "level": level.value,
-            },
-        )
+        await self.share_many([public_id], user_public_ids, actor=actor, level=level)
         return await self.shares.for_resource(resource.id)
 
     async def share_many(
@@ -1316,33 +1292,57 @@ class ResourceService:
         *,
         actor: User,
         level: ResourcePermissionLevel = ResourcePermissionLevel.VIEW,
-    ) -> list[SharedResource]:
-        """Hand several files to several people in one act.
+        folder_public_ids: Sequence[uuid.UUID] = (),
+    ) -> ShareOutcome:
+        """Hand files and folders to people in one act.
 
-        All or nothing, and that is the point: "share this week's material
-        with the class" is one decision, and a partial result -- four of six
-        files delivered, with no indication which two were refused -- leaves
-        the sharer believing they did something they did not. Every file is
-        authorised and every recipient resolved before the first row is
-        written, so the refusal arrives before anything has happened.
+        **All or nothing.** "Share this week's material with the class" is one
+        decision, and a partial result leaves the sharer believing they did
+        something they did not. Every file and folder is authorised and every
+        recipient resolved before anything is written, so a refusal arrives
+        before anything has happened.
 
-        One pass over the audience rather than one per file: the answer cannot
-        change within a request, and asking six times is six times the work for
-        the same answer.
+        **Who may receive it is checked here, not in the picker.**
+        `ResourceShareAudience` is the rule, and it is the same one the picker
+        is drawn from, so the list a sharer sees and the list the server accepts
+        cannot drift apart.
+
+        **Duplicates are the database's to refuse.** `UNIQUE (resource_id,
+        shared_with_user_id)` -- and the same on folders -- is the guard, and the
+        write is one `INSERT ... ON CONFLICT` per table. A share that already
+        exists at this level writes nothing and raises nothing; one at another
+        level has its level changed, because re-sharing is how a level is
+        changed. That is also what makes a retry safe: a request the gateway
+        gave up on, sent again, lands on the rows the first one wrote. There is
+        no check-then-insert to race.
+
+        **Cost is flat in the number of files.** Scopes are resolved once,
+        files and folders are loaded in one query each, and their levels are
+        computed in bulk. The previous version authorised file by file and read
+        every file's whole share list back, which is how twelve files to one
+        student came to cost several thousand queries and the gateway timeout.
         """
-        if not resource_public_ids:
-            raise ValidationError("Choose at least one file to share.")
+        if level not in SHAREABLE_LEVELS:
+            raise ValidationError("A share may grant View or Download, nothing more.")
+
+        file_ids = list(dict.fromkeys(resource_public_ids))
+        folder_ids = list(dict.fromkeys(folder_public_ids))
+        if not file_ids and not folder_ids:
+            raise ValidationError("Choose at least one file or folder to share.")
 
         users = await ResourceShareAudience(self.session).resolve(actor, list(user_public_ids))
 
-        resources: list[Resource] = []
-        for resource_public_id in dict.fromkeys(resource_public_ids):
-            resource = await self.get(resource_public_id, actor=actor)
-            await self.require_level(resource, actor, ResourcePermissionLevel.MANAGE)
-            resources.append(resource)
+        resources = await self._authorise_files_for_sharing(file_ids, actor)
+        folders = await self._authorise_folders_for_sharing(folder_ids, actor)
 
         restricted = [r for r in resources if r.is_restricted]
         if restricted:
+            # Sharing is how staff material travels, so it is allowed -- but
+            # only to people who could have seen the file anyway. Otherwise a
+            # share row would exist that `get()` then refuses, which reads to
+            # the recipient as the system losing a file. (A folder needs no
+            # such check: staff-only files inside it are withheld from a
+            # non-staff recipient when they are read, by the same rule.)
             blocked = [u for u in users if not self.may_see_restricted(u)]
             if blocked:
                 raise ValidationError(
@@ -1351,24 +1351,51 @@ class ResourceService:
                     details={"files": sorted(r.name or str(r.public_id) for r in restricted)},
                 )
 
-        written: list[SharedResource] = []
-        for resource in resources:
-            for user in users:
-                existing = await self.shares.existing(resource_id=resource.id, user_id=user.id)
-                if existing is not None:
-                    existing.level = level
-                    continue
-                row = SharedResource(
-                    resource_id=resource.id,
-                    shared_with_user_id=user.id,
-                    shared_by_user_id=actor.id,
-                    level=level,
-                    created_at=datetime.now(UTC),
+        now = datetime.now(UTC)
+        outcome = ShareOutcome(files=len(resources), folders=len(folders), people=len(users))
+        if resources:
+            outcome.add(
+                await self._upsert_shares(
+                    SharedResource,
+                    "resource_id",
+                    "uq_shared_resources_resource_user",
+                    [
+                        {
+                            "resource_id": r.id,
+                            "shared_with_user_id": u.id,
+                            "shared_by_user_id": actor.id,
+                            "level": level,
+                            "created_at": now,
+                        }
+                        for r in resources
+                        for u in users
+                    ],
                 )
-                self.session.add(row)
-                written.append(row)
-        await self.session.flush()
+            )
+        if folders:
+            outcome.add(
+                await self._upsert_shares(
+                    SharedFolder,
+                    "folder_id",
+                    "uq_shared_folders_folder_user",
+                    [
+                        {
+                            "folder_id": f.id,
+                            "shared_with_user_id": u.id,
+                            "shared_by_user_id": actor.id,
+                            "level": level,
+                            "created_at": now,
+                        }
+                        for f in folders
+                        for u in users
+                    ],
+                )
+            )
 
+        # The audit trail records *who*, by stable id, not by login name --
+        # which in this deployment is an email address, and the one thing a
+        # share must not copy into another table.
+        recipients = sorted(str(u.public_id) for u in users)
         for resource in resources:
             audit_service.record(
                 self.session,
@@ -1377,16 +1404,269 @@ class ResourceService:
                 actor_email=actor.email,
                 entity_type="resource",
                 entity_id=resource.id,
-                details={
-                    "shared_with": sorted(str(u.public_id) for u in users),
-                    "level": level.value,
-                },
+                details={"shared_with": recipients, "level": level.value},
             )
+        for folder in folders:
+            audit_service.record(
+                self.session,
+                action=AuditAction.UPDATE,
+                actor_user_id=actor.id,
+                actor_email=actor.email,
+                entity_type="resource_folder",
+                entity_id=folder.id,
+                details={"shared_with": recipients, "level": level.value},
+            )
+        logger.info(
+            "resources.shared",
+            # Prefixed: `created` is a reserved LogRecord attribute, and the
+            # logging module refuses to let `extra` overwrite one.
+            extra={
+                "share_files": outcome.files,
+                "share_folders": outcome.folders,
+                "share_people": outcome.people,
+                "share_created": outcome.created,
+                "share_updated": outcome.updated,
+                "share_unchanged": outcome.unchanged,
+            },
+        )
+        return outcome
 
-        rows: list[SharedResource] = []
+    async def _authorise_files_for_sharing(
+        self, public_ids: list[uuid.UUID], actor: User
+    ) -> list[Resource]:
+        """Load and authorise every file, in bulk, by `get()`'s rules plus MANAGE.
+
+        The refusals keep `get()`'s shape: a file the caller cannot reach, or a
+        staff-only one they may not see, is "not found" -- which file is missing
+        is not told, because that would confirm which of the others exist. A
+        file they can see but not manage is a 403, as before.
+        """
+        if not public_ids:
+            return []
+        resources = await self.resources.by_public_ids(public_ids)
+        if len(resources) != len(public_ids):
+            raise NotFoundError("Resource not found.")
         for resource in resources:
-            rows.extend(await self.shares.for_resource(resource.id))
-        return rows
+            if resource.is_restricted and not self.may_see_restricted(actor):
+                raise NotFoundError("Resource not found.")
+        levels = await self.effective_levels(resources, actor)
+        for resource in resources:
+            actual = levels.get(resource.id)
+            if actual is None:
+                raise NotFoundError("Resource not found.")
+            if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                raise AuthorizationError(
+                    f"You have {actual.value.lower()} access to {resource.name}; "
+                    "manage is required to share it."
+                )
+        deleted = [r for r in resources if r.is_deleted]
+        if deleted:
+            # Its audience would get "not found" for it: `get()` hides a deleted
+            # file from everyone who cannot restore it.
+            raise ValidationError(
+                "Files in the recycle bin cannot be shared. Restore them first.",
+                details={"files": sorted(r.name or str(r.public_id) for r in deleted)},
+            )
+        return resources
+
+    async def _authorise_folders_for_sharing(
+        self, public_ids: list[uuid.UUID], actor: User
+    ) -> list[ResourceFolder]:
+        if not public_ids:
+            return []
+        stmt = select(ResourceFolder).options(raiseload("*")).where(
+            ResourceFolder.public_id.in_(public_ids)
+        )
+        folders = list((await self.session.execute(stmt)).scalars().all())
+        if len(folders) != len(public_ids):
+            raise NotFoundError("Folder not found.")
+        for folder in folders:
+            actual = await self.folder_level(folder, actor)
+            if actual is None:
+                raise NotFoundError("Folder not found.")
+            if not at_least(actual, ResourcePermissionLevel.MANAGE):
+                raise AuthorizationError(
+                    f"You have {actual.value.lower()} access to {folder.name}; "
+                    "manage is required to share it."
+                )
+        return folders
+
+    async def _upsert_shares(
+        self, model: type, target: str, constraint: str, rows: list[dict]
+    ) -> tuple[int, int, int]:
+        """Write share rows; ``(created, updated, unchanged)``.
+
+        ``RETURNING`` yields a row for every insert and every *changed* update,
+        and ``xmax = 0`` tells the two apart (a freshly inserted tuple has no
+        deleting transaction). A row already at this level matches the
+        ``WHERE`` and returns nothing, which is the "unchanged" count.
+        """
+        if not rows:
+            return 0, 0, 0
+        # **One global order, or two shares deadlock.** Postgres takes a row
+        # lock per conflicting row, in the order the VALUES list gives them.
+        # Two tutors sharing overlapping files with overlapping students, in
+        # different orders, each end up holding a row the other is waiting
+        # for -- found by the load test, where one in ~150 bursts died with
+        # `deadlock detected`. Sorted by the conflict key, every transaction
+        # locks in the same order, so one simply waits for the other.
+        rows = sorted(rows, key=lambda row: (row[target], row["shared_with_user_id"]))
+        stmt = pg_insert(model).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint=constraint,
+            set_={"level": stmt.excluded.level},
+            where=model.level.is_distinct_from(stmt.excluded.level),
+        ).returning(literal_column("xmax = 0").label("inserted"))
+        written = (await self.session.execute(stmt)).scalars().all()
+        created = sum(1 for inserted in written if inserted)
+        updated = len(written) - created
+        return created, updated, len(rows) - len(written)
+
+    async def unshare_folder(
+        self, folder_public_id: uuid.UUID, user_public_id: uuid.UUID, *, actor: User
+    ) -> None:
+        """Withdraw a folder share.
+
+        Removes exactly what that share granted. A file inside the folder that
+        was also shared with the person directly is a separate row, and so is a
+        share of another folder above or below this one; both survive.
+        """
+        folder = await self.get_folder(folder_public_id, actor=actor)
+        if not at_least(await self.folder_level(folder, actor), ResourcePermissionLevel.MANAGE):
+            raise AuthorizationError("Manage access to this folder is required.")
+        user = await self._load_user(user_public_id)
+        row = await self.shared_folders.existing(folder_id=folder.id, user_id=user.id)
+        if row is None:
+            raise NotFoundError("Share not found.")
+        await self.session.delete(row)
+        audit_service.record(
+            self.session,
+            action=AuditAction.UPDATE,
+            actor_user_id=actor.id,
+            actor_email=actor.email,
+            entity_type="resource_folder",
+            entity_id=folder.id,
+            details={"unshared": str(user.public_id)},
+        )
+
+    async def folder_shares(self, folder_public_id: uuid.UUID, *, actor: User) -> list[SharedFolder]:
+        """Who this folder has been shared with -- for the people who may change it."""
+        folder = await self.get_folder(folder_public_id, actor=actor)
+        if not at_least(await self.folder_level(folder, actor), ResourcePermissionLevel.MANAGE):
+            raise AuthorizationError("Manage access to this folder is required.")
+        return await self.shared_folders.for_folder(folder.id)
+
+    # -- what has been shared with me ----------------------------------------
+
+    async def shared_library(
+        self, actor: User
+    ) -> tuple[list[SharedFolder], list[SharedResource], dict[int, tuple[uuid.UUID, str]]]:
+        """Folders and files shared with the caller, and the courses they belong to.
+
+        The course is the file's or folder's own -- its ``course_id``, or its
+        batch's course -- and never anything the sharer said. Returned as a map
+        from internal course id so the API can group without a query per row.
+        Staff-only and deleted files are left out here for the same reason
+        `get()` refuses them: listing a file that will not open is a broken
+        promise.
+        """
+        folders = await self.shared_folders.shared_with(actor.id)
+        files = [
+            s
+            for s in await self.shares.shared_with(actor.id)
+            if s.resource is not None
+            and not s.resource.is_deleted
+            and (not s.resource.is_restricted or self.may_see_restricted(actor))
+        ]
+        courses = await self.course_labels(
+            [(f.folder.course_id, f.folder.batch_id) for f in folders]
+            + [(s.resource.course_id, s.resource.batch_id) for s in files]
+        )
+        return folders, files, courses
+
+    async def shared_folder_contents(
+        self, folder_public_id: uuid.UUID, *, actor: User
+    ) -> tuple[ResourceFolder, ResourcePermissionLevel, list[ResourceFolder],
+               list[ResourceFolder], list[tuple[Resource, ResourcePermissionLevel]]]:
+        """One folder inside a tree shared with the caller.
+
+        Returns ``(folder, level, path, child_folders, files)``. Reachable only
+        through a share: this is the recipient's view, and "inside a course I
+        administer" is answered by the library, not here. ``path`` starts at
+        the shared folder and never above it -- the folders above a share are
+        somebody else's, and their names are not part of what was handed over.
+        """
+        stmt = select(ResourceFolder).options(raiseload("*")).where(
+            ResourceFolder.public_id == folder_public_id
+        )
+        folder = (await self.session.execute(stmt)).scalar_one_or_none()
+        if folder is None:
+            raise NotFoundError("Folder not found.")
+        through = (await self.shared_folders.levels_through_tree({folder.id}, actor.id)).get(
+            folder.id
+        )
+        level = highest(*(through or []))
+        if level is None:
+            raise NotFoundError("Folder not found.")
+
+        roots = {row.folder_id for row in await self.shared_folders.shared_with(actor.id)}
+        path: list[ResourceFolder] = []
+        for ancestor in reversed(await self.folders.ancestors(folder)):
+            path.append(ancestor)
+            if ancestor.id in roots:
+                break
+        path.reverse()
+
+        children_stmt = (
+            select(ResourceFolder)
+            .options(raiseload("*"))
+            .where(ResourceFolder.parent_folder_id == folder.id)
+            .order_by(ResourceFolder.name)
+        )
+        children = list((await self.session.execute(children_stmt)).scalars().all())
+
+        files = await self.resources.live_in_folder(
+            folder.id, include_restricted=self.may_see_restricted(actor)
+        )
+        levels = await self.effective_levels(files, actor)
+        return (
+            folder,
+            level,
+            path,
+            children,
+            [(f, levels.get(f.id) or level) for f in files],
+        )
+
+    async def course_labels(
+        self, anchors: Sequence[tuple[int | None, int | None]]
+    ) -> dict[int, tuple[uuid.UUID, str]]:
+        """``{course_id: (public_id, title)}`` for these (course, batch) anchors.
+
+        Two queries for any number of rows: one to turn batch-only anchors into
+        their course, one for the titles.
+        """
+        course_ids = {c for c, _ in anchors if c is not None}
+        batch_only = {b for c, b in anchors if c is None and b is not None}
+        if batch_only:
+            rows = await self.session.execute(
+                select(Batch.id, Batch.course_id).where(Batch.id.in_(batch_only))
+            )
+            self._batch_course = {bid: cid for bid, cid in rows.all()}
+            course_ids |= {c for c in self._batch_course.values() if c is not None}
+        if not course_ids:
+            return {}
+        rows = await self.session.execute(
+            select(Course.id, Course.public_id, Course.title).where(Course.id.in_(course_ids))
+        )
+        return {cid: (pid, title) for cid, pid, title in rows.all()}
+
+    def course_of(self, course_id: int | None, batch_id: int | None) -> int | None:
+        """The course a file or folder belongs to, after `_course_labels`."""
+        if course_id is not None:
+            return course_id
+        if batch_id is not None:
+            return self._batch_course.get(batch_id)
+        return None
 
     async def unshare(
         self, public_id: uuid.UUID, user_public_id: uuid.UUID, *, actor: User
@@ -1464,6 +1744,125 @@ class ResourceService:
            shared with them read-only -- the old behaviour, and the reason the
            level column existed but changed nothing.
         """
+        return (await self.effective_levels([resource], actor))[resource.id]
+
+    async def effective_levels(
+        self, resources: Sequence[Resource], actor: User
+    ) -> dict[int, ResourcePermissionLevel | None]:
+        """`effective_level` for many files, at the cost of one.
+
+        The caller's scopes are resolved once and every per-file lookup is a
+        single query over all the files. Asking file by file is what made a
+        twelve-file share issue several thousand queries: each file re-derived
+        the same course, batch and session scopes from scratch.
+
+        Route 4 sits beside the other three: **a folder shared with the
+        caller**, on the file's folder or any folder above it. It is computed
+        from the tree at read time, so a file moved out of a shared folder
+        stops being covered the moment it moves.
+        """
+        if not resources:
+            return {}
+        if ScopeResolver.is_unrestricted(actor):
+            return {r.id: ResourcePermissionLevel.MANAGE for r in resources}
+
+        from backend.api.deps import resolve_permissions
+        from backend.core.permissions import Action, Module, perm
+
+        held = resolve_permissions(actor)
+        explicit = await self._explicit_levels(resources, actor)
+        if perm(Module.RESOURCE, Action.READ) not in held:
+            # **A share is reachable by the person it was shared with, whatever
+            # their role.** Guardians and corporate managers hold no
+            # `resource.*` permission, and they are in the share audience by
+            # design -- so this used to answer None for everything handed to
+            # them, and a file "shared with a guardian" could never be opened.
+            # Only the space route below needs the permission: that is the one
+            # that would open a ward's whole course.
+            return {r.id: highest(*explicit.get(r.id, [])) for r in resources}
+
+        # -- route 2: the baseline for files in a space the caller administers
+        if perm(Module.RESOURCE, Action.DELETE) in held:
+            baseline = ResourcePermissionLevel.MANAGE
+        elif perm(Module.RESOURCE, Action.UPDATE) in held:
+            baseline = ResourcePermissionLevel.EDIT
+        else:
+            baseline = ResourcePermissionLevel.VIEW
+
+        course_scope, batch_scope, _ = await self._scopes(actor)
+
+        found: dict[int, ResourcePermissionLevel | None] = {}
+        for resource in resources:
+            in_own_space = (
+                resource.course_id is not None and course_scope.allows(resource.course_id)
+            ) or (resource.batch_id is not None and batch_scope.allows(resource.batch_id))
+            found[resource.id] = highest(
+                baseline if in_own_space else None, *explicit.get(resource.id, [])
+            )
+        return found
+
+    async def _scopes(self, actor: User) -> tuple[Scope, Scope, Scope]:
+        """The caller's course, batch and session scopes, resolved once.
+
+        A service instance lives for one request, and nothing in this module
+        changes enrolments or teaching assignments, so the answer cannot move
+        under it. Without this, listing a library of forty folders resolved the
+        same scopes forty times over.
+        """
+        cached = self._scope_cache.get(actor.id)
+        if cached is None:
+            cached = (
+                await self.scopes.visible_course_ids(actor),
+                await self.scopes.visible_batch_ids(actor),
+                await self.scopes.visible_session_ids(actor),
+            )
+            self._scope_cache[actor.id] = cached
+        return cached
+
+    async def _grant_pairs(self, actor: User) -> list[tuple[str, int]]:
+        course_scope, batch_scope, session_scope = await self._scopes(actor)
+        pairs: list[tuple[str, int]] = [(ResourceScopeType.USER.value, actor.id)]
+        pairs += [(ResourceScopeType.COURSE.value, cid) for cid in course_scope.ids]
+        pairs += [(ResourceScopeType.BATCH.value, bid) for bid in batch_scope.ids]
+        pairs += [(ResourceScopeType.SESSION.value, sid) for sid in session_scope.ids]
+        return pairs
+
+    async def _explicit_levels(
+        self, resources: Sequence[Resource], actor: User
+    ) -> dict[int, list[ResourcePermissionLevel]]:
+        """Levels from grants, direct shares and shared folders, per file.
+
+        Three queries whatever the number of files: these are the routes that
+        reach a file *outside* the caller's own courses, and the ones that let
+        one file be handed over without opening a whole course.
+        """
+        ids = [r.id for r in resources]
+        granted = await self.permissions.levels_for_resources(ids, await self._grant_pairs(actor))
+        shared = await self.shares.levels_for_user(ids, actor.id)
+        through_folders = await self.shared_folders.levels_through_tree(
+            {r.folder_id for r in resources if r.folder_id is not None}, actor.id
+        )
+        found: dict[int, list[ResourcePermissionLevel]] = {}
+        for resource in resources:
+            levels = list(granted.get(resource.id, []))
+            if resource.id in shared:
+                levels.append(shared[resource.id])
+            if resource.folder_id is not None:
+                levels += through_folders.get(resource.folder_id, [])
+            if levels:
+                found[resource.id] = levels
+        return found
+
+    async def folder_level(
+        self, folder: ResourceFolder, actor: User
+    ) -> ResourcePermissionLevel | None:
+        """What `actor` may do with a folder and everything beneath it.
+
+        The same routes as a file, minus grants (folder grants are recorded by
+        `grant_permission` but have never been enforced anywhere, and turning
+        them on silently is a different change): owning the space, or a share
+        of this folder or one above it.
+        """
         if ScopeResolver.is_unrestricted(actor):
             return ResourcePermissionLevel.MANAGE
 
@@ -1471,17 +1870,12 @@ class ResourceService:
         from backend.core.permissions import Action, Module, perm
 
         held = resolve_permissions(actor)
-        if perm(Module.RESOURCE, Action.READ) not in held:
-            return None
-
-        # -- route 2: the caller administers the space the file sits in
         owned: ResourcePermissionLevel | None = None
-        course_scope = await self.scopes.visible_course_ids(actor)
-        batch_scope = await self.scopes.visible_batch_ids(actor)
-        in_own_space = (
-            resource.course_id is not None and course_scope.allows(resource.course_id)
-        ) or (resource.batch_id is not None and batch_scope.allows(resource.batch_id))
-        if in_own_space:
+        course_scope, batch_scope, _ = await self._scopes(actor)
+        if perm(Module.RESOURCE, Action.READ) in held and (
+            (folder.course_id is not None and course_scope.allows(folder.course_id))
+            or (folder.batch_id is not None and batch_scope.allows(folder.batch_id))
+        ):
             if perm(Module.RESOURCE, Action.DELETE) in held:
                 owned = ResourcePermissionLevel.MANAGE
             elif perm(Module.RESOURCE, Action.UPDATE) in held:
@@ -1489,19 +1883,8 @@ class ResourceService:
             else:
                 owned = ResourcePermissionLevel.VIEW
 
-        # -- route 3: an explicit grant against one of the caller's scopes
-        pairs: list[tuple[str, int]] = [(ResourceScopeType.USER.value, actor.id)]
-        pairs += [(ResourceScopeType.COURSE.value, cid) for cid in course_scope.ids]
-        pairs += [(ResourceScopeType.BATCH.value, bid) for bid in batch_scope.ids]
-        session_scope = await self.scopes.visible_session_ids(actor)
-        pairs += [(ResourceScopeType.SESSION.value, sid) for sid in session_scope.ids]
-        granted = await self.permissions.levels_for_resource(resource.id, pairs)
-
-        # -- route 3b: a direct person-to-person share
-        share = await self.shares.existing(resource_id=resource.id, user_id=actor.id)
-        share_level = share.level if share is not None else None
-
-        return highest(owned, share_level, *granted)
+        through = await self.shared_folders.levels_through_tree({folder.id}, actor.id)
+        return highest(owned, *through.get(folder.id, []))
 
     async def require_level(
         self, resource: Resource, actor: User, level: ResourcePermissionLevel
@@ -1526,48 +1909,62 @@ class ResourceService:
         if ScopeResolver.is_unrestricted(actor):
             return set()
 
-        pairs: list[tuple[str, int]] = [(ResourceScopeType.USER.value, actor.id)]
-
-        course_scope = await self.scopes.visible_course_ids(actor)
-        pairs += [(ResourceScopeType.COURSE.value, cid) for cid in course_scope.ids]
-        batch_scope = await self.scopes.visible_batch_ids(actor)
-        pairs += [(ResourceScopeType.BATCH.value, bid) for bid in batch_scope.ids]
-        session_scope = await self.scopes.visible_session_ids(actor)
-        pairs += [(ResourceScopeType.SESSION.value, sid) for sid in session_scope.ids]
-
-        granted = await self.permissions.resource_ids_for_scopes(pairs)
+        granted = await self.permissions.resource_ids_for_scopes(await self._grant_pairs(actor))
         shared = await self.shares.resource_ids_shared_with(actor.id)
-        return granted | shared
+        in_shared_folders = await self.resources.ids_in_folders(
+            await self._shared_folder_ids(actor), limit=MAX_LISTED_FROM_FOLDERS
+        )
+        return granted | shared | set(in_shared_folders)
+
+    async def _shared_folder_ids(self, actor: User) -> set[int]:
+        """Every folder inside a tree shared with the caller. Cached per request."""
+        if actor.id not in self._shared_folder_cache:
+            self._shared_folder_cache[actor.id] = await self.shared_folders.reachable_folder_ids(
+                actor.id
+            )
+        return self._shared_folder_cache[actor.id]
 
     async def _resource_reachable(self, resource: Resource, actor: User) -> bool:
         if ScopeResolver.is_unrestricted(actor):
             return True
 
-        course_scope = await self.scopes.visible_course_ids(actor)
-        if resource.course_id is not None and course_scope.allows(resource.course_id):
-            return True
+        if self._may_read_spaces(actor):
+            course_scope, batch_scope, _ = await self._scopes(actor)
+            if resource.course_id is not None and course_scope.allows(resource.course_id):
+                return True
+            if resource.batch_id is not None and batch_scope.allows(resource.batch_id):
+                return True
 
-        batch_scope = await self.scopes.visible_batch_ids(actor)
-        if resource.batch_id is not None and batch_scope.allows(resource.batch_id):
-            return True
-
-        # Third route: an explicit grant or a direct share. This is what lets
-        # one file be handed to someone outside the course without opening
-        # the whole course to them.
-        return resource.id in await self._explicitly_granted_resource_ids(actor)
+        # Third route: an explicit grant, a direct share, or a folder shared
+        # with the caller that this file sits inside. This is what lets one
+        # file -- or one folder of them -- be handed to someone outside the
+        # course without opening the whole course to them.
+        return bool((await self._explicit_levels([resource], actor)).get(resource.id))
 
     async def _folder_reachable(self, folder: ResourceFolder, actor: User) -> bool:
         if ScopeResolver.is_unrestricted(actor):
             return True
 
-        course_scope = await self.scopes.visible_course_ids(actor)
-        if folder.course_id is not None and course_scope.allows(folder.course_id):
-            return True
+        if self._may_read_spaces(actor):
+            course_scope, batch_scope, _ = await self._scopes(actor)
+            if folder.course_id is not None and course_scope.allows(folder.course_id):
+                return True
+            if folder.batch_id is not None and batch_scope.allows(folder.batch_id):
+                return True
+        return folder.id in await self._shared_folder_ids(actor)
 
-        batch_scope = await self.scopes.visible_batch_ids(actor)
-        if folder.batch_id is not None and batch_scope.allows(folder.batch_id):
-            return True
-        return False
+    @staticmethod
+    def _may_read_spaces(actor: User) -> bool:
+        """May this person read the materials of the courses they can see?
+
+        The routes that read files and the shared-with-me screens are open to
+        any signed-in person, because a share is reachable by whoever it was
+        shared with. This is what keeps that from widening: a guardian can see
+        their ward's batches, and without this check would reach every file in
+        those courses. Only a holder of `resource.read` reaches files through a
+        course or batch; everyone else reaches exactly what was shared.
+        """
+        return _perm(_Mod.RESOURCE, _Act.READ) in ScopeResolver.held_permissions(actor)
 
     # -- helpers -------------------------------------------------------------
 

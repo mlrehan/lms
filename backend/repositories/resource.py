@@ -5,19 +5,22 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Sequence
 
-from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import Select, func, or_, select, text
+from sqlalchemy.orm import raiseload, selectinload
 
 from backend.models.resource import (
     Resource,
     ResourceFolder,
     ResourcePermission,
     ResourceVersion,
+    SharedFolder,
     SharedResource,
 )
 from backend.repositories.base import BaseRepository
 from backend.schemas.base import PageParams
 from backend.utils.enums import ResourcePermissionLevel, ResourceType
+
+from backend.models.identity.user import User
 
 if TYPE_CHECKING:
     from backend.services.scope import Scope
@@ -135,16 +138,64 @@ class FolderRepository(BaseRepository[ResourceFolder]):
         return found
 
 
+#: What a loaded resource carries: the flat fields its responses read, and
+#: nothing behind them.
+#:
+#: Every relationship on these models is `lazy="selectin"`, so loading *one*
+#: resource used to load its course -- and through the course every batch,
+#: every session, every enrolment, every other resource in the course, and
+#: every user on any of them with their city, country and organisations.
+#: Measured on a course with 7 batches and 20 sessions: sharing 12 files cost
+#: 3,256 queries and 20 seconds, which is the 30-second proxy timeout in
+#: production once the course is busier. `raiseload("*")` on the nested side
+#: makes a read that reaches further fail loudly in a test, instead of
+#: quietly reintroducing the cascade.
+RESOURCE_LOAD = (
+    selectinload(Resource.folder).raiseload("*"),
+    selectinload(Resource.course).raiseload("*"),
+    selectinload(Resource.batch).raiseload("*"),
+    selectinload(Resource.uploader).raiseload("*"),
+    selectinload(Resource.versions).raiseload("*"),
+    # `passive_deletes=True`, so deleting a resource never needs this loaded.
+    raiseload(Resource.shared_resources),
+)
+
+
 class ResourceRepository(BaseRepository[Resource]):
     model = Resource
 
     def _base(self) -> Select[tuple[Resource]]:
-        return select(Resource).options(
-            selectinload(Resource.folder),
-            selectinload(Resource.course),
-            selectinload(Resource.uploader),
-            selectinload(Resource.versions).selectinload(ResourceVersion.resource),
+        return select(Resource).options(*RESOURCE_LOAD)
+
+    async def by_public_ids(self, public_ids: Sequence[uuid.UUID]) -> list[Resource]:
+        """Several resources in one round trip, with the same bounded graph."""
+        if not public_ids:
+            return []
+        stmt = self._base().where(Resource.public_id.in_(list(public_ids)))
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
+    async def ids_in_folders(self, folder_ids: set[int], *, limit: int) -> list[int]:
+        """Live resources directly inside these folders, at most ``limit``."""
+        if not folder_ids:
+            return []
+        stmt = (
+            select(Resource.id)
+            .where(Resource.folder_id.in_(folder_ids), Resource.is_deleted.is_(False))
+            .order_by(Resource.id)
+            .limit(limit)
         )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def live_in_folder(self, folder_id: int, *, include_restricted: bool) -> list[Resource]:
+        """The files directly inside one folder, for a shared-folder listing."""
+        stmt = self._base().where(
+            Resource.folder_id == folder_id, Resource.is_deleted.is_(False)
+        )
+        if not include_restricted:
+            stmt = stmt.where(Resource.is_restricted.is_(False))
+        stmt = stmt.order_by(func.lower(Resource.name), Resource.id)
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
 
     async def get_by_public_id_full(self, public_id: uuid.UUID) -> Resource | None:
         stmt = self._base().where(Resource.public_id == public_id)
@@ -310,6 +361,25 @@ class ResourcePermissionRepository(BaseRepository[ResourcePermission]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def levels_for_resources(
+        self, resource_ids: Sequence[int], pairs: Sequence[tuple[str, int]]
+    ) -> dict[int, list[ResourcePermissionLevel]]:
+        """`levels_for_resource`, for many resources in one query."""
+        if not pairs or not resource_ids:
+            return {}
+        clauses = [
+            (ResourcePermission.scope_type == scope_type)
+            & (ResourcePermission.scope_id == scope_id)
+            for scope_type, scope_id in pairs
+        ]
+        stmt = select(ResourcePermission.resource_id, ResourcePermission.level).where(
+            ResourcePermission.resource_id.in_(list(resource_ids)), or_(*clauses)
+        )
+        found: dict[int, list[ResourcePermissionLevel]] = {}
+        for resource_id, level in (await self.session.execute(stmt)).all():
+            found.setdefault(resource_id, []).append(level)
+        return found
+
     async def resource_ids_for_scopes(
         self, pairs: Sequence[tuple[str, int]]
     ) -> set[int]:
@@ -331,10 +401,21 @@ class SharedResourceRepository(BaseRepository[SharedResource]):
     model = SharedResource
 
     def _base(self) -> Select[tuple[SharedResource]]:
+        # The same bounded graph as `RESOURCE_LOAD`, and for the people only
+        # what `_share_response` prints: names, and the recipient's roles for
+        # the role label. Unbounded, every row of "Shared with me" loaded the
+        # file's whole course and both users' whole profiles.
+        file = selectinload(SharedResource.resource)
         return select(SharedResource).options(
-            selectinload(SharedResource.resource),
-            selectinload(SharedResource.shared_with_user),
-            selectinload(SharedResource.shared_by_user),
+            file.selectinload(Resource.course).raiseload("*"),
+            file.selectinload(Resource.batch).raiseload("*"),
+            file.selectinload(Resource.folder).raiseload("*"),
+            file.raiseload("*"),
+            selectinload(SharedResource.shared_with_user)
+            .selectinload(User.roles)
+            .raiseload("*"),
+            selectinload(SharedResource.shared_with_user).raiseload("*"),
+            selectinload(SharedResource.shared_by_user).raiseload("*"),
         )
 
     async def for_resource(self, resource_id: int) -> list[SharedResource]:
@@ -351,9 +432,111 @@ class SharedResourceRepository(BaseRepository[SharedResource]):
         )
         return set((await self.session.execute(stmt)).scalars().all())
 
+    async def levels_for_user(
+        self, resource_ids: Sequence[int], user_id: int
+    ) -> dict[int, ResourcePermissionLevel]:
+        """`{resource_id: level}` of direct shares to one person."""
+        if not resource_ids:
+            return {}
+        stmt = select(SharedResource.resource_id, SharedResource.level).where(
+            SharedResource.resource_id.in_(list(resource_ids)),
+            SharedResource.shared_with_user_id == user_id,
+        )
+        return {rid: level for rid, level in (await self.session.execute(stmt)).all()}
+
     async def existing(self, *, resource_id: int, user_id: int) -> SharedResource | None:
-        stmt = select(SharedResource).where(
+        # Callers read `level` and delete the row; nothing reaches through it.
+        stmt = select(SharedResource).options(raiseload("*")).where(
             SharedResource.resource_id == resource_id,
             SharedResource.shared_with_user_id == user_id,
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
+
+#: How far a share reaches up or down the folder tree. Folders are created by
+#: people, and nobody nests a course library sixty-four levels deep; the cap
+#: exists so a cycle written by a bad move (which `move_folder` refuses, but a
+#: migration or a direct edit would not) cannot turn a query into a loop.
+MAX_FOLDER_DEPTH = 64
+#: The most folders one person's shared trees may expand to in a listing.
+MAX_SHARED_FOLDERS = 5_000
+
+_UP = text(
+    """
+    WITH RECURSIVE up(start_id, folder_id, depth) AS (
+        SELECT f.id, f.id, 0 FROM resource_folders f WHERE f.id = ANY(:folder_ids)
+        UNION ALL
+        SELECT up.start_id, f.parent_folder_id, up.depth + 1
+        FROM up JOIN resource_folders f ON f.id = up.folder_id
+        WHERE f.parent_folder_id IS NOT NULL AND up.depth < :max_depth
+    )
+    SELECT up.start_id, sf.level
+    FROM up JOIN shared_folders sf
+      ON sf.folder_id = up.folder_id AND sf.shared_with_user_id = :user_id
+    """
+)
+
+_DOWN = text(
+    """
+    WITH RECURSIVE down(folder_id, depth) AS (
+        SELECT sf.folder_id, 0 FROM shared_folders sf WHERE sf.shared_with_user_id = :user_id
+        UNION
+        SELECT f.id, down.depth + 1
+        FROM down JOIN resource_folders f ON f.parent_folder_id = down.folder_id
+        WHERE down.depth < :max_depth
+    )
+    SELECT DISTINCT folder_id FROM down LIMIT :limit
+    """
+)
+
+
+class SharedFolderRepository(BaseRepository[SharedFolder]):
+    model = SharedFolder
+
+    async def levels_through_tree(
+        self, folder_ids: set[int], user_id: int
+    ) -> dict[int, list[ResourcePermissionLevel]]:
+        """``{folder_id: [levels]}``: what ``user_id`` holds on each folder
+        through a share on it or on any ancestor. One query for any number of
+        folders, whatever their depth."""
+        if not folder_ids:
+            return {}
+        rows = await self.session.execute(
+            _UP, {"folder_ids": list(folder_ids), "user_id": user_id, "max_depth": MAX_FOLDER_DEPTH}
+        )
+        found: dict[int, list[ResourcePermissionLevel]] = {}
+        for start_id, level in rows.all():
+            found.setdefault(start_id, []).append(ResourcePermissionLevel(level))
+        return found
+
+    async def reachable_folder_ids(self, user_id: int) -> set[int]:
+        """Every folder inside a tree shared with ``user_id``, roots included."""
+        rows = await self.session.execute(
+            _DOWN, {"user_id": user_id, "max_depth": MAX_FOLDER_DEPTH, "limit": MAX_SHARED_FOLDERS}
+        )
+        return set(rows.scalars().all())
+
+    def _listed(self) -> Select[tuple[SharedFolder]]:
+        folder = selectinload(SharedFolder.folder)
+        return select(SharedFolder).options(
+            folder.selectinload(ResourceFolder.course).raiseload("*"),
+            folder.selectinload(ResourceFolder.batch).raiseload("*"),
+            folder.raiseload("*"),
+            selectinload(SharedFolder.shared_with_user).selectinload(User.roles).raiseload("*"),
+            selectinload(SharedFolder.shared_with_user).raiseload("*"),
+            selectinload(SharedFolder.shared_by_user).raiseload("*"),
+        )
+
+    async def shared_with(self, user_id: int) -> list[SharedFolder]:
+        stmt = self._listed().where(SharedFolder.shared_with_user_id == user_id)
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
+    async def for_folder(self, folder_id: int) -> list[SharedFolder]:
+        stmt = self._listed().where(SharedFolder.folder_id == folder_id).order_by(SharedFolder.id)
+        return list((await self.session.execute(stmt)).scalars().unique().all())
+
+    async def existing(self, *, folder_id: int, user_id: int) -> SharedFolder | None:
+        stmt = select(SharedFolder).options(raiseload("*")).where(
+            SharedFolder.folder_id == folder_id, SharedFolder.shared_with_user_id == user_id
         )
         return (await self.session.execute(stmt)).scalars().first()

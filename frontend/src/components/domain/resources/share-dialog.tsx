@@ -3,10 +3,14 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Search, Share2, Users, X } from "lucide-react";
-import { api } from "@/lib/api/client";
+import { api, segment } from "@/lib/api/client";
 import { useApiMutation } from "@/lib/api/hooks";
 import { useDebounced } from "@/components/ui/combobox";
-import type { ShareCandidateResponse, SharedResourceResponse } from "@/lib/api/types";
+import type {
+  BulkShareResponse,
+  ShareCandidateResponse,
+  SharedFolderResponse,
+} from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/form";
@@ -16,7 +20,7 @@ import { EmptyState, InlineSpinner } from "@/components/ui/states";
 import { cn } from "@/lib/utils";
 
 /**
- * Handing files to people.
+ * Handing files and folders to people.
  *
  * **The list is the server's, not a user directory with a filter on it.**
  * `GET /resources/share-audience` answers "who may *this* caller share with",
@@ -35,9 +39,10 @@ import { cn } from "@/lib/utils";
  * **No email address appears anywhere**, by construction rather than by
  * omission: the response has no field for one.
  *
- * Several files and several people in one act, through the bulk endpoint,
- * which is all-or-nothing. A partial share is the worst outcome available --
- * the sharer is told it failed and half the class has the file anyway.
+ * Files and folders and several people in one act, through the bulk endpoint,
+ * which is all-or-nothing and idempotent: something already shared at this
+ * level is left alone, so the confirmation never needs to say "already shared"
+ * and pressing Share twice does no harm.
  */
 
 const PAGE = 50;
@@ -64,17 +69,82 @@ function Placements({ candidate }: { candidate: ShareCandidateResponse }): React
   );
 }
 
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** "this file", "3 files", "a folder", "2 files and 1 folder" -- for the title. */
+export function describeSelection(files: number, folders: number): string {
+  if (files === 1 && folders === 0) return "this file";
+  if (files === 0 && folders === 1) return "this folder";
+  const parts = [
+    files > 0 ? plural(files, "file", "files") : null,
+    folders > 0 ? plural(folders, "folder", "folders") : null,
+  ].filter(Boolean);
+  return parts.join(" and ");
+}
+
+/** Who already holds one folder, with a way to take it back. */
+function FolderAccess({ folderId }: { folderId: string }): ReactNode {
+  const queryClient = useQueryClient();
+  const shares = useQuery({
+    queryKey: ["folder-shares", folderId],
+    queryFn: () => api.get<SharedFolderResponse[]>(`/folders/${segment(folderId)}/shares`),
+  });
+  const revoke = useApiMutation<void, string>({
+    mutationFn: (userId) =>
+      api.delete<void>(`/folders/${segment(folderId)}/share/${segment(userId)}`),
+    success: "Access removed.",
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["folder-shares", folderId] });
+    },
+  });
+
+  const rows = shares.data ?? [];
+  if (shares.isPending || rows.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">People with access</p>
+      <ul className="divide-y divide-border-subtle rounded-lg border border-border-subtle">
+        {rows.map((row) => (
+          <li key={row.shared_with_user_id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+            <span className="min-w-0 flex-1 truncate">{row.shared_with_name}</span>
+            <Badge tone="neutral" className="text-2xs">
+              {row.level === "DOWNLOAD" ? "View and download" : "View only"}
+            </Badge>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove ${row.shared_with_name ?? "this person"}`}
+              loading={revoke.isPending && revoke.variables === row.shared_with_user_id}
+              onClick={() => row.shared_with_user_id && revoke.mutate(row.shared_with_user_id)}
+            >
+              <X className="size-4" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ShareDialog({
   open,
   onOpenChange,
   resourceIds,
   resourceNames,
+  folderIds = [],
+  folderNames = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** One file, or everything currently ticked in the library. */
   resourceIds: string[];
   resourceNames: string[];
+  /** Folders to hand over whole; everything beneath them is covered. */
+  folderIds?: string[];
+  folderNames?: string[];
 }): ReactNode {
   const queryClient = useQueryClient();
   const [term, setTerm] = useState("");
@@ -107,23 +177,30 @@ export function ShareDialog({
   });
 
   const chosenIds = useMemo(() => new Set(chosen.map((c) => c.public_id)), [chosen]);
+  const itemCount = resourceIds.length + folderIds.length;
+  const names = [...folderNames, ...resourceNames];
 
-  const share = useApiMutation<SharedResourceResponse[], void>({
+  const share = useApiMutation<BulkShareResponse, void>({
     mutationFn: () =>
-      api.post<SharedResourceResponse[]>("/resources/share", {
+      api.post<BulkShareResponse>("/resources/share", {
         body: {
           resource_ids: resourceIds,
+          folder_ids: folderIds,
           user_ids: chosen.map((c) => c.public_id),
           level,
         },
       }),
-    success: () =>
-      `Shared ${resourceIds.length === 1 ? "1 file" : `${resourceIds.length} files`} with ${
-        chosen.length === 1 ? "1 person" : `${chosen.length} people`
-      }.`,
+    // Deliberately the same message whether every row was new or some were
+    // already shared: the server skipped the duplicates, nothing went wrong,
+    // and telling the sharer "3 were already shared" interrupts them with a
+    // fact they cannot act on.
+    success: () => `Shared with ${plural(chosen.length, "person", "people")}.`,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["resources"] });
       void queryClient.invalidateQueries({ queryKey: ["shared-with-me"] });
+      for (const id of folderIds) {
+        void queryClient.invalidateQueries({ queryKey: ["folder-shares", id] });
+      }
       onOpenChange(false);
     },
   });
@@ -137,26 +214,34 @@ export function ShareDialog({
   }
 
   const results = audience.data ?? [];
+  const what = describeSelection(resourceIds.length, folderIds.length);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader
-          title={
-            resourceIds.length === 1
-              ? "Share this file"
-              : `Share ${resourceIds.length} files`
-          }
+          title={`Share ${what}`}
           description={
-            resourceNames.length === 1
-              ? resourceNames[0]
-              : `${resourceNames.slice(0, 3).join(", ")}${
-                  resourceNames.length > 3 ? ` +${resourceNames.length - 3} more` : ""
+            names.length === 1
+              ? names[0]
+              : `${names.slice(0, 3).join(", ")}${
+                  names.length > 3 ? ` +${names.length - 3} more` : ""
                 }`
           }
         />
 
         <div className="space-y-3">
+          {folderIds.length > 0 ? (
+            <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+              Sharing a folder shares everything inside it, including subfolders and files added
+              later. Staff-only files inside it stay hidden from students, guardians and managers.
+            </p>
+          ) : null}
+
+          {open && folderIds.length === 1 && folderIds[0] && resourceIds.length === 0 ? (
+            <FolderAccess folderId={folderIds[0]} />
+          ) : null}
+
           <Field label="Find people">
             <div className="relative">
               <Search
@@ -270,7 +355,7 @@ export function ShareDialog({
           <Button
             type="button"
             loading={share.isPending}
-            disabled={chosen.length === 0 || resourceIds.length === 0}
+            disabled={chosen.length === 0 || itemCount === 0 || share.isPending}
             onClick={() => share.mutate()}
           >
             <Share2 className="size-4" aria-hidden />

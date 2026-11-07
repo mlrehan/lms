@@ -304,8 +304,9 @@ def test_the_share_list_names_people_without_naming_their_address(env) -> None:
     """Read as an administrator on purpose: they hold `user.view_contact`, so
     the privacy helper every other screen uses would hand *them* the login
     name. "Who has this file" is not a contact directory."""
-    shared = env.call("admin", "POST", "/resources/share", json={
-        "resource_ids": [str(env.pub["file1"])],
+    # The single-file route answers with the file's share list -- the one a
+    # sharer reads. (The bulk route answers with counts.)
+    shared = env.call("admin", "POST", f"/resources/{env.pub['file1']}/share", json={
         "user_ids": [str(env.pub["nameless"])],
         "level": "VIEW",
     })
@@ -364,13 +365,18 @@ def test_several_files_reach_several_people_in_one_act(env) -> None:
         "level": "VIEW",
     })
     assert response.status_code == 200, response.text[:300]
-    rows = response.json()
-    assert len(rows) == 4
-    assert {r["shared_with_name"] for r in rows} == {
-        f"Sarah Mine{env.tag}", f"Gina GMine{env.tag}",
+    assert response.json() == {
+        "files": 2, "folders": 0, "people": 2, "created": 4, "updated": 0, "unchanged": 0,
     }
-    # The share list is read constantly; it must not become an address book.
-    assert "@" not in response.text
+    # Delivered, as each recipient sees it -- not as the sharer was told.
+    for person in ("mine", "gmine"):  # sign-in names, not fixture keys
+        mine = env.call(person, "GET", "/shared-with-me")
+        assert mine.status_code == 200, (person, mine.text[:300])
+        assert {r["resource_id"] for r in mine.json()} >= {
+            str(env.pub["file1"]), str(env.pub["file2"]),
+        }, person
+        # The share list is read constantly; it must not become an address book.
+        assert "@" not in mine.text
 
 
 def test_a_student_cannot_share_at_all(env) -> None:

@@ -12,10 +12,16 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from backend.core.privacy import visible_username
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
-from backend.db.dependencies import DBSession
-from backend.models.resource import Resource, ResourceFolder, ResourcePermission, SharedResource
+from backend.db.dependencies import DBSession, commit_before_responding
+from backend.models.resource import Resource, ResourceFolder, ResourcePermission, SharedFolder, SharedResource
 from backend.schemas.base import Page, PageParams
 from backend.schemas.resource import (
+    BulkShareResponse,
+    SharedCourseGroup,
+    SharedFolderContentsResponse,
+    SharedFolderEntry,
+    SharedFolderResponse,
+    SharedLibraryResponse,
     BulkDeleteRequest,
     BulkDeleteResponse,
     BulkPurgeRequest,
@@ -128,7 +134,33 @@ def _permission_response(p: ResourcePermission, label: str | None = None) -> Res
     )
 
 
-def _share_response(s: SharedResource) -> SharedResourceResponse:
+def _course_for(
+    service: ResourceService, courses: dict, resource: Resource
+) -> tuple[uuid.UUID, str] | None:
+    return courses.get(service.course_of(resource.course_id, resource.batch_id))
+
+
+def _folder_share_response(
+    s: SharedFolder, *, course: tuple[uuid.UUID, str] | None = None
+) -> SharedFolderResponse:
+    """Same rule as `_share_response`: names and roles, never login names."""
+    return SharedFolderResponse(
+        folder_id=s.folder.public_id,
+        folder_name=s.folder.name,
+        level=s.level,
+        shared_with_user_id=s.shared_with_user.public_id if s.shared_with_user else None,
+        shared_with_name=display_name(s.shared_with_user) if s.shared_with_user else None,
+        shared_with_role=role_label(s.shared_with_user) if s.shared_with_user else None,
+        shared_by_name=display_name(s.shared_by_user) if s.shared_by_user else None,
+        created_at=s.created_at,
+        course_id=course[0] if course else None,
+        course_title=course[1] if course else None,
+    )
+
+
+def _share_response(
+    s: SharedResource, *, course: tuple[uuid.UUID, str] | None = None
+) -> SharedResourceResponse:
     """Names and roles, never login names.
 
     `visible_username` returns the login name to a viewer holding
@@ -149,6 +181,8 @@ def _share_response(s: SharedResource) -> SharedResourceResponse:
         resource_type=s.resource.resource_type,
         mime_type=s.resource.mime_type,
         size=s.resource.size,
+        course_id=course[0] if course else None,
+        course_title=course[1] if course else None,
     )
 
 
@@ -237,8 +271,15 @@ async def create_folder(
     ],
 ) -> FolderResponse:
     """A root folder must name a course or batch; a child inherits its
-    parent's, so a subtree cannot span two audiences."""
-    return _folder_response(await ResourceService(session).create_folder(payload, actor=actor))
+    parent's, so a subtree cannot span two audiences.
+
+    Committed before the response: "create a folder, then upload into it"
+    is one gesture, and the upload arriving before this commit answered
+    "Folder not found" -- seen intermittently under load."""
+    folder = await ResourceService(session).create_folder(payload, actor=actor)
+    response = _folder_response(folder)
+    await commit_before_responding(session)
+    return response
 
 
 @router.get("/folders/{folder_id}", response_model=FolderResponse, summary="Get one folder")
@@ -387,18 +428,22 @@ async def upload_resource(
 
     Content type is checked against an allowlist (`STORAGE_ALLOWED_MIME_TYPES`)
     and size against `STORAGE_MAX_UPLOAD_BYTES`.
+
+    Committed before the response, for the same reason as folder creation:
+    sharing a file straight after uploading it must find the file.
     """
-    return _resource_response(
-        await ResourceService(session).upload(
-            upload=file,
-            actor=actor,
-            name=name,
-            resource_type=resource_type,
-            folder_public_id=folder_id,
-            course_public_id=course_id,
-            batch_public_id=batch_id,
-        )
+    resource = await ResourceService(session).upload(
+        upload=file,
+        actor=actor,
+        name=name,
+        resource_type=resource_type,
+        folder_public_id=folder_id,
+        course_public_id=course_id,
+        batch_public_id=batch_id,
     )
+    response = _resource_response(resource)
+    await commit_before_responding(session)
+    return response
 
 
 @router.get(
@@ -561,9 +606,7 @@ async def empty_recycle_bin(
 async def get_resource(
     resource_id: uuid.UUID,
     session: DBSession,
-    actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
-    ],
+    actor: CurrentUser,
 ) -> ResourceResponse:
     service = ResourceService(session)
     resource = await service.get(resource_id, actor=actor)
@@ -599,9 +642,7 @@ async def upload_version(
 async def download_resource(
     resource_id: uuid.UUID,
     session: DBSession,
-    actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
-    ],
+    actor: CurrentUser,
     version: Annotated[int | None, Query(ge=1, description="Defaults to the current version.")] = None,
 ):
     """Authorises first, then either streams the bytes (local storage) or
@@ -620,9 +661,7 @@ async def preview_resource(
     resource_id: uuid.UUID,
     request: Request,
     session: DBSession,
-    actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
-    ],
+    actor: CurrentUser,
 ):
     """Read a file in place, without the right to keep a copy.
 
@@ -819,8 +858,8 @@ async def revoke_permission(
 
 @router.post(
     "/resources/share",
-    response_model=list[SharedResourceResponse],
-    summary="Share several files with several people",
+    response_model=BulkShareResponse,
+    summary="Share files and folders with several people",
 )
 async def share_resources(
     payload: BulkShareRequest,
@@ -828,14 +867,32 @@ async def share_resources(
     actor: Annotated[
         CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.UPDATE)))
     ],
-) -> list[SharedResourceResponse]:
-    """One decision, not N. Every file is authorised and every recipient
-    checked against the audience before a single row is written, so a refusal
-    cannot leave half a share behind."""
-    rows = await ResourceService(session).share_many(
-        payload.resource_ids, payload.user_ids, actor=actor, level=payload.level
+) -> BulkShareResponse:
+    """One decision, not N. Every file and folder is authorised and every
+    recipient checked against the audience before a single row is written, so
+    a refusal cannot leave half a share behind.
+
+    Idempotent: what is already shared at this level is left alone and
+    counted as `unchanged`, so sending the same request twice -- a double
+    click, or a retry after the gateway gave up waiting -- changes nothing.
+    Committed before the response, so a recipient told "it's there" finds it.
+    """
+    outcome = await ResourceService(session).share_many(
+        payload.resource_ids,
+        payload.user_ids,
+        actor=actor,
+        level=payload.level,
+        folder_public_ids=payload.folder_ids,
     )
-    return [_share_response(s) for s in rows]
+    await commit_before_responding(session)
+    return BulkShareResponse(
+        files=outcome.files,
+        folders=outcome.folders,
+        people=outcome.people,
+        created=outcome.created,
+        updated=outcome.updated,
+        unchanged=outcome.unchanged,
+    )
 
 
 @router.post(
@@ -856,6 +913,7 @@ async def share_resource(
     rows = await ResourceService(session).share(
         resource_id, payload.user_ids, actor=actor, level=payload.level
     )
+    await commit_before_responding(session)
     return [_share_response(s) for s in rows]
 
 
@@ -873,6 +931,42 @@ async def unshare_resource(
     ],
 ) -> Response:
     await ResourceService(session).unshare(resource_id, user_id, actor=actor)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/folders/{folder_id}/shares",
+    response_model=list[SharedFolderResponse],
+    summary="Who a folder is shared with",
+)
+async def folder_shares(
+    folder_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.UPDATE)))
+    ],
+) -> list[SharedFolderResponse]:
+    rows = await ResourceService(session).folder_shares(folder_id, actor=actor)
+    return [_folder_share_response(row) for row in rows]
+
+
+@router.delete(
+    "/folders/{folder_id}/share/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Stop sharing a folder with a user",
+)
+async def unshare_folder(
+    folder_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session: DBSession,
+    actor: Annotated[
+        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.UPDATE)))
+    ],
+) -> Response:
+    """Removes what this share granted and nothing else: a file inside the
+    folder that was also shared with them directly stays shared."""
+    await ResourceService(session).unshare_folder(folder_id, user_id, actor=actor)
+    await commit_before_responding(session)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -903,18 +997,114 @@ async def set_share_link(
 @router.get("/shared-with-me", response_model=list[SharedResourceResponse], summary="Files shared with me")
 async def shared_with_me(
     session: DBSession,
-    actor: Annotated[
-        CurrentUser, Depends(require_permissions(perm(Module.RESOURCE, Action.READ)))
-    ],
+    actor: CurrentUser,
 ) -> list[SharedResourceResponse]:
+    """Files shared directly with the caller, each labelled with its course.
+
+    Staff-only and deleted files are left out: `get()` would refuse to open
+    them, so listing them would only advertise a file this person cannot reach.
+    """
     service = ResourceService(session)
-    rows = await service.shares.shared_with(actor.id)
-    # A restricted file shared before it was restricted still has its share
-    # row. `get()` would refuse to open it, so listing it here would only
-    # advertise a file this person cannot reach and cannot be told about.
-    if not service.may_see_restricted(actor):
-        rows = [r for r in rows if not (r.resource and r.resource.is_restricted)]
-    return [_share_response(s) for s in rows]
+    _, files, courses = await service.shared_library(actor)
+    return [_share_response(s, course=_course_for(service, courses, s.resource)) for s in files]
+
+
+@router.get(
+    "/shared-with-me/library",
+    response_model=SharedLibraryResponse,
+    summary="Everything shared with me, grouped by course",
+)
+async def shared_library(
+    session: DBSession,
+    actor: CurrentUser,
+) -> SharedLibraryResponse:
+    """Folders and files shared with the caller, one group per course.
+
+    Grouped here rather than in the browser so the page draws what it is
+    given. The course is the file's or folder's own, never something the
+    sharer chose; anything that belongs to no course is the last group, with
+    a null course.
+    """
+    service = ResourceService(session)
+    folders, files, courses = await service.shared_library(actor)
+
+    groups: dict[int | None, SharedCourseGroup] = {}
+
+    def group(course_id: int | None) -> SharedCourseGroup:
+        key = course_id if course_id in courses else None
+        if key not in groups:
+            label = courses.get(key) if key is not None else None
+            groups[key] = SharedCourseGroup(
+                course_id=label[0] if label else None,
+                course_title=label[1] if label else None,
+            )
+        return groups[key]
+
+    for row in folders:
+        course_id = service.course_of(row.folder.course_id, row.folder.batch_id)
+        group(course_id).folders.append(
+            _folder_share_response(row, course=courses.get(course_id))
+        )
+    for row in files:
+        course_id = service.course_of(row.resource.course_id, row.resource.batch_id)
+        group(course_id).files.append(_share_response(row, course=courses.get(course_id)))
+
+    for item in groups.values():
+        item.folders.sort(key=lambda f: f.folder_name.lower())
+        item.files.sort(key=lambda f: (f.resource_name or "").lower())
+    ordered = sorted(
+        groups.values(),
+        key=lambda g: (g.course_id is None, (g.course_title or "").lower()),
+    )
+    return SharedLibraryResponse(
+        groups=ordered, total_files=len(files), total_folders=len(folders)
+    )
+
+
+@router.get(
+    "/shared-with-me/folders/{folder_id}",
+    response_model=SharedFolderContentsResponse,
+    summary="Open a folder that was shared with me",
+)
+async def shared_folder_contents(
+    folder_id: uuid.UUID,
+    session: DBSession,
+    actor: CurrentUser,
+) -> SharedFolderContentsResponse:
+    """A folder inside a shared tree: its subfolders and its files.
+
+    404 for anything outside a tree shared with the caller -- including the
+    folders *above* a shared one, whose names were never part of the share.
+    """
+    service = ResourceService(session)
+    folder, level, path, children, files = await service.shared_folder_contents(
+        folder_id, actor=actor
+    )
+    courses = await service.course_labels([(folder.course_id, folder.batch_id)])
+    course = courses.get(service.course_of(folder.course_id, folder.batch_id))
+    return SharedFolderContentsResponse(
+        folder_id=folder.public_id,
+        name=folder.name,
+        level=level,
+        course_id=course[0] if course else None,
+        course_title=course[1] if course else None,
+        path=[SharedFolderEntry(folder_id=f.public_id, name=f.name) for f in path],
+        folders=[SharedFolderEntry(folder_id=f.public_id, name=f.name) for f in children],
+        files=[
+            SharedResourceResponse(
+                resource_id=r.public_id,
+                resource_name=r.name,
+                level=file_level,
+                created_at=r.created_at,
+                resource_type=r.resource_type,
+                mime_type=r.mime_type,
+                size=r.size,
+                course_id=course[0] if course else None,
+                course_title=course[1] if course else None,
+            )
+            for r, file_level in files
+        ],
+    )
 
 
 @router.get("/shared/{token}", summary="Download via a public share link")

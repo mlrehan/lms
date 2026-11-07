@@ -181,8 +181,58 @@ class SharedResource(Base):
     )
     created_at: Mapped[datetime] = utc_datetime_column(nullable=False)
 
-    __table_args__ = (UniqueConstraint('resource_id', 'shared_with_user_id', name="uq_shared_resources_resource_user"),)
+    __table_args__ = (
+        UniqueConstraint('resource_id', 'shared_with_user_id', name="uq_shared_resources_resource_user"),
+        # "Shared with me" filters by recipient; the unique index leads with
+        # resource_id and cannot serve it.
+        Index("ix_shared_resources_shared_with_user_id", "shared_with_user_id"),
+    )
 
     resource: Mapped[Resource] = relationship(Resource, back_populates="shared_resources", lazy="selectin")
     shared_with_user: Mapped["User"] = relationship("User", foreign_keys=[shared_with_user_id], back_populates="shared_resources", lazy="selectin")
     shared_by_user: Mapped["User"] = relationship("User", foreign_keys=[shared_by_user_id], back_populates="shared_to", lazy="selectin")
+
+
+class SharedFolder(Base, PublicIdMixin):
+    """A folder handed to one person, at a level.
+
+    Access to everything beneath it is **computed from the tree**, never copied
+    into a row per file: a file is reachable through this share while its
+    folder is this folder or one of its descendants. So a folder of a thousand
+    files is one row, a file added later is covered the moment it lands, a file
+    moved out stops being covered the moment it leaves, and revoking the share
+    removes exactly what it granted -- a direct share of a file inside it is a
+    separate row and survives.
+
+    ``UNIQUE (folder_id, shared_with_user_id)`` is the duplicate guard, as on
+    ``shared_resources``; re-sharing is how the level is changed.
+    """
+    __tablename__ = "shared_folders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    folder_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("resource_folders.id", ondelete="CASCADE"), nullable=False
+    )
+    shared_with_user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    shared_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    level: Mapped[ResourcePermissionLevel] = mapped_column(
+        SQLEnum(ResourcePermissionLevel, name="resource_permission_level", native_enum=False),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = utc_datetime_column(nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("folder_id", "shared_with_user_id", name="uq_shared_folders_folder_user"),
+        CheckConstraint(
+            "level IN ('VIEW', 'DOWNLOAD', 'EDIT', 'MANAGE')", name="ck_shared_folders_level"
+        ),
+    )
+
+    # Loaded explicitly where needed; never part of an eager cascade.
+    folder: Mapped[ResourceFolder] = relationship(ResourceFolder, lazy="raise")
+    shared_with_user: Mapped["User"] = relationship("User", foreign_keys=[shared_with_user_id], lazy="raise")
+    shared_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[shared_by_user_id], lazy="raise")

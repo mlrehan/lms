@@ -595,11 +595,28 @@ export interface DeletionImpactResponse {
  */
 export interface BulkShareRequest {
   /** Files to share. */
-  resource_ids: string[];
+  resource_ids?: string[];
+  /** Folders to share. Everything beneath a folder is covered, including files added to it later. */
+  folder_ids?: string[];
   /** People to share them with. */
   user_ids: string[];
   /** What the recipients may do. VIEW lets them read or watch it in place; DOWNLOAD hands over the bytes. Defaults to the narrower. */
   level?: ResourcePermissionLevel;
+}
+
+/**
+ * What one share did. Counts, not rows: the caller already knows what it sent.
+ */
+export interface BulkShareResponse {
+  files: number;
+  folders: number;
+  people: number;
+  /** New shares written. */
+  created: number;
+  /** Existing shares whose level changed. */
+  updated: number;
+  /** Already shared at this level; nothing was written for these. */
+  unchanged: number;
 }
 
 export interface CalendarFeedCreatedResponse {
@@ -3311,6 +3328,64 @@ export interface SharedResourceResponse {
   resource_type?: ResourceType | null;
   mime_type?: string | null;
   size?: number | null;
+  /** The course the file belongs to, from the file itself. Null: no course. */
+  course_id?: string | null;
+  course_title?: string | null;
+}
+
+/**
+ * A folder handed to a person; everything beneath it is covered.
+ */
+export interface SharedFolderResponse {
+  folder_id: string;
+  folder_name: string;
+  level: ResourcePermissionLevel;
+  shared_with_user_id?: string | null;
+  shared_with_name?: string | null;
+  shared_with_role?: string | null;
+  shared_by_name?: string | null;
+  created_at: string;
+  course_id?: string | null;
+  course_title?: string | null;
+}
+
+/**
+ * Everything shared with the caller that belongs to one course.
+ */
+export interface SharedCourseGroup {
+  /** Null for files and folders that belong to no course. */
+  course_id?: string | null;
+  course_title?: string | null;
+  folders?: SharedFolderResponse[];
+  files?: SharedResourceResponse[];
+}
+
+export interface SharedLibraryResponse {
+  /** One group per course, by title; the no-course group is last. */
+  groups?: SharedCourseGroup[];
+  total_files?: number;
+  total_folders?: number;
+}
+
+export interface SharedFolderEntry {
+  folder_id: string;
+  name: string;
+}
+
+/**
+ * One folder inside a tree that was shared with the caller.
+ */
+export interface SharedFolderContentsResponse {
+  folder_id: string;
+  name: string;
+  /** What the caller may do with the files here, through the share. */
+  level: ResourcePermissionLevel;
+  course_id?: string | null;
+  course_title?: string | null;
+  /** From the shared folder down to this one. Never above the share. */
+  path?: SharedFolderEntry[];
+  folders?: SharedFolderEntry[];
+  files?: SharedResourceResponse[];
 }
 
 export interface SheetBatch {
