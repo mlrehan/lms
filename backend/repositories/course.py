@@ -6,7 +6,7 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import false, Select, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import raiseload, selectinload
 
 from backend.models.administration import CourseTag
 from backend.models.batch import Batch, BatchSession
@@ -21,19 +21,44 @@ from backend.utils.enums import CourseStatus, EnrollmentStatus
 # belongs in a student's or a corporate manager's browse list.
 PUBLIC_STATUSES = (CourseStatus.PUBLISHED, CourseStatus.RUNNING, CourseStatus.COMPLETED)
 
+# Every relationship on `Course` is `lazy="selectin"`, and so is almost every
+# relationship behind them: left to the model defaults, loading one course
+# pulled its batches -> sessions -> enrolments -> users (with city, country,
+# organisations) and its resources -> versions/shares -> users. A catalogue
+# page of twenty courses materialised over a thousand ORM objects for a
+# response made of scalar columns. These are the graphs the responses actually
+# read, and `raiseload("*")` below them makes any deeper read fail loudly in a
+# test instead of quietly bringing the cascade back.
+#
+# The catalogue (`CourseSummary`, and the global search hit) reads columns
+# only -- plus `course_image_url`, a property over `public_id` and a column.
+COURSE_LIST_LOAD = (raiseload("*"),)
+
+# `_course_response` in `api/v1/courses.py` reads, beyond columns:
+#   category / department -> public_id, name
+#   tags                  -> name
+#   tutors                -> id, public_id, username, first/last name
+#                            (`tutors_visible_to`, `visible_username`)
+#   batches               -> the scalar columns of `CourseBatchBrief`
+# and nothing on `resources`. Other callers of `CourseService.get` (AI tools,
+# grading-scheme routes) read columns or `tutors` only.
+COURSE_DETAIL_LOAD = (
+    selectinload(Course.category).raiseload("*"),
+    selectinload(Course.department).raiseload("*"),
+    selectinload(Course.tags).raiseload("*"),
+    selectinload(Course.tutors).raiseload("*"),
+    selectinload(Course.batches).raiseload("*"),
+    raiseload(Course.resources),
+)
+
 
 class CourseRepository(BaseRepository[Course]):
     model = Course
 
-    def _base(self) -> Select[tuple[Course]]:
+    def _base(self, *options) -> Select[tuple[Course]]:  # type: ignore[no-untyped-def]
         return (
             select(Course)
-            .options(
-                selectinload(Course.tutors),
-                selectinload(Course.category),
-                selectinload(Course.department),
-                selectinload(Course.tags),
-            )
+            .options(*(options or COURSE_DETAIL_LOAD))
             .where(Course.is_deleted.is_(False))
         )
 
@@ -113,7 +138,7 @@ class CourseRepository(BaseRepository[Course]):
         student_user_id: int | None = None,
     ) -> tuple[Sequence[Course], int]:
         stmt = self._visible(
-            self._base(),
+            self._base(*COURSE_LIST_LOAD),
             unrestricted=unrestricted,
             tutor_course_ids=tutor_course_ids,
             may_browse=may_browse,
