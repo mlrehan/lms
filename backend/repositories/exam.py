@@ -69,8 +69,14 @@ class ExamRepository(BaseRepository[Exam]):
         if assessments is not None:
             # Another tutor's exam in a course this tutor also teaches -- unless
             # they were asked to invigilate it, which is an explicit way in.
-            hidden = assessments.exclude_colleagues(
-                select(Exam.id), course_column=Exam.course_id, creator_column=Exam.created_by
+            # A learner's exams are the ones that reach their own enrolment
+            # (batch or named-student scope), not every exam on the course.
+            hidden = assessments.apply(
+                select(Exam.id),
+                course_column=Exam.course_id,
+                creator_column=Exam.created_by,
+                deleted_column=Exam.deleted_at,
+                model=Exam,
             )
             if invigilating_exam_ids:
                 stmt = stmt.where(or_(Exam.id.in_(hidden), Exam.id.in_(invigilating_exam_ids)))

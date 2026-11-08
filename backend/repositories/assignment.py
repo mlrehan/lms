@@ -55,6 +55,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
                 course_column=Assignment.course_id,
                 creator_column=Assignment.created_by,
                 deleted_column=Assignment.deleted_at,
+                model=Assignment,
             )
         if published_only:
             stmt = stmt.where(Assignment.state == AssessmentState.PUBLISHED)

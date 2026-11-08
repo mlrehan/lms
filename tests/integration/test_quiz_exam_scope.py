@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import select, text
 
 from backend.core.config import get_settings
-from backend.core.errors import ConflictError
+from backend.core.errors import NotFoundError, ConflictError
 from backend.db.manager import DatabaseManager
 from backend.models.batch import Batch, BatchSession
 from backend.models.course import Course, TutorCourse
@@ -197,14 +197,17 @@ def test_a_batch_quiz_refuses_a_student_from_another_batch(env) -> None:
             await s.flush()
 
             ok = await svc.start_attempt(quiz.public_id, actor=made["alice"])
-            with pytest.raises(ConflictError) as refused:
+            # Not a "not set for you" conflict any more: a student in another
+            # batch cannot see the quiz at all, exactly like one that does not
+            # exist. The old answer confirmed it existed and named its title.
+            with pytest.raises(NotFoundError):
                 await svc.start_attempt(quiz.public_id, actor=made["bob"])
-            return ok.attempt_number, str(refused.value)
+            with pytest.raises(NotFoundError):
+                await svc.get(quiz.public_id, actor=made["bob"])
+            return ok.attempt_number
         return go()
 
-    attempt, message = env.run(f)
-    assert attempt == 1
-    assert "not set for you" in message.lower()
+    assert env.run(f) == 1
 
 
 def test_a_quiz_that_has_not_opened_is_refused(env) -> None:

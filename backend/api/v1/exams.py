@@ -56,6 +56,7 @@ def _exam_response(
         total_marks=e.total_marks,
         passing_marks=e.passing_marks,
         is_published=e.is_published,
+        scope=e.scope,
         venue_or_link=e.venue_or_link,
         instructions=e.instructions,
         course_id=e.course.public_id if e.course else None,

@@ -44,6 +44,7 @@ from backend.services.rich_text import sanitize_rich_text
 from backend.services.audit_service import AuditAction
 from backend.services.course_service import CourseService
 from backend.services.gradebook_service import GradeBookService
+from backend.services.assessment_revisions import notify_markers, record_revision, snapshot
 from backend.services.assessment_scope import (
     AssessmentScopeResolver,
     AssessmentTarget,
@@ -191,6 +192,7 @@ class QuizService:
         validate_scope(target)
         if target.course_id != course.id:
             raise ValidationError("That batch or session belongs to a different course.")
+        recipients = await self.targets.recipients_for(target, payload.student_ids, actor=actor)
 
         row = Quiz(
             course_id=course.id,
@@ -221,6 +223,8 @@ class QuizService:
             created_by=actor.id,
         )
         await self.quizzes.add_and_flush(row)
+        if recipients is not None:
+            await self.targets.set_recipients(row, recipients, actor_id=actor.id)
 
         audit_service.record(
             self.session,
@@ -248,8 +252,13 @@ class QuizService:
                 "This quiz already has attempts and can no longer be modified."
             )
 
+        before = snapshot(row, changes)
         for field, value in changes.items():
             setattr(row, field, value)
+        published = bool(row.is_published)
+        revision = await record_revision(
+            self.session, row, before, actor_id=actor.id, was_published=published, is_published=published,
+        )
 
         audit_service.record(
             self.session,
@@ -258,7 +267,8 @@ class QuizService:
             actor_email=actor.email,
             entity_type="quiz",
             entity_id=row.id,
-            details={"fields": sorted(changes)},
+            details={"fields": sorted(changes),
+                     **({"revision": revision.revision_no, "notified": revision.notified} if revision else {})},
         )
         return row
 
@@ -849,6 +859,14 @@ class QuizService:
             entity_id=attempt.id,
             details={"submitted_late": late, "score": str(attempt.score) if attempt.score is not None else None},
         )
+        if attempt.score is None:
+            # Only an attempt a person must mark. An auto-marked quiz sat by a
+            # cohort of eighty would otherwise put eighty notices in each
+            # tutor's tray for work that needs nothing from them.
+            await notify_markers(
+                self.session, quiz, student=actor, submitted_at=now, late=late,
+                link={"attempt_id": str(attempt.public_id)},
+            )
 
         self.session.expire(attempt, ["answers"])
         return await self.attempts.get_by_public_id_full(public_id)  # type: ignore[return-value]

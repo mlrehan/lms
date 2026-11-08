@@ -4,7 +4,8 @@ import Link from "next/link";
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Play, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Play, Plus, Trash2 } from "lucide-react";
+import { RecipientsPanel, RevisionHistory, ReuseAssessmentDialog } from "@/components/domain/assessment-targets";
 import { api, segment } from "@/lib/api/client";
 import type {
   AttemptResponse,
@@ -1699,6 +1700,7 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
   const router = useRouter();
   const { permissions } = useSession();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reusing, setReusing] = useState(false);
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["quizzes", "detail", quizId],
@@ -1728,6 +1730,9 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
   const canAttempt = permissions.has("quiz.attempt");
   const canSeeAttempts = permissions.has("grade.read");
   const canEditQuiz = permissions.has("quiz.update");
+  // Reusing a quiz copies its answer key, so only its author (or a Super
+  // Admin) is offered it; the server applies the same rule.
+  const canReuse = permissions.has("quiz.create") && Boolean(data.can_manage);
 
   return (
     <div className="space-y-5">
@@ -1753,6 +1758,11 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
         }
         actions={
           <div className="flex items-center gap-3">
+            {canReuse ? (
+              <Button variant="secondary" size="sm" onClick={() => setReusing(true)}>
+                <Copy /> Reuse
+              </Button>
+            ) : null}
             {/* The author's (or a Super Admin's) to publish; the server refuses anyone else. */}
             {permissions.has("quiz.publish") && data.can_manage ? (
               <label className="flex items-center gap-2 text-sm">
@@ -1786,6 +1796,7 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
               withholds the fields from a candidate regardless; this stops
               offering them a tab of blanks. */}
           {canEditQuiz ? <TabsTab value="settings">Settings</TabsTab> : null}
+          {canEditQuiz ? <TabsTab value="history">Students &amp; history</TabsTab> : null}
           {canAttempt ? <TabsTab value="take">Take it</TabsTab> : null}
         </TabsList>
         <TabsPanel value="questions">
@@ -1794,6 +1805,25 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
         {canEditQuiz ? (
           <TabsPanel value="settings">
             <SettingsTab quiz={data} />
+          </TabsPanel>
+        ) : null}
+        {canEditQuiz ? (
+          <TabsPanel value="history" className="space-y-5">
+            {data.scope === "STUDENTS" ? (
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold">Set for these students</h3>
+                <RecipientsPanel
+                  kind="quizzes"
+                  assessmentId={data.public_id}
+                  courseId={data.course_id}
+                  canManage={Boolean(data.can_manage)}
+                />
+              </section>
+            ) : null}
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Changes since publication</h3>
+              <RevisionHistory kind="quizzes" assessmentId={data.public_id} />
+            </section>
           </TabsPanel>
         ) : null}
         {canSeeAttempts ? (
@@ -1807,6 +1837,17 @@ export default function QuizDetailPage({ params }: { params: Promise<{ quizId: s
           </TabsPanel>
         ) : null}
       </Tabs>
+
+      {canReuse ? (
+        <ReuseAssessmentDialog
+          kind="quizzes"
+          assessmentId={data.public_id}
+          courseId={data.course_id}
+          title={data.title}
+          open={reusing}
+          onOpenChange={setReusing}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={confirmDelete}

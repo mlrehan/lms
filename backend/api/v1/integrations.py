@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
-from sqlalchemy import literal, select
+from sqlalchemy import literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -21,7 +21,7 @@ from backend.models.assignment import Assignment
 from backend.models.batch import Batch, BatchSession
 from backend.models.exam import Exam
 from backend.models.quiz import Quiz
-from backend.services.assessment_scope import covers_batch
+from backend.services.assessment_scope import covers_batch, reaches_student
 from backend.utils.enums import AssessmentState
 from backend.models.enrollment import Enrollments
 from backend.models.course import Course
@@ -453,11 +453,8 @@ async def _assessment_events(
     row: a 90-day window on a busy course is hundreds of assessments, and
     asking the eligibility resolver about each would be the N+1 §33 forbids.
     """
-    # The two memberships this person has, resolved once.
-    enrolled_batches = select(Enrollments.batch_id).where(Enrollments.student_id == user_id)
+    # Batches this person teaches; their own seats are matched per enrolment below.
     taught_batches = select(BatchSession.batch_id).where(BatchSession.tutor_id == user_id)
-    my_batches = enrolled_batches.union(taught_batches).subquery()
-    batch_ids = select(my_batches.c[0])
 
     def in_scope(model) -> object:  # type: ignore[no-untyped-def]
         """Does this assessment reach any batch this person is part of?
@@ -468,12 +465,24 @@ async def _assessment_events(
         closed cohort on a live mark sheet.
         """
         mine = aliased(Batch)
-        return (
+        seat = aliased(Enrollments)
+        # As a student: per seat, so work set for named students reaches only
+        # the students it names.
+        as_student = (
             select(literal(1))
-            .select_from(mine)
-            .where(mine.id.in_(batch_ids), covers_batch(model, mine))
+            .select_from(seat)
+            .join(mine, mine.id == seat.batch_id)
+            .where(seat.student_id == user_id, reaches_student(model, mine, seat.student_id))
             .exists()
         )
+        taught = aliased(Batch)
+        as_tutor = (
+            select(literal(1))
+            .select_from(taught)
+            .where(taught.id.in_(taught_batches), covers_batch(model, taught))
+            .exists()
+        )
+        return or_(as_student, as_tutor)
 
     base = get_settings().mail.app_url.rstrip("/")
 

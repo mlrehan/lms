@@ -196,6 +196,10 @@ class AssessmentScope(str, Enum):
     COURSE = "COURSE"
     BATCH = "BATCH"
     SESSION = "SESSION"
+    #: Named students, listed in `assessment_recipients`. Covers one student,
+    #: a hand-picked group, or students drawn from several batches of the
+    #: course -- the cases a whole batch or session cannot express.
+    STUDENTS = "STUDENTS"
 
 
 class AssessmentState(str, Enum):

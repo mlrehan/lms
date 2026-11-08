@@ -359,6 +359,11 @@ def get_tool_registry() -> ToolRegistry:
         for tool in TEACHING_ACTION_TOOLS:
             _global_tool_registry.register(tool)
 
+        from backend.ai.tools.assessment_management import ASSESSMENT_MANAGEMENT_TOOLS
+
+        for tool in ASSESSMENT_MANAGEMENT_TOOLS:
+            _global_tool_registry.register(tool)
+
         from backend.ai.tools.sql_change_tool import sql_change_tool
 
         _global_tool_registry.register(sql_change_tool)

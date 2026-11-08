@@ -29,6 +29,7 @@ from backend.services.audit_service import AuditAction
 from backend.services.batch_service import BatchService
 from backend.services.course_service import CourseService
 from backend.services.gradebook_service import GradeBookService
+from backend.services.assessment_revisions import record_revision, snapshot
 from backend.services.assessment_scope import (
     AssessmentScopeResolver,
     AssessmentTarget,
@@ -127,6 +128,7 @@ class ExamService:
         if course_id and target.course_id != course_id:
             raise ValidationError("That batch or session belongs to a different course.")
         course_id = target.course_id or course_id
+        recipients = await self.targets.recipients_for(target, payload.student_ids, actor=actor)
 
         row = Exam(
             course_id=course_id,
@@ -149,6 +151,8 @@ class ExamService:
         row.invigilators = []
         row.results = []
         await self.exams.add_and_flush(row)
+        if recipients is not None:
+            await self.targets.set_recipients(row, recipients, actor_id=actor.id)
 
         audit_service.record(
             self.session,
@@ -191,8 +195,13 @@ class ExamService:
                     details={"highest_recorded": str(highest), "requested_total": str(total)},
                 )
 
+        before = snapshot(row, changes)
         for field, value in changes.items():
             setattr(row, field, value)
+        published = bool(row.is_published)
+        revision = await record_revision(
+            self.session, row, before, actor_id=actor.id, was_published=published, is_published=published,
+        )
 
         audit_service.record(
             self.session,
@@ -201,7 +210,8 @@ class ExamService:
             actor_email=actor.email,
             entity_type="exam",
             entity_id=row.id,
-            details={"fields": sorted(changes)},
+            details={"fields": sorted(changes),
+                     **({"revision": revision.revision_no, "notified": revision.notified} if revision else {})},
         )
         return row
 

@@ -26,7 +26,7 @@ class Quiz(Base, PublicIdMixin, AssessmentOwnershipMixin):
     # implementation -- the eligibility resolver reads these three columns and
     # does not care which table they came from.
     scope: Mapped[AssessmentScope] = mapped_column(
-        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False),
+        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False, length=16),
         nullable=False,
         default=AssessmentScope.COURSE,
         server_default=AssessmentScope.COURSE.value,

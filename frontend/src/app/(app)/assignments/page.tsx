@@ -26,15 +26,17 @@ import { formatDateTime, formatRelative, fromLocalInputValue } from "@/lib/forma
 import { humanise } from "@/lib/utils";
 import { RichTextEditor } from "@/components/domain/rich-text";
 import { CoursePicker, FormBatchPicker, FormCoursePicker } from "@/components/domain/entity-pickers";
+import { StudentChecklist } from "@/components/domain/assessment-targets";
 
 const createSchema = z
   .object({
     course_id: z.string().min(1, "Choose the course this belongs to."),
     // §3: who the work is for. COURSE keeps the behaviour every existing
     // assignment has, so the default changes nothing for anyone.
-    scope: z.enum(["COURSE", "BATCH", "SESSION"]),
+    scope: z.enum(["COURSE", "BATCH", "SESSION", "STUDENTS"]),
     batch_id: z.string(),
     session_id: z.string(),
+    student_ids: z.array(z.string()),
     title: z.string().trim().min(2, "Give the assignment a title."),
     description: z.string().trim(),
     available_from: z.string(),
@@ -57,6 +59,10 @@ const createSchema = z
   .refine((v) => v.scope !== "SESSION" || v.session_id, {
     path: ["session_id"],
     message: "Choose the class this is set for.",
+  })
+  .refine((v) => v.scope !== "STUDENTS" || v.student_ids.length > 0, {
+    path: ["student_ids"],
+    message: "Choose at least one student.",
   })
   .refine((v) => !v.passing_score || Number(v.passing_score) <= Number(v.max_score), {
     path: ["passing_score"],
@@ -96,6 +102,7 @@ function CreateAssignmentDialog({
       scope: "COURSE",
       batch_id: "",
       session_id: "",
+      student_ids: [],
       title: "",
       description: "",
       available_from: "",
@@ -127,6 +134,7 @@ function CreateAssignmentDialog({
           // field.
           batch_id: values.scope === "BATCH" ? values.batch_id : null,
           session_id: values.scope === "SESSION" ? values.session_id : null,
+          student_ids: values.scope === "STUDENTS" ? values.student_ids : null,
           state: values.state,
           available_from: values.available_from
             ? fromLocalInputValue(values.available_from, timeZone)
@@ -204,12 +212,27 @@ function CreateAssignmentDialog({
                     { value: "COURSE", label: "Everyone on the course" },
                     { value: "BATCH", label: "One batch" },
                     { value: "SESSION", label: "One class" },
+                    { value: "STUDENTS", label: "Chosen students" },
                   ]}
                 />
               )}
             </Field>
 
-            {scope !== "COURSE" ? (
+            {scope === "STUDENTS" ? (
+              <Field label="Students" error={errors.student_ids?.message} required>
+                {() => (
+                  <Controller
+                    control={control}
+                    name="student_ids"
+                    render={({ field }) => (
+                      <StudentChecklist courseId={courseId} value={field.value} onChange={field.onChange} />
+                    )}
+                  />
+                )}
+              </Field>
+            ) : null}
+
+            {scope === "BATCH" || scope === "SESSION" ? (
               <Field label="Batch" error={errors.batch_id?.message} required>
                 {({ id }) => (
                   <FormBatchPicker
@@ -250,7 +273,9 @@ function CreateAssignmentDialog({
                 ? "Every student in every active batch of this course will be set this work."
                 : scope === "BATCH"
                   ? "Only students enrolled in the chosen batch."
-                  : "Students of the batch this class belongs to — including anyone who missed it."}
+                  : scope === "STUDENTS"
+                    ? "Only the students you tick. Nobody else on the course can see it."
+                    : "Students of the batch this class belongs to — including anyone who missed it."}
             </p>
           </fieldset>
 
@@ -404,7 +429,9 @@ export default function AssignmentsPage() {
               when nobody submits. */}
           {row.state === "DRAFT" ? <Badge tone="warning" dot>Draft</Badge> : null}
           {row.scope !== "COURSE" ? (
-            <Badge tone="neutral">{row.scope === "BATCH" ? "One batch" : "One class"}</Badge>
+            <Badge tone="neutral">
+              {row.scope === "BATCH" ? "One batch" : row.scope === "STUDENTS" ? "Chosen students" : "One class"}
+            </Badge>
           ) : null}
         </span>
       ),

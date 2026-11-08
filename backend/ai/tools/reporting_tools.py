@@ -572,13 +572,19 @@ get_guardian_dependents_tool = ToolDefinition(
 # =============================================================================
 
 
-def _reaches_batches(model: Any, batch_ids: list[int]) -> Any:
-    """An assessment set for one of these batches, by the same rule eligibility uses everywhere else."""
+def _reaches_batches(model: Any, batch_ids: list[int], student_id: int) -> Any:
+    """An assessment that reaches this student through one of these batches.
+
+    Per student, not per batch: an assessment set for named students covers
+    every batch of its course, and only its recipient list says who it is for.
+    """
     from sqlalchemy import exists
 
-    from backend.services.assessment_scope import covers_batch
+    from backend.services.assessment_scope import reaches_student
 
-    return exists(select(Batch.id).where(Batch.id.in_(batch_ids), covers_batch(model)))
+    return exists(
+        select(Batch.id).where(Batch.id.in_(batch_ids), reaches_student(model, Batch, student_id))
+    )
 
 
 async def handle_get_student_assessments_and_deadlines(
@@ -673,7 +679,7 @@ async def handle_get_student_assessments_and_deadlines(
             .where(
                 # The shared eligibility rule. "No batch" used to mean "everyone":
                 # every course-wide quiz in the institution reached every student.
-                _reaches_batches(Quiz, batch_ids),
+                _reaches_batches(Quiz, batch_ids, student_id_int),
                 Quiz.is_published.is_(True),
             )
             .order_by(Quiz.available_until.asc().nulls_last())
@@ -728,7 +734,7 @@ async def handle_get_student_assessments_and_deadlines(
         asgn_stmt = (
             select(Assignment)
             .where(
-                _reaches_batches(Assignment, batch_ids),
+                _reaches_batches(Assignment, batch_ids, student_id_int),
                 Assignment.state == AssessmentState.PUBLISHED,
             )
             .order_by(Assignment.due_date.asc().nulls_last())

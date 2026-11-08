@@ -280,6 +280,8 @@ def env():
                     "DELETE FROM tutor_courses WHERE course_id IN (SELECT id FROM courses WHERE title LIKE :t)",
                     "DELETE FROM courses WHERE title LIKE :t",
                     "DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)",
+                    # Submissions now notify the tutors who mark them.
+                    "DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)",
                     "DELETE FROM users WHERE username LIKE :u",
                 ):
                     await s.execute(text(stmt), p)

@@ -25,6 +25,7 @@ from .batch import Batch, BatchSession
 from .enrollment import Enrollments
 from .attendance import Attendance
 from .resource import Resource, SharedResource, SharedFolder, ResourceFolder, ResourceVersion, ResourcePermission
+from .assessment_links import AssessmentRecipient, AssessmentRevision
 from .assignment import Assignment, AssignmentSubmission, AssignmentSubmissionFile
 from .quiz import Quiz, Question, QuestionOption, QuizAttempt, QuizAnswer
 from .exam import Exam, ExamInvigilator, ExamResult
@@ -73,6 +74,7 @@ __all__ = [
     "Enrollments", "Attendance",
     # Resources
     "Resource", "SharedResource", "SharedFolder", "ResourceFolder", "ResourceVersion", "ResourcePermission",
+    "AssessmentRecipient", "AssessmentRevision",
     # Assignments
     "Assignment", "AssignmentSubmission", "AssignmentSubmissionFile",
     # Quiz

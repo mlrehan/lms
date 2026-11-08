@@ -40,6 +40,7 @@ from backend.services.integration_service import WebhookEvent, WebhookService
 from backend.services.gradebook_service import GradeBookService
 from backend.services.notification_service import NotificationService
 from backend.services.course_service import CourseService
+from backend.services.assessment_revisions import notify_markers, record_revision, snapshot
 from backend.services.assessment_scope import (
     AssessmentScopeResolver,
     AssessmentTarget,
@@ -164,6 +165,7 @@ class AssignmentService:
             # safe answer: silently following the derived course would put the
             # work on a roster the tutor never chose.
             raise ValidationError("That batch or session belongs to a different course.")
+        recipients = await self.targets.recipients_for(target, payload.student_ids, actor=actor)
 
         row = Assignment(
             course_id=course.id,
@@ -194,6 +196,9 @@ class AssignmentService:
             allow_late_submissions=payload.allow_late_submissions,
         )
         await self.assignments.add_and_flush(row)
+        if recipients is not None:
+            await self.targets.set_recipients(row, recipients, actor_id=actor.id)
+            target = AssessmentTarget.of(row)
 
         audit_service.record(
             self.session,
@@ -202,7 +207,8 @@ class AssignmentService:
             actor_email=actor.email,
             entity_type="assignment",
             entity_id=row.id,
-            details={"title": row.title, "course": course.title},
+            details={"title": row.title, "course": course.title, "scope": row.scope.value,
+                     **({"recipients": len(recipients)} if recipients is not None else {})},
         )
 
         # A draft is not announced: §8 allows saving work before it is ready.
@@ -288,8 +294,13 @@ class AssignmentService:
             changes["description"] = sanitize_rich_text(changes["description"]) or None
 
         was_published = row.state is AssessmentState.PUBLISHED
+        before = snapshot(row, changes)
         for field, value in changes.items():
             setattr(row, field, value)
+        revision = await record_revision(
+            self.session, row, before, actor_id=actor.id,
+            was_published=was_published, is_published=row.state is AssessmentState.PUBLISHED,
+        )
 
         audit_service.record(
             self.session,
@@ -298,7 +309,8 @@ class AssignmentService:
             actor_email=actor.email,
             entity_type="assignment",
             entity_id=row.id,
-            details={"fields": sorted(changes)},
+            details={"fields": sorted(changes),
+                     **({"revision": revision.revision_no, "notified": revision.notified} if revision else {})},
         )
         if row.state is AssessmentState.PUBLISHED and not was_published:
             # Publishing a draft announces it, once: the moment students can open it.
@@ -690,6 +702,10 @@ class AssignmentService:
             entity_type="assignment_submission",
             entity_id=row.id,
             details={"assignment": assignment.title, "late": is_late},
+        )
+        await notify_markers(
+            self.session, assignment, student=actor, submitted_at=now, late=is_late,
+            link={"submission_id": str(row.public_id)}, replaced=existing is not None,
         )
 
         return await self.submissions.get_by_public_id_full(row.public_id)  # type: ignore[return-value]

@@ -5154,6 +5154,52 @@ Every latency there is queueing for one saturated core, not the work itself: unl
 * Unloaded single requests: `/auth/me` 25 ms, `/dashboard` 42 ms, `/shared-with-me/library` 56 ms, **`/courses` 242 ms**. Profiled: `/courses` materialises ~2,700 ORM objects per request through the same model-wide eager loading (course -> batches -> sessions -> resources ...). It is the next fix and is deliberately not in this change.
 * Supporting 50-100 concurrent users needs (a) the course-list fix, (b) several API workers, which first needs the per-process pieces moved to Redis (the AI request limiter; the realtime bus already supports Redis), and (c) the production server's actual cores and Postgres sizing, which were not available to measure.
 
+## Assessment recipients, reuse, revisions and submission notices
+
+Migration `a6c3e9d1f472`. After pulling: `alembic upgrade head`, then re-run `create_ai_readonly_role` (two new tables). No permission changes.
+
+### The leak this fixed
+
+A student could list and open every published assignment, quiz and exam **on their course**, including work set for another batch. `AssessmentAccess.visibility()`/`may_read` were course-level for learners; only *submitting* checked the batch. Found on the dev data: 40 (student, assessment) pairs (26 assignment, 7 quiz, 7 exam); after the fix all 40 answer 404 through the real services. Guardians and corporate managers inherited the same view.
+
+* **A learner reads what reaches them** (`assessment_access.reaches_learner`, `AssessmentVisibility.apply(..., model=)`): an assessment on a course the caller does not teach is visible only when it reaches an enrolment of theirs, their ward's or their employee's -- its scope covers that enrolment's batch and, for named students, they are named. Any enrolment status and any batch: history stays readable.
+* **`may_read` runs the listing's own SQL for one row**, so the list and the link cannot disagree.
+* Taught courses keep the course rule, minus colleagues' work (unchanged).
+* `test_assignment_workflow.py::test_a_batch_assignment_is_offered_only_to_that_batch` and `test_quiz_exam_scope.py::test_a_batch_quiz_refuses_a_student_from_another_batch` used to expect a "not set for you" conflict at Start, which confirmed the quiz existed. It now expects 404 at `get` and at Start.
+
+### Named students (`scope = STUDENTS`)
+
+`assessment_recipients` (one row per student, one nullable FK per kind, CHECK exactly one, partial unique per kind). Create requests take `student_ids`; `PUT /assessments/{kind}/{id}/recipients` replaces the list (author or Super Admin; students newly added to published work are told; anyone removed keeps their submissions).
+
+* **Each named student must hold an active seat on the course in a class the caller teaches** (any class for an unrestricted caller). One failure refuses the whole list, and the refusal never says which name failed -- "not on this course" and "in a colleague's class" read the same, or the picker becomes a way to locate a student.
+* `assessment_scope.reaches_student(model, batch, student_id)` is the per-student rule. `covers_batch` alone treats STUDENTS as "any batch of the course" and is only right for batch-level questions; everything about a person (visibility, calendar feed, coursework report, the AI deadlines tool) uses `reaches_student`.
+* `GET /assessments/nameable-students?course_id=` draws the picker by the same rule as the write.
+
+### Reuse (`POST /assessments/{kind}/{id}/copies`)
+
+`services/assessment_reuse.py`. Each target (batch, session, course, or a group of named students) becomes **its own row** pointing back through `copied_from_id`, with its own deadline, state, submissions, attempts and marks. Each copy owns its content on purpose: editing one batch's paper after its students sat it must not change another batch's. Every copy goes through the kind's own `create` (and a quiz's questions through `add_question`), so course permission, scope resolution, named-student rule, announcement and audit are the ordinary ones. All or nothing; drafts unless `publish`. Reusing a quiz copies its answer key, so only its author or a Super Admin may.
+
+### Revisions and change notices
+
+`services/assessment_revisions.py`, called by each kind's `update`. For work published before and after the edit it writes an `assessment_revisions` row with each changed field's from/to (the audit log keeps names only). A **material** change (deadline, marks, brief, sitting time, window, ...) notifies the eligible students (`assessment_updated`) in the same transaction; a title fix is recorded, not announced; editing a draft records and tells nothing. `GET /assessments/{kind}/{id}/revisions` (staff). A quiz with attempts still refuses edits -- reuse it instead.
+
+### Submission notices
+
+`submission_received` goes to the tutors responsible (`AssessmentAccess.markers_for`): the author, plus the tutors teaching the student's batch **unless the author is a tutor** (colleagues cannot see a tutor's work, so they are not told about it). Assignments notify on every submit and resubmit; quizzes only when an attempt needs a person to mark it (an auto-marked cohort would otherwise fill each tray). Names only in the notice: `User.full_name` falls back to the login name, which is usually an email address.
+
+### What notifications are, honestly
+
+In-app notification rows are written **in the event's own transaction** (never "your work was updated" for an edit that rolled back) and are naturally deduplicated by being emitted on transitions and per revision. There is **no outbox, retry queue or per-recipient delivery status** for them; email is off unless `MAIL_ENABLED`, and Web Push is best-effort. Building an outbox is the outstanding item if delivery guarantees beyond "in the tray" are required.
+
+### Console and assistant
+
+* Assignments: "Chosen students" in the create dialog (`StudentChecklist`), Edit dialog (sends only changed fields), Reuse dialog, "Set for these students" and "Changes since publication" cards. Quizzes and exams: Reuse, and a "Students & history" tab. `components/domain/assessment-targets.tsx`. The quiz and exam *create* dialogs do not yet offer "Chosen students" (the API accepts it; reuse can target students).
+* AI (`ai/tools/assessment_management.py`): `update_assessment` (sparse `changes`, preview lists from -> to and whether students will be told) and `reuse_assessment` (batch codes and/or student names within the classes the caller teaches). Both HIGH and confirmed.
+
+### Tests
+
+`tests/integration/test_assessment_recipient_isolation.py` (17): two batches of one course, a classmate of the named student, a guardian on each side, a tutor per batch. Mutation-checked 6/6. The first run had a survivor -- telling colleagues about a tutor's own submissions changed nothing because no colleague taught batch A -- so the fixture gained a co-teaching tutor.
+
 ## The AI assistant (`backend/ai/`)
 
 Built during the Antigravity phase (OpenAI, role-bound agents, a tool

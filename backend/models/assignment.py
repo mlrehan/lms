@@ -37,7 +37,7 @@ class Assignment(Base, PublicIdMixin, AssessmentOwnershipMixin):
     # an inference rule cannot tell them apart, and the CHECK below is what
     # keeps the column and the ids honest with each other.
     scope: Mapped[AssessmentScope] = mapped_column(
-        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False),
+        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False, length=16),
         nullable=False,
         default=AssessmentScope.COURSE,
         server_default=AssessmentScope.COURSE.value,

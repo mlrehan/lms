@@ -44,6 +44,11 @@ class NotificationType:
     GRADE_RECORDED: Final = "grade_recorded"
     QUIZ_PUBLISHED: Final = "quiz_published"
     EXAM_SCHEDULED: Final = "exam_scheduled"
+    #: A published assessment changed in a way that alters what a student must
+    #: do or by when (deadline, marks, brief, sitting time).
+    ASSESSMENT_UPDATED: Final = "assessment_updated"
+    #: To the tutors who mark it: a student handed work in.
+    SUBMISSION_RECEIVED: Final = "submission_received"
     EXAM_RESULT_PUBLISHED: Final = "exam_result_published"
     QUIZ_RESULT_PUBLISHED: Final = "quiz_result_published"
     ENROLLED_IN_BATCH: Final = "enrolled_in_batch"
@@ -73,6 +78,14 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         NotificationType.ASSIGNMENT_PUBLISHED, "coursework",
         "A new assignment was set on one of your courses.",
+    ),
+    NotificationKind(
+        NotificationType.ASSESSMENT_UPDATED, "coursework",
+        "Work set for you was changed after it was published -- a new deadline, marks or brief.",
+    ),
+    NotificationKind(
+        NotificationType.SUBMISSION_RECEIVED, "coursework",
+        "A student handed in work that you mark.",
     ),
     NotificationKind(
         NotificationType.SUBMISSION_GRADED, "coursework",

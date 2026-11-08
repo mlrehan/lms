@@ -168,15 +168,16 @@ def test_a_batch_assignment_is_offered_only_to_that_batch(env) -> None:
             await s.flush()
             alice = await svc.submit(row.public_id, SubmitAssignmentRequest(content="mine"),
                                      actor=made["alice"])
-            with pytest.raises(ConflictError) as refused:
+            # Another batch's student cannot see it at all -- "not found",
+            # like a row that does not exist. The old conflict ("not set for
+            # you") confirmed the assignment existed.
+            with pytest.raises(NotFoundError):
                 await svc.submit(row.public_id, SubmitAssignmentRequest(content="theirs"),
                                  actor=made["bob"])
-            return alice.state, str(refused.value)
+            return alice.state
         return go()
 
-    state, message = env.run(f)
-    assert state is St.SUBMITTED
-    assert "not set for you" in message.lower()
+    assert env.run(f) is St.SUBMITTED
 
 
 def test_a_session_assignment_derives_its_batch(env) -> None:

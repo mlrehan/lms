@@ -52,6 +52,7 @@ from backend.api.v1 import (
     sessions,
     settings,
     academic_sync,
+    assessment_reuse,
     lait_delegates,
     sync_pipeline,
     user_sync,
@@ -78,6 +79,7 @@ router.include_router(sessions.router)
 router.include_router(enrollments.router)
 router.include_router(attendance.router)
 router.include_router(assignments.router)
+router.include_router(assessment_reuse.router)
 router.include_router(quizzes.router)
 router.include_router(exams.router)
 router.include_router(gradebook.router)

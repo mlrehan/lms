@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Numeric, and_, case, func, select
+from sqlalchemy import Numeric, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.assignment import Assignment, AssignmentSubmission
@@ -32,8 +32,8 @@ from backend.models.enrollment import Enrollments
 from backend.models.identity.user import User
 from backend.repositories.enrollment import ACTIVE_STATUSES
 from backend.repositories.reporting import MAX_GROUPS, _round
-from backend.services.assessment_scope import covers_batch
-from backend.utils.enums import AssessmentState, SubmissionState
+from backend.services.assessment_scope import covers_batch, is_recipient
+from backend.utils.enums import AssessmentScope, AssessmentState, SubmissionState
 
 if TYPE_CHECKING:  # pragma: no cover
     from backend.services.scope import WorkVisibility
@@ -86,7 +86,11 @@ class CourseworkReportingRepository:
                     Enrollments.status.in_(ACTIVE_STATUSES),
                 ),
             )
-            .where(Assignment.state != AssessmentState.DRAFT)
+            .where(
+                Assignment.state != AssessmentState.DRAFT,
+                # Named-student work counts only the students it names.
+                or_(Assignment.scope != AssessmentScope.STUDENTS, is_recipient(Assignment, Enrollments.student_id)),
+            )
         )
         if course_id is not None:
             expected = expected.where(Assignment.course_id == course_id)

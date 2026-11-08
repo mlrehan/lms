@@ -41,6 +41,7 @@ class QuizRepository(BaseRepository[Quiz]):
             course_column=Quiz.course_id,
             creator_column=Quiz.created_by,
             deleted_column=Quiz.deleted_at,
+            model=Quiz,
         )
         if course_id is not None:
             stmt = stmt.where(Quiz.course_id == course_id)

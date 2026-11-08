@@ -1,7 +1,7 @@
 from typing import Optional
 
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, Time, text, Boolean, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 from datetime import datetime
 
 
@@ -131,3 +131,19 @@ class AssessmentOwnershipMixin:
     deleted_by: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+
+    @declared_attr
+    def copied_from_id(cls) -> Mapped[Optional[int]]:  # noqa: N805
+        """The assessment this one was reused from, if any.
+
+        A reuse is a new row -- its own recipients, deadline, state,
+        submissions and marks -- that points back at its source. Each copy owns
+        its content on purpose: editing one batch's paper after its students sat
+        it must not change what another batch is about to sit.
+        """
+        return mapped_column(
+            Integer,
+            ForeignKey(f"{cls.__tablename__}.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        )

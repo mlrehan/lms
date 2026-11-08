@@ -171,6 +171,8 @@ def env(tmp_path_factory):
                     "DELETE FROM batches WHERE batch_code LIKE :c",
                     "DELETE FROM courses WHERE title LIKE :t",
                     f"DELETE FROM user_roles WHERE user_id IN {users}",
+                    # Submissions now notify the tutors who mark them.
+                    "DELETE FROM notifications WHERE user_id IN (SELECT id FROM users WHERE username LIKE :u)",
                     "DELETE FROM users WHERE username LIKE :u",
                 ):
                     await s.execute(text(stmt), p)

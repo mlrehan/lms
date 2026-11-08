@@ -4,7 +4,8 @@ import Link from "next/link";
 import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Save, Trash2 } from "lucide-react";
+import { Copy, Save, Trash2 } from "lucide-react";
+import { RecipientsPanel, RevisionHistory, ReuseAssessmentDialog } from "@/components/domain/assessment-targets";
 import { api, segment } from "@/lib/api/client";
 import type {
   ExamResponse,
@@ -384,6 +385,7 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
   const { permissions } = useSession();
   const timeZone = useDisplayTimeZone();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reusing, setReusing] = useState(false);
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["exams", "detail", examId],
@@ -441,16 +443,23 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
           </span>
         }
         actions={
-          permissions.has("exam.delete") && data.can_manage ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Delete examination"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 className="text-danger" />
-            </Button>
-          ) : null
+          <div className="flex items-center gap-3">
+            {permissions.has("exam.create") ? (
+              <Button variant="secondary" size="sm" onClick={() => setReusing(true)}>
+                <Copy /> Reuse
+              </Button>
+            ) : null}
+            {permissions.has("exam.delete") && data.can_manage ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete examination"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="text-danger" />
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
@@ -513,6 +522,7 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
         <TabsList>
           <TabsTab value="results">Mark sheet</TabsTab>
           <TabsTab value="invigilators">Invigilators</TabsTab>
+          {permissions.has("exam.update") ? <TabsTab value="history">Students &amp; history</TabsTab> : null}
         </TabsList>
         <TabsPanel value="results">
           <Card>
@@ -526,7 +536,37 @@ export default function ExamDetailPage({ params }: { params: Promise<{ examId: s
         <TabsPanel value="invigilators">
           <InvigilatorsTab exam={data} />
         </TabsPanel>
+        {permissions.has("exam.update") ? (
+          <TabsPanel value="history" className="space-y-5">
+            {data.scope === "STUDENTS" ? (
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold">Set for these students</h3>
+                <RecipientsPanel
+                  kind="exams"
+                  assessmentId={data.public_id}
+                  courseId={data.course_id}
+                  canManage={Boolean(data.can_manage)}
+                />
+              </section>
+            ) : null}
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Changes since publication</h3>
+              <RevisionHistory kind="exams" assessmentId={data.public_id} />
+            </section>
+          </TabsPanel>
+        ) : null}
       </Tabs>
+
+      {permissions.has("exam.create") ? (
+        <ReuseAssessmentDialog
+          kind="exams"
+          assessmentId={data.public_id}
+          courseId={data.course_id}
+          title={data.title}
+          open={reusing}
+          onOpenChange={setReusing}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={confirmDelete}

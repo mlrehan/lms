@@ -28,7 +28,7 @@ class Exam(Base, PublicIdMixin, AssessmentOwnershipMixin):
         Integer, ForeignKey("batch_sessions.id", ondelete="CASCADE"), nullable=True
     )
     scope: Mapped[AssessmentScope] = mapped_column(
-        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False),
+        SQLEnum(AssessmentScope, name="assessment_scope", native_enum=False, length=16),
         nullable=False,
         default=AssessmentScope.COURSE,
         server_default=AssessmentScope.COURSE.value,

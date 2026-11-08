@@ -56,6 +56,11 @@ class AssessmentTarget:
     course_id: int
     batch_id: int | None = None
     session_id: int | None = None
+    #: For ``STUDENTS``: the assessment whose recipient rows name them
+    #: (``(kind, id)``, set by `of`), or the ids themselves before any row
+    #: exists (a create request).
+    assessment: tuple[str, int] | None = None
+    student_ids: frozenset[int] | None = None
 
     @staticmethod
     def of(row: object) -> "AssessmentTarget":
@@ -71,6 +76,7 @@ class AssessmentTarget:
             course_id=getattr(row, "course_id"),
             batch_id=getattr(row, "batch_id", None),
             session_id=getattr(row, "session_id", None),
+            assessment=(kind_of(row), getattr(row, "id")) if getattr(row, "id", None) else None,
         )
 
 
@@ -86,6 +92,12 @@ def validate(target: AssessmentTarget) -> None:
         raise ValidationError("A batch-scoped assessment needs a batch.")
     if target.scope is AssessmentScope.SESSION and target.session_id is None:
         raise ValidationError("A session-scoped assessment needs a session.")
+    if target.scope is AssessmentScope.STUDENTS:
+        if target.batch_id or target.session_id:
+            raise ValidationError(
+                "An assessment for named students cannot also name a batch or session."
+            )
+        return
     if target.scope is AssessmentScope.COURSE and (target.batch_id or target.session_id):
         # Not pedantry: leaving a stale batch id on a course-scoped assessment
         # is how somebody later "fixes" the scope by reading the wrong column.
@@ -131,6 +143,60 @@ def covers_batch(model: Any, batch: Any = Batch) -> ColumnElement[bool]:
             .where(BatchSession.id == model.session_id)
             .scalar_subquery(),
         ),
+        # Named students: any batch of the course *may* hold one of them. A
+        # batch-level question ("which batches does this reach") cannot say
+        # more than that; anything about a particular student must go through
+        # `reaches_student`, which also checks the recipient rows.
+        and_(model.scope == AssessmentScope.STUDENTS, batch.course_id == model.course_id),
+    )
+
+
+def kind_of(model: Any) -> str:
+    """``"assignment"``, ``"quiz"`` or ``"exam"`` for a model class, alias or row."""
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(model, raiseerr=False)
+    mapper = getattr(insp, "mapper", None) if insp is not None else None
+    table = mapper.class_.__tablename__ if mapper is not None else getattr(model, "__tablename__")
+    return {"assignments": "assignment", "quizzes": "quiz", "exams": "exam"}[table]
+
+
+def is_recipient(model: Any, student_id: Any) -> ColumnElement[bool]:
+    """SQL: `student_id` is named in this assessment's recipient rows."""
+    from backend.models.assessment_links import KIND_COLUMN, AssessmentRecipient
+
+    column = getattr(AssessmentRecipient, KIND_COLUMN[kind_of(model)])
+    return (
+        select(AssessmentRecipient.id)
+        .where(column == model.id, AssessmentRecipient.student_id == student_id)
+        .exists()
+    )
+
+
+def reaches_student(
+    model: Any, batch: Any, student_id: Any, *, active_batches_only: bool = True
+) -> ColumnElement[bool]:
+    """True when the assessment reaches *this student* through *this batch*.
+
+    The per-student form of `covers_batch`, and the one every question about a
+    particular person must use: a STUDENTS-scoped assessment covers every batch
+    of its course at the batch level, and only the recipient rows say which of
+    those students it is actually for.
+
+    ``active_batches_only=False`` is for **reading history**: a course-wide
+    assignment does not vanish from a student's list because their batch
+    finished. Setting *new* work, counting who is missing it and notifying
+    keep the default, which is §3's "all active batches".
+    """
+    batch_rule = covers_batch(model, batch)
+    if not active_batches_only:
+        batch_rule = or_(
+            batch_rule,
+            and_(model.scope == AssessmentScope.COURSE, batch.course_id == model.course_id),
+        )
+    return and_(
+        batch_rule,
+        or_(model.scope != AssessmentScope.STUDENTS, is_recipient(model, student_id)),
     )
 
 
@@ -163,6 +229,22 @@ class AssessmentScopeResolver:
 
         if target.scope is AssessmentScope.BATCH:
             return stmt.where(Enrollments.batch_id == target.batch_id)
+
+        if target.scope is AssessmentScope.STUDENTS:
+            # The named students, and only while they hold an active seat on
+            # the course: a recipient who has since left is not set new work.
+            stmt = stmt.where(Batch.course_id == target.course_id)
+            if target.student_ids is not None:
+                return stmt.where(Enrollments.student_id.in_(target.student_ids or {-1}))
+            if target.assessment is None:
+                raise ValidationError("An assessment for named students needs its students.")
+            from backend.models.assessment_links import KIND_COLUMN, AssessmentRecipient
+
+            kind, assessment_id = target.assessment
+            named = select(AssessmentRecipient.student_id).where(
+                getattr(AssessmentRecipient, KIND_COLUMN[kind]) == assessment_id
+            )
+            return stmt.where(Enrollments.student_id.in_(named))
 
         # SESSION: through the batch the session belongs to -- never through
         # the attendance register, or missing the class would excuse the work.
@@ -202,6 +284,110 @@ class AssessmentScopeResolver:
             select(inner.c.student_id).distinct().subquery()
         )
         return int((await self.session.execute(stmt)).scalar_one())
+
+    # -- named students (scope STUDENTS) ---------------------------------------
+
+    #: A hand-picked group, not a cohort: anything larger is a batch or the course.
+    MAX_RECIPIENTS = 500
+
+    async def recipient_ids(
+        self, course_id: int, public_ids: "Sequence[uuid.UUID] | None", *, actor: Any
+    ) -> frozenset[int]:
+        """Resolve the students named for a STUDENTS-scoped assessment.
+
+        Each must hold an active seat on the course **in a class the caller may
+        see the roster of** (every class for an unrestricted caller, the classes
+        they teach for a tutor). One failure refuses the whole list, and the
+        refusal never says which name failed or why: "not on this course" and
+        "on it, in a colleague's class" must read the same, or the picker would
+        become a way to find out where a student is enrolled.
+        """
+        from backend.models.identity.user import User
+        from backend.services.scope import ScopeResolver
+
+        wanted = list(dict.fromkeys(public_ids or ()))
+        if not wanted:
+            raise ValidationError("Choose at least one student.")
+        if len(wanted) > self.MAX_RECIPIENTS:
+            raise ValidationError(
+                f"At most {self.MAX_RECIPIENTS} students can be named; set it for a batch instead."
+            )
+        stmt = (
+            select(User.id)
+            .join(Enrollments, Enrollments.student_id == User.id)
+            .join(Batch, Batch.id == Enrollments.batch_id)
+            .where(
+                User.public_id.in_(wanted),
+                Batch.course_id == course_id,
+                Enrollments.status.in_(ACTIVE_STATUSES),
+            )
+        )
+        if not ScopeResolver.is_unrestricted(actor):
+            taught = (await ScopeResolver(self.session).enrollment_visibility(actor)).taught_batch_ids
+            stmt = stmt.where(Batch.id.in_(taught or {-1}))
+        found = frozenset((await self.session.execute(stmt.distinct())).scalars().all())
+        if len(found) != len(wanted):
+            raise ValidationError(
+                "Every student must be enrolled on this course in a class you teach.",
+                details={"named": len(wanted), "accepted": len(found)},
+            )
+        return found
+
+    async def recipients_for(
+        self, target: AssessmentTarget, public_ids: "Sequence[uuid.UUID] | None", *, actor: Any
+    ) -> frozenset[int] | None:
+        """The named students for a create request, or None for any other scope."""
+        if target.scope is AssessmentScope.STUDENTS:
+            if not target.course_id:
+                raise ValidationError("An assessment for named students needs its course.")
+            return await self.recipient_ids(target.course_id, public_ids, actor=actor)
+        if public_ids:
+            raise ValidationError("Students are named only when the scope is STUDENTS.")
+        return None
+
+    async def set_recipients(self, row: Any, student_ids: "frozenset[int]", *, actor_id: int) -> None:
+        """Make `student_ids` exactly the recipients of `row` (insert/delete the difference)."""
+        from sqlalchemy import delete
+
+        from backend.models.assessment_links import KIND_COLUMN, AssessmentRecipient
+
+        column_name = KIND_COLUMN[kind_of(row)]
+        column = getattr(AssessmentRecipient, column_name)
+        current = set(
+            (
+                await self.session.execute(
+                    select(AssessmentRecipient.student_id).where(column == row.id)
+                )
+            ).scalars()
+        )
+        gone = current - set(student_ids)
+        if gone:
+            await self.session.execute(
+                delete(AssessmentRecipient).where(
+                    column == row.id, AssessmentRecipient.student_id.in_(gone)
+                )
+            )
+        for student_id in sorted(set(student_ids) - current):
+            self.session.add(
+                AssessmentRecipient(
+                    **{column_name: row.id}, student_id=student_id, added_by=actor_id
+                )
+            )
+        await self.session.flush()
+
+    async def recipients_of(self, row: Any) -> list[int]:
+        from backend.models.assessment_links import KIND_COLUMN, AssessmentRecipient
+
+        column = getattr(AssessmentRecipient, KIND_COLUMN[kind_of(row)])
+        return list(
+            (
+                await self.session.execute(
+                    select(AssessmentRecipient.student_id)
+                    .where(column == row.id)
+                    .order_by(AssessmentRecipient.student_id)
+                )
+            ).scalars()
+        )
 
     # -- public id lookups ---------------------------------------------------
     # Here rather than on each service: three copies of "turn a batch public_id
@@ -285,4 +471,6 @@ def describe(target: AssessmentTarget, *, batch_code: str | None = None) -> str:
         return "Everyone on the course"
     if target.scope is AssessmentScope.BATCH:
         return f"Batch {batch_code}" if batch_code else "One batch"
+    if target.scope is AssessmentScope.STUDENTS:
+        return "Chosen students"
     return "One class session"

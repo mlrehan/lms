@@ -226,6 +226,11 @@ class QuizCreateRequest(RequestModel):
     scope: AssessmentScope = AssessmentScope.COURSE
     batch_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
+    student_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        max_length=500,
+        description="Required when scope is STUDENTS: the students it is set for, each enrolled on the course.",
+    )
 
     # -- availability and result visibility (spec §9) ------------------------
     available_from: datetime | None = None

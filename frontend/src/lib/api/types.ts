@@ -120,8 +120,8 @@ export interface AppointManagerRequest {
  * for a batch we have not chosen yet" are different states, and an inference
  * rule cannot tell them apart.
  */
-export type AssessmentScope = "COURSE" | "BATCH" | "SESSION";
-export const AssessmentScopeValues = ["COURSE", "BATCH", "SESSION"] as const;
+export type AssessmentScope = "COURSE" | "BATCH" | "SESSION" | "STUDENTS";
+export const AssessmentScopeValues = ["COURSE", "BATCH", "SESSION", "STUDENTS"] as const;
 
 /**
  * Whether an assessment is visible to the students it is set for.
@@ -165,6 +165,7 @@ export interface AssignmentCreateRequest {
   allow_multiple_submissions?: boolean;
   allow_resubmission?: boolean;
   late_penalty_percent_per_day?: number | string | null;
+  student_ids?: string[] | null;
 }
 
 /**
@@ -1299,6 +1300,7 @@ export interface ExamCreateRequest {
   scope?: AssessmentScope;
   is_online?: boolean;
   weight?: number | string;
+  student_ids?: string[] | null;
 }
 
 export interface ExamInvigilatorsRequest {
@@ -1336,6 +1338,7 @@ export interface ExamResponse {
   invigilators?: string[];
   result_count?: number;
   published_result_count?: number;
+  scope?: AssessmentScope;
 }
 
 export interface ExamResultEntry {
@@ -2664,6 +2667,7 @@ export interface QuizCreateRequest {
   show_explanations?: boolean;
   auto_submit_on_expiry?: boolean;
   weight?: number | string;
+  student_ids?: string[] | null;
 }
 
 export interface QuizPublishRequest {
@@ -4198,4 +4202,57 @@ export interface VideoInspectResponse {
 export interface VideoShareResult {
   people_added: number;
   batches_added: number;
+}
+
+// -- Assessment reuse, named recipients and revisions (hand-kept) ------------
+
+export interface CopyTargetInput {
+  scope: AssessmentScope;
+  course_id?: string | null;
+  batch_id?: string | null;
+  session_id?: string | null;
+  student_ids?: string[] | null;
+}
+
+export interface AssessmentCopyRequest {
+  targets: CopyTargetInput[];
+  due_date?: string | null;
+  scheduled_at?: string | null;
+  publish?: boolean;
+}
+
+export interface AssessmentCopyRef {
+  public_id: string;
+  title: string;
+  scope: AssessmentScope;
+  published: boolean;
+}
+
+export interface AssessmentCopyResponse {
+  copies: AssessmentCopyRef[];
+}
+
+export interface NameableStudent {
+  public_id: string;
+  name: string;
+  batch_codes: string[];
+}
+
+export interface RecipientRef {
+  public_id: string;
+  name: string;
+}
+
+export interface RecipientsResponse {
+  scope: AssessmentScope;
+  recipients: RecipientRef[];
+}
+
+export interface RevisionResponse {
+  revision_no: number;
+  changed_at: string;
+  changed_by?: string | null;
+  material: boolean;
+  notified: number;
+  changes: Record<string, { from?: unknown; to?: unknown } & Record<string, unknown>>;
 }

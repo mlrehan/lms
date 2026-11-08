@@ -4,7 +4,7 @@ import Link from "next/link";
 import { use, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Eye, Paperclip, Send, Trash2 } from "lucide-react";
+import { Copy, Download, Eye, Paperclip, Pencil, Send, Trash2 } from "lucide-react";
 import { api, apiPath, segment } from "@/lib/api/client";
 import type {
   AssignmentResponse,
@@ -34,10 +34,11 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Field, FormActions, Input, Textarea } from "@/components/ui/form";
 import { ErrorState, LoadingState } from "@/components/ui/states";
-import { RichText } from "@/components/domain/rich-text";
+import { RichText, RichTextEditor } from "@/components/domain/rich-text";
+import { RecipientsPanel, RevisionHistory, ReuseAssessmentDialog } from "@/components/domain/assessment-targets";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayLocale, useDisplayTimeZone } from "@/lib/preferences";
-import { formatDateTime, formatRelative } from "@/lib/format/datetime";
+import { formatDateTime, formatRelative, fromLocalInputValue, toLocalInputValue } from "@/lib/format/datetime";
 import { humanise } from "@/lib/utils";
 
 /** Every state §7 defines, with the tone it deserves. */
@@ -766,6 +767,110 @@ function SubmissionsTab({ assignment }: { assignment: AssignmentResponse }) {
   );
 }
 
+function EditAssignmentDialog({
+  assignment,
+  open,
+  onOpenChange,
+}: {
+  assignment: AssignmentResponse;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const timeZone = useDisplayTimeZone();
+  const [title, setTitle] = useState(assignment.title);
+  const [description, setDescription] = useState(assignment.description ?? "");
+  const [due, setDue] = useState(toLocalInputValue(assignment.due_date, timeZone));
+  const [maxScore, setMaxScore] = useState(String(assignment.max_score));
+  const [banner, setBanner] = useState<string | null>(null);
+
+  // Only what actually changed is sent, so the revision history records what
+  // the tutor did rather than every field the form happened to hold.
+  const body = () => {
+    const out: Record<string, unknown> = {};
+    if (title.trim() !== assignment.title) out.title = title.trim();
+    if ((description || "") !== (assignment.description ?? "")) out.description = description || null;
+    const iso = fromLocalInputValue(due, timeZone);
+    if (iso && toLocalInputValue(iso, timeZone) !== toLocalInputValue(assignment.due_date, timeZone)) out.due_date = iso;
+    if (Number(maxScore) !== Number(assignment.max_score)) out.max_score = Number(maxScore);
+    return out;
+  };
+
+  const save = useApiMutation<AssignmentResponse, Record<string, unknown>>({
+    mutationFn: (changes) =>
+      api.patch<AssignmentResponse>(`/assignments/${segment(assignment.public_id)}`, { body: changes }),
+    success: () =>
+      assignment.state === "PUBLISHED"
+        ? "Saved. If the deadline, marks or brief changed, its students have been told."
+        : "Saved.",
+    invalidate: [["assignments"], ["assessments", "assignments", assignment.public_id, "revisions"]],
+    onSuccess: () => {
+      setBanner(null);
+      onOpenChange(false);
+    },
+    onError: (error) => setBanner(error.message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="lg">
+        <DialogHeader
+          title="Edit assignment"
+          description={
+            assignment.state === "PUBLISHED"
+              ? "It is published. Submissions are kept, the change is recorded, and a new deadline, marks or brief is announced to its students."
+              : "It is a draft, so nobody is told."
+          }
+        />
+        <form
+          method="post"
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const changes = body();
+            if (!Object.keys(changes).length) {
+              onOpenChange(false);
+              return;
+            }
+            save.mutate(changes);
+          }}
+        >
+          {banner ? (
+            <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {banner}
+            </div>
+          ) : null}
+          <Field label="Title" required>
+            {({ id }) => <Input id={id} value={title} onChange={(e) => setTitle(e.target.value)} />}
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label={`Due (${timeZone})`} required>
+              {({ id }) => <Input id={id} type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} />}
+            </Field>
+            <Field label="Maximum score" required>
+              {({ id }) => (
+                <Input id={id} type="number" min={0} step="0.01" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} />
+              )}
+            </Field>
+          </div>
+          <Field label="Brief">
+            {() => (
+              <RichTextEditor ariaLabel="Brief" placeholder="What the students have to do" value={description} onChange={setDescription} />
+            )}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function AssignmentDetailPage({
   params,
 }: {
@@ -777,6 +882,8 @@ export default function AssignmentDetailPage({
   const timeZone = useDisplayTimeZone();
   const locale = useDisplayLocale();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reusing, setReusing] = useState(false);
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["assignments", "detail", assignmentId],
@@ -841,9 +948,19 @@ export default function AssignmentDetailPage({
         actions={
           // Only the author (or a Super Admin) is offered these; the server
           // refuses everybody else regardless.
-          data.can_manage ? (
+          data.can_manage || permissions.has("assignment.create") ? (
             <div className="flex items-center gap-3">
-              {permissions.has("assignment.update") ? (
+              {permissions.has("assignment.create") && permissions.has("assignment.update") ? (
+                <Button variant="secondary" size="sm" onClick={() => setReusing(true)}>
+                  <Copy /> Reuse
+                </Button>
+              ) : null}
+              {data.can_manage && permissions.has("assignment.update") ? (
+                <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                  <Pencil /> Edit
+                </Button>
+              ) : null}
+              {data.can_manage && permissions.has("assignment.update") ? (
                 <label className="flex items-center gap-2 text-sm">
                   <Switch
                     checked={data.state === "PUBLISHED"}
@@ -853,7 +970,7 @@ export default function AssignmentDetailPage({
                   Published
                 </label>
               ) : null}
-              {permissions.has("assignment.delete") ? (
+              {data.can_manage && permissions.has("assignment.delete") ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -877,6 +994,20 @@ export default function AssignmentDetailPage({
         </Card>
       ) : null}
 
+      {permissions.has("assignment.update") && data.scope === "STUDENTS" ? (
+        <Card>
+          <CardHeader title="Set for these students" />
+          <CardBody>
+            <RecipientsPanel
+              kind="assignments"
+              assessmentId={data.public_id}
+              courseId={data.course_id}
+              canManage={Boolean(data.can_manage)}
+            />
+          </CardBody>
+        </Card>
+      ) : null}
+
       {canSubmit && canSeeSubmissions ? (
         <Tabs defaultValue="submissions">
           <TabsList>
@@ -895,6 +1026,25 @@ export default function AssignmentDetailPage({
       ) : (
         <SubmissionsTab assignment={data} />
       )}
+
+      {permissions.has("assignment.update") && data.state === "PUBLISHED" ? (
+        <Card>
+          <CardHeader title="Changes since publication" />
+          <CardBody>
+            <RevisionHistory kind="assignments" assessmentId={data.public_id} />
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {editing ? <EditAssignmentDialog assignment={data} open={editing} onOpenChange={setEditing} /> : null}
+      <ReuseAssessmentDialog
+        kind="assignments"
+        assessmentId={data.public_id}
+        courseId={data.course_id}
+        title={data.title}
+        open={reusing}
+        onOpenChange={setReusing}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

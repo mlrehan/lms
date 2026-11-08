@@ -33,6 +33,7 @@ class ExamResponse(ExamSummary):
     course_title: str | None = None
     batch_id: uuid.UUID | None = None
     batch_code: str | None = None
+    scope: AssessmentScope = AssessmentScope.COURSE
     invigilators: list[str] = Field(
         default_factory=list, description="Usernames of assigned invigilators."
     )
@@ -68,6 +69,11 @@ class ExamCreateRequest(_ExamMarks):
     # set. COURSE with a batch named is a different intent from BATCH, and an
     # inference rule cannot tell them apart.
     scope: AssessmentScope = AssessmentScope.COURSE
+    student_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        max_length=500,
+        description="Required when scope is STUDENTS: the students it is set for, each enrolled on the course.",
+    )
 
     # §10: both examination styles feed the same grade book. This only decides
     # which workflow a screen offers -- answering in the LMS, or a tutor

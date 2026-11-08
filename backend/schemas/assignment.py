@@ -112,6 +112,11 @@ class AssignmentCreateRequest(_AssignmentRules):
     session_id: uuid.UUID | None = Field(
         default=None, description="Required when scope is SESSION."
     )
+    student_ids: list[uuid.UUID] | None = Field(
+        default=None,
+        max_length=500,
+        description="Required when scope is STUDENTS: the students it is set for, each enrolled on the course.",
+    )
 
     # -- publication (spec §8, §14) -----------------------------------------
     state: AssessmentState = Field(
