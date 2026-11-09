@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Inter_Tight, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import type { ReactNode } from "react";
 import { Providers } from "./providers";
 import "./globals.css";
@@ -14,22 +14,31 @@ import "./globals.css";
  * JetBrains Mono is for identifiers -- batch codes, ids, keys -- because its
  * slashed zero and disambiguated l/1/I are the whole point of setting a
  * reference in mono in the first place.
+ *
+ * Bundled rather than fetched from Google at build time (`next/font/google`).
+ * The production Docker build failed on Inter Tight with "next/font/google
+ * queries have exactly one entry": what Google serves to that server is not
+ * what it serves elsewhere, and a build that depends on a third party's
+ * response to a particular machine is not reproducible. These are the same
+ * latin variable files Google serves, under the SIL Open Font License (see
+ * fonts/OFL.md), so the rendering is unchanged and the build needs no network.
  */
-const sans = Inter({
+const sans = localFont({
+  src: "./fonts/inter-latin.woff2",
   variable: "--font-inter",
-  subsets: ["latin"],
+  weight: "100 900",
   display: "swap",
 });
-const display = Inter_Tight({
+const display = localFont({
+  src: "./fonts/inter-tight-latin.woff2",
   variable: "--font-inter-tight",
-  subsets: ["latin"],
-  weight: ["500", "600", "700", "800"],
+  weight: "100 900",
   display: "swap",
 });
-const mono = JetBrains_Mono({
+const mono = localFont({
+  src: "./fonts/jetbrains-mono-latin.woff2",
   variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: "100 800",
   display: "swap",
 });
 
