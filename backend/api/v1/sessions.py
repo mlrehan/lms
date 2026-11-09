@@ -70,6 +70,7 @@ def _response(
         course_title=s.batch.course.title if s.batch.course else None,
         tutor_id=s.tutor.public_id,
         tutor_username=visible_username(s.tutor),
+        tutor_name=_tutor_name(s),
         meeting_link=s.meeting_link if manage else None,
         recording_link=s.recording_link if manage else None,
         can_manage=manage,
@@ -94,11 +95,19 @@ def _summary(s: BatchSession, *, service: SessionService, actor: CurrentUser) ->
         duration_minutes=s.duration_minutes,
         platform=s.platform,
         classroom=s.classroom,
+        tutor_name=_tutor_name(s),
         join_opens_at=state.opens_at,
         join_closes_at=state.closes_at,
         can_join_now=state.can_join_now,
         has_recording=bool(s.recording_resource_id) or bool(s.recording_link),
     )
+
+
+def _tutor_name(s: BatchSession) -> str | None:
+    tutor = s.tutor
+    if tutor is None:
+        return None
+    return " ".join(p for p in (tutor.first_name, tutor.last_name) if p) or visible_username(tutor)
 
 
 _CALENDAR_CAP = 3000

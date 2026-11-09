@@ -430,6 +430,11 @@ function SessionsTab({ batch }: { batch: BatchResponse }) {
       cell: (session) => formatDateTime(session.session_end_time, { timeZone }),
     },
     {
+      key: "tutor",
+      header: "Tutor",
+      cell: (session) => session.tutor_name ?? <span className="text-muted-foreground">—</span>,
+    },
+    {
       key: "platform",
       header: "Where",
       cell: (session) => (

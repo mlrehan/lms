@@ -11,7 +11,8 @@ from fastapi import UploadFile
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
+from backend.core.notification_types import NotificationType
 from backend.models.identity.user import User
 from backend.repositories.geo import CityRepository, CountryRepository
 from backend.repositories.token import TokenRepository
@@ -19,13 +20,15 @@ from backend.repositories.user import UserRepository
 from backend.schemas.base import PageParams
 from backend.schemas.user import UserCreateRequest, UserUpdateRequest
 from backend.security import password as pwd
+from backend.security.generated_password import generate_password
 from backend.services import audit_service
 from backend.services.avatar import CONTENT_TYPE as AVATAR_CONTENT_TYPE, process_avatar
 from backend.storage import get_storage
 from backend.storage.base import build_key
 from backend.services.audit_service import AuditAction
+from backend.services.notification_service import NotificationService
 from backend.services.scope import ScopeResolver
-from backend.utils.enums import UserStatus
+from backend.utils.enums import Roles, UserStatus
 
 # Distinguishes "the client never mentioned this field" from "the client sent
 # it as null" when threading `changes` (already filtered by `exclude_unset`)
@@ -360,10 +363,31 @@ class UserService:
         )
         return user
 
-    async def set_password(self, public_id: uuid.UUID, new_password: str, *, actor: User) -> None:
+    async def set_password(
+        self, public_id: uuid.UUID, new_password: str, *, actor: User, generated: bool = False
+    ) -> None:
+        """An administrator setting someone else's password.
+
+        Two refusals, both about taking over an account:
+
+        * **Not your own.** Changing your own password goes through
+          `/auth/me/password`, which asks for the current one -- otherwise a
+          session left open is enough to lock its owner out.
+        * **Only a Super Admin may reset a Super Admin.** Administrators hold
+          `user.update`, and this used to let one set a Super Admin's password
+          and then sign in as them: the most privileged account in the system,
+          taken over with a less privileged one.
+        """
         user = await self.get(public_id, actor=actor)
+        if user.id == actor.id:
+            raise ConflictError("Change your own password from your account page, with your current password.")
+        if _holds(user, Roles.SUPER_ADMIN) and not _holds(actor, Roles.SUPER_ADMIN):
+            raise AuthorizationError("Only a Super Admin can reset a Super Admin's password.")
+
         user.hashed_password = pwd.hash_password(new_password)
         user.updated_by = actor.id
+        # Every session ends: whoever held the old password must not keep a
+        # way in that outlives the reset.
         await self.tokens.revoke_all_for_user(user.id)
 
         audit_service.record(
@@ -373,7 +397,26 @@ class UserService:
             actor_email=actor.email,
             entity_type="user",
             entity_id=user.id,
+            details={"generated": generated},
         )
+        # Mandatory type: the owner is told whatever their preferences say,
+        # because a reset they did not ask for is how they notice a takeover.
+        await NotificationService(self.session).notify(
+            user_id=user.id,
+            type_=NotificationType.PASSWORD_CHANGED,
+            title="Your password was reset",
+            body=(
+                "An administrator set a new password for your account and every "
+                "sign-in was ended. If you did not ask for this, contact the office."
+            ),
+            meta={},
+        )
+
+    async def generate_password(self, public_id: uuid.UUID, *, actor: User) -> str:
+        """Set a freshly generated password and return it -- the only time it exists in clear."""
+        password = generate_password()
+        await self.set_password(public_id, password, actor=actor, generated=True)
+        return password
 
     # -- location --------------------------------------------------------------
 
@@ -492,3 +535,7 @@ class UserService:
                 "Unknown role(s).",
                 details={"unknown_roles": missing},
             )
+
+
+def _holds(user: User, role: Roles) -> bool:
+    return any((r.name or "").upper() == role.value for r in (user.roles or []))

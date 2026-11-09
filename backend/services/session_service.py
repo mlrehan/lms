@@ -10,7 +10,7 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.errors import ConflictError, NotFoundError, ValidationError
+from backend.core.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from backend.core.video_links import VideoLinkError, parse_video_url
 from backend.core.live_class import JoinWindow, join_window
 from backend.core.permissions import Action, Module, perm
@@ -526,9 +526,20 @@ class SessionService:
         row = await self.get(public_id, actor=actor)
         changes = payload.model_dump(exclude_unset=True)
 
-        if "tutor_id" in changes and changes["tutor_id"] is not None:
-            tutor = await self._resolve_tutor(changes.pop("tutor_id"))
-            row.tutor_id = tutor.id
+        # Reassigning the tutor is an authorization write: `batch_sessions.tutor_id`
+        # is one of the two routes by which a tutor reaches a batch's students.
+        # So it belongs to whoever may *schedule* (`session.create`), not to
+        # every holder of `session.update` -- tutors hold that to add their own
+        # notes, and must not be able to hand their class to somebody else.
+        new_tutor: User | None = None
+        tutor_change = changes.pop("tutor_id", None)
+        if tutor_change is not None:
+            candidate = await self._resolve_tutor(tutor_change)
+            if candidate.id != row.tutor_id:
+                if perm(Module.SESSION, Action.CREATE) not in ScopeResolver.held_permissions(actor):
+                    raise AuthorizationError("Only the people who schedule classes can change a session's tutor.")
+                new_tutor = candidate
+        previous_tutor = row.tutor
 
         # A PATCH may move only one endpoint, so the pair is re-checked
         # against stored values -- the schema can only validate what it was
@@ -538,14 +549,25 @@ class SessionService:
         if start and end and end <= start:
             raise ConflictError("session_end_time must be after session_start_time.")
 
-        if ("session_start_time" in changes or "session_end_time" in changes) and start:
+        # A new tutor must be free at this time too, not only a new time for
+        # the old tutor -- otherwise a reassignment double-books silently.
+        if ("session_start_time" in changes or "session_end_time" in changes or new_tutor) and start:
             await self._assert_tutor_free(
-                tutor_id=row.tutor_id, start=start, end=end, exclude_session_id=row.id
+                tutor_id=(new_tutor or previous_tutor).id, start=start, end=end, exclude_session_id=row.id
             )
 
+        if new_tutor is not None:
+            # The relationship, not just the column: the response is built from
+            # this instance, and setting only `tutor_id` leaves `row.tutor`
+            # pointing at the previous tutor in the identity map.
+            row.tutor = new_tutor
         for field, value in changes.items():
             setattr(row, field, value)
 
+        details: dict = {"fields": sorted(changes) + (["tutor_id"] if new_tutor else [])}
+        if new_tutor is not None:
+            details["tutor"] = {"from": str(previous_tutor.public_id) if previous_tutor else None,
+                                "to": str(new_tutor.public_id)}
         audit_service.record(
             self.session,
             action=AuditAction.UPDATE,
@@ -553,7 +575,7 @@ class SessionService:
             actor_email=actor.email,
             entity_type="batch_session",
             entity_id=row.id,
-            details={"fields": sorted(changes)},
+            details=details,
         )
         return row
 

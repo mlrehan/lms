@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Search, ShieldAlert } from "lucide-react";
+import { ExternalLink, Plus, Search, ShieldAlert, Wand2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api/client";
 import type { PageUserSummary, RoleResponse, UserSummary } from "@/lib/api/types";
 import { UserStatusValues } from "@/lib/api/types";
@@ -17,17 +18,20 @@ import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { CreateUserDialog } from "@/components/domain/create-user-dialog";
+import { GeneratePasswordDialog } from "@/components/domain/generate-password-dialog";
 import { LaitSyncControls } from "@/components/domain/lait-sync";
 import { UserAvatar } from "@/components/domain/user-avatar";
 import { Badge } from "@/components/ui/primitives";
 import { useSession } from "@/lib/auth/session";
 
 export default function UsersPage() {
-  const { permissions } = useSession();
+  const { permissions, user: me } = useSession();
+  const router = useRouter();
   const { limit, offset, search, debouncedSearch, setSearch, setPage } = useListState();
   const [status, setStatus] = useState("");
   const [role, setRole] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [generatingFor, setGeneratingFor] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["users", "list", debouncedSearch, status, role, limit, offset],
@@ -152,12 +156,33 @@ export default function UsersPage() {
               columns={columns}
               rows={data?.items ?? []}
               rowKey={(user) => user.public_id}
+              rowActions={(user) => [
+                { label: "Open account", icon: <ExternalLink className="size-4" />, onSelect: () => router.push(`/users/${user.public_id}`) },
+                // Offered to anyone who may edit accounts, but never for your
+                // own: that goes through your account page. A Super Admin's
+                // password can only be reset by a Super Admin -- the server
+                // refuses and the dialog shows why, since a list row does not
+                // carry roles.
+                ...(permissions.has("user.update") && user.public_id !== me?.public_id
+                  ? [{ label: "Generate new password…", icon: <Wand2 className="size-4" />, separatorBefore: true, onSelect: () => setGeneratingFor({ id: user.public_id, name: user.full_name || user.username }) }]
+                  : []),
+              ]}
               emptyMessage={
                 debouncedSearch || status || role
                   ? "No accounts match these filters."
                   : "No accounts yet."
               }
             />
+            {generatingFor ? (
+              <GeneratePasswordDialog
+                userId={generatingFor.id}
+                name={generatingFor.name}
+                open
+                onOpenChange={(next) => {
+                  if (!next) setGeneratingFor(null);
+                }}
+              />
+            ) : null}
             <Pagination
               total={data?.total ?? 0}
               limit={limit}

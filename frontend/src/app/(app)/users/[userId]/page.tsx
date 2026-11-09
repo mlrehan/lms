@@ -3,7 +3,7 @@
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, Lock, Trash2, Unlock } from "lucide-react";
+import { KeyRound, Lock, Trash2, Unlock, Wand2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import type {
   RoleResponse,
@@ -22,6 +22,7 @@ import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/domain/status-badge";
 import { ProfileForm } from "@/components/domain/profile-form";
+import { GeneratePasswordDialog } from "@/components/domain/generate-password-dialog";
 import { useSession } from "@/lib/auth/session";
 import { useDisplayTimeZone } from "@/lib/preferences";
 import { formatDateTime, formatCalendarDate } from "@/lib/format/datetime";
@@ -133,11 +134,18 @@ function RolesTab({ user }: { user: UserResponse }) {
 
 function SecurityTab({ user }: { user: UserResponse }) {
   const router = useRouter();
-  const { permissions, user: me } = useSession();
+  const { permissions, user: me, roles: myRoles } = useSession();
   const timeZone = useDisplayTimeZone();
   const [password, setPassword] = useState("");
+  const [generating, setGenerating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isSelf = me?.public_id === user.public_id;
+  // The server refuses both of these; the console just does not offer them.
+  // Your own password changes from your account page, with the current one.
+  const mayResetPassword =
+    permissions.has("user.update") &&
+    !isSelf &&
+    (!(user.roles ?? []).includes("SUPER_ADMIN") || myRoles.includes("SUPER_ADMIN"));
 
   const setStatus = useApiMutation<UserResponse, string>({
     mutationFn: (status) =>
@@ -245,16 +253,24 @@ function SecurityTab({ user }: { user: UserResponse }) {
         </CardBody>
       </Card>
 
-      {permissions.has("user.update") ? (
+      {mayResetPassword ? (
         <Card>
           <CardHeader
-            title="Set a new password"
-            description="Sets the password directly. There is no self-service reset in this deployment, so this is how a locked-out person gets back in."
+            title="Password"
+            description="There is no self-service reset in this deployment, so this is how a locked-out person gets back in. Either way their current password stops working and every sign-in ends."
           />
           <CardBody className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => setGenerating(true)}>
+                <Wand2 /> Generate new password
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                A secure random password, shown once with a Copy button.
+              </span>
+            </div>
             <Field
               label="New password"
-              hint="Shown once, here. It is never stored by the console and cannot be retrieved afterwards."
+              hint="Or type one yourself: at least 12 characters. It is never stored by the console and cannot be retrieved afterwards."
             >
               {({ id }) => (
                 <Input
@@ -269,7 +285,7 @@ function SecurityTab({ user }: { user: UserResponse }) {
             <FormActions>
               <Button
                 loading={setPasswordMutation.isPending}
-                disabled={password.length < 8}
+                disabled={password.length < 12}
                 onClick={() => setPasswordMutation.mutate(password)}
               >
                 <KeyRound /> Set password
@@ -277,6 +293,14 @@ function SecurityTab({ user }: { user: UserResponse }) {
             </FormActions>
           </CardBody>
         </Card>
+      ) : null}
+      {mayResetPassword ? (
+        <GeneratePasswordDialog
+          userId={user.public_id}
+          name={user.full_name || "this person"}
+          open={generating}
+          onOpenChange={setGenerating}
+        />
       ) : null}
 
       {permissions.has("security.manage") ? (

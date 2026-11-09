@@ -10,10 +10,11 @@ from fastapi.responses import StreamingResponse
 
 from backend.api.deps import CurrentUser, require_permissions
 from backend.core.permissions import Action, Module, perm
-from backend.db.dependencies import DBSession
+from backend.db.dependencies import DBSession, commit_before_responding
 from backend.schemas.base import Page, PageParams
 from backend.schemas.user import (
     AdminSetPasswordRequest,
+    GeneratedPasswordResponse,
     UserCreateRequest,
     UserLoginAccessRequest,
     UserLoginAccessResponse,
@@ -216,6 +217,28 @@ async def set_user_password(
 ) -> Response:
     await UserService(session).set_password(user_id, payload.new_password, actor=actor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{user_id}/password/generate",
+    response_model=GeneratedPasswordResponse,
+    summary="Generate a new random password for a user (administrator)",
+)
+async def generate_user_password(
+    user_id: uuid.UUID,
+    session: DBSession,
+    response: Response,
+    actor: Annotated[CurrentUser, Depends(require_permissions(perm(Module.USER, Action.UPDATE)))],
+) -> GeneratedPasswordResponse:
+    """Replaces the password with a generated one and returns it **once**.
+    Every session of that account ends, and its owner is notified. Same rules
+    as setting one by hand: not your own, and only a Super Admin may reset a
+    Super Admin. A POST, never a GET, so nothing prefetches or caches a reset."""
+    password = await UserService(session).generate_password(user_id, actor=actor)
+    await commit_before_responding(session)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return GeneratedPasswordResponse(password=password)
 
 
 @router.delete(

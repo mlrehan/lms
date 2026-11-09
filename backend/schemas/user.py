@@ -231,6 +231,14 @@ class AdminSetPasswordRequest(RequestModel):
     new_password: Password
 
 
+class GeneratedPasswordResponse(APIModel):
+    """Returned once, by the reset that created it. Never stored in clear and
+    never retrievable again: losing it means generating another."""
+
+    password: str
+    sessions_ended: bool = True
+
+
 class UserLoginAccessRequest(RequestModel):
     can_login: bool
 

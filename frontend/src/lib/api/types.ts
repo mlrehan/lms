@@ -3199,6 +3199,7 @@ export interface SessionSessionResponse {
   student_notes?: string | null;
   /** True once a register has been marked for this session. */
   attendance_recorded?: boolean;
+  tutor_name?: string | null;
 }
 
 /**
@@ -3221,6 +3222,7 @@ export interface SessionSummary {
   duration_minutes?: number | null;
   platform: Platforms;
   classroom?: string | null;
+  tutor_name?: string | null;
 }
 
 export interface SessionUpdateRequest {

@@ -55,6 +55,9 @@ class SessionSummary(JoinFields):
     duration_minutes: int | None = None
     platform: Platforms
     classroom: str | None = None
+    tutor_name: str | None = Field(
+        default=None, description="Who teaches this class: a name, never a login name."
+    )
 
 
 class SessionResponse(SessionSummary, JoinFields):

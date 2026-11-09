@@ -22,6 +22,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { JoinClassButton } from "@/components/domain/sessions/join-class-button";
 import { ClassRecording } from "@/components/domain/sessions/class-recording";
 import { ClassPerformanceSheet } from "@/components/domain/sessions/class-performance-sheet";
+import { UserPicker } from "@/components/domain/user-picker";
 import { Field, FormActions, FormGrid, Input, Textarea } from "@/components/ui/form";
 import { Select, optionsFromValues } from "@/components/ui/select";
 import { ErrorState, LoadingState } from "@/components/ui/states";
@@ -242,6 +243,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   });
 
   const [draft, setDraft] = useState<{
+    tutor_id: string;
     start: string;
     end: string;
     platform: string;
@@ -256,6 +258,9 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
     mutationFn: (values) =>
       api.patch<SessionSessionResponse>(`/sessions/${segment(sessionId)}`, {
         body: {
+          // Sent only when it changed: the server treats a tutor change as a
+          // scheduling decision, and an unchanged one should not need that right.
+          ...(data && values.tutor_id && values.tutor_id !== data.tutor_id ? { tutor_id: values.tutor_id } : {}),
           session_start_time: values.start ? fromLocalInputValue(values.start, timeZone) : null,
           session_end_time: values.end ? fromLocalInputValue(values.end, timeZone) : null,
           platform: values.platform,
@@ -267,7 +272,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
         },
       }),
     success: "Session updated.",
-    invalidate: [["sessions"]],
+    invalidate: [["sessions"], ["batches"]],
     onSuccess: () => {
       setEditing(false);
       setDraft(null);
@@ -288,6 +293,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   function beginEdit() {
     if (!data) return;
     setDraft({
+      tutor_id: data.tutor_id,
       start: toLocalInputValue(data.session_start_time, timeZone),
       end: toLocalInputValue(data.session_end_time, timeZone),
       platform: data.platform,
@@ -319,11 +325,11 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               <Badge tone="warning">Register not taken</Badge>
             )}
             {data.course_title ? <span className="text-xs">{data.course_title}</span> : null}
-            {data.tutor_username ? (
+            {data.tutor_name || data.tutor_username ? (
               <span className="text-xs">
                 Tutor{" "}
                 <Link href={`/users/${data.tutor_id}`} className="hover:underline">
-                  {data.tutor_username}
+                  {data.tutor_name || data.tutor_username}
                 </Link>
               </span>
             ) : null}
@@ -364,6 +370,20 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
         <Card>
           <CardHeader title="Edit session" description={`Times are entered in ${timeZone}.`} />
           <CardBody className="space-y-4">
+            {/* Reassigning a class hands the new tutor its roster, so it is
+                offered to those who schedule classes; the server enforces it. */}
+            {permissions.has("session.create") ? (
+              <Field label="Tutor" hint="Must hold the Tutor role and be free at this time.">
+                {({ id }) => (
+                  <UserPicker
+                    id={id}
+                    role="TUTOR"
+                    value={draft.tutor_id || null}
+                    onChange={(next) => setDraft({ ...draft, tutor_id: next ?? data.tutor_id })}
+                  />
+                )}
+              </Field>
+            ) : null}
             <FormGrid>
               <Field label="Starts">
                 {({ id }) => (
